@@ -1,0 +1,12 @@
+[advisories]
+version = 2
+yanked = "deny"
+unmaintained = "workspace"
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

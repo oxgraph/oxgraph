@@ -1,0 +1,18 @@
+[package]
+name = "oxgraph-hyper"
+version = "0.0.0"
+description = "Storage-agnostic core traits for hypergraph views."
+publish = false
+
+authors.workspace = true
+edition.workspace = true
+repository.workspace = true
+
+[dependencies]
+oxgraph-topology = { version = "0.0.0", path = "../oxgraph-topology" }
+
+[dev-dependencies]
+proptest = { workspace = true }
+
+[lints]
+workspace = true

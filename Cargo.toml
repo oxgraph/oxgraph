@@ -1,0 +1,71 @@
+[workspace]
+members = ["crates/*"]
+resolver = "3"
+
+[workspace.package]
+authors = ["oxgraph contributors"]
+edition = "2024"
+repository = "https://github.com/oxgraph/oxgraph"
+# rust-version intentionally omitted: rust-toolchain.toml pins the daily toolchain; kani ships
+# its own nightly below latest stable, and we're not publishing an MSRV contract yet.
+
+[workspace.dependencies]
+zerocopy = { version = "0.8.48", default-features = false, features = ["derive"] }
+
+# Dev / test
+criterion = { version = "0.8.2", default-features = false, features = [
+  "cargo_bench_support",
+  "html_reports",
+  "plotters",
+] }
+proptest = "1.11.0"
+
+[workspace.lints.rust]
+rust_2024_compatibility = { level = "deny", priority = -1 }
+missing_docs = "deny"
+unreachable_pub = "deny"
+unsafe_code = "forbid"
+unexpected_cfgs = { level = "deny", check-cfg = ["cfg(kani)"] }
+
+[workspace.lints.clippy]
+# Lint groups — everything denied, negative priority so individual lints can override.
+all = { level = "deny", priority = -1 }
+cargo = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+
+# Complexity lints — explicit denials (thresholds set in clippy.toml).
+cognitive_complexity = "deny"
+excessive_nesting = "deny"
+too_many_arguments = "deny"
+too_many_lines = "deny"
+type_complexity = "deny"
+
+# Docs — private items too.
+missing_docs_in_private_items = "deny"
+
+# Panic shortcuts — library and example code should return typed errors or prove invariants.
+expect_used = "deny"
+unwrap_used = "deny"
+
+# Block silent suppression: force #[expect(..., reason = "...")] over #[allow(...)].
+allow_attributes = "deny"
+allow_attributes_without_reason = "deny"
+
+# Explicit allow list — the only way to silence a lint workspace-wide.
+# Rationale stays in comments because the cargo manifest doesn't accept a `reason` key.
+# Reason: transitive dep graph — we don't control upstream majors. Revisit per-crate when
+# the conflict is ours.
+multiple_crate_versions = { level = "allow", priority = 1 }
+# Reason: scaffolding noise — remove once the crate surface stabilises.
+module_name_repetitions = { level = "allow", priority = 1 }
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+
+[profile.bench]
+inherits = "release"
+
+[profile.dev]
+debug = "line-tables-only"

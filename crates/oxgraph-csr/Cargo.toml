@@ -1,0 +1,25 @@
+[package]
+name = "oxgraph-csr"
+version = "0.0.0"
+description = "Borrowed CSR graph views implementing oxgraph-graph traits."
+publish = false
+
+authors.workspace = true
+edition.workspace = true
+repository.workspace = true
+
+[dependencies]
+oxgraph-graph = { version = "0.0.0", path = "../oxgraph-graph" }
+oxgraph-topology = { version = "0.0.0", path = "../oxgraph-topology" }
+zerocopy = { workspace = true }
+
+[dev-dependencies]
+criterion = { workspace = true }
+proptest = { workspace = true }
+
+[[bench]]
+name = "csr"
+harness = false
+
+[lints]
+workspace = true

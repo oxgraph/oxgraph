@@ -1,0 +1,32 @@
+[package]
+name = "oxgraph-algo"
+version = "0.0.0"
+description = "Graph algorithms over oxgraph-graph traits."
+publish = false
+
+authors.workspace = true
+edition.workspace = true
+repository.workspace = true
+
+[dependencies]
+oxgraph-graph = { version = "0.0.0", path = "../oxgraph-graph" }
+
+[features]
+default = []
+alloc = []
+std = ["alloc"]
+
+[dev-dependencies]
+criterion = { workspace = true }
+oxgraph-csr = { version = "0.0.0", path = "../oxgraph-csr" }
+oxgraph-snapshot = { version = "0.0.0", path = "../oxgraph-snapshot" }
+oxgraph-topology = { version = "0.0.0", path = "../oxgraph-topology" }
+proptest = { workspace = true }
+
+[[bench]]
+name = "bfs"
+harness = false
+required-features = ["std"]
+
+[lints]
+workspace = true
