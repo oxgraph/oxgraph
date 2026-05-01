@@ -155,7 +155,7 @@ fn usize_to_u32_lossless(value: usize) -> u32 {
 #[test]
 fn opens_valid_snapshot_as_csr_graph() -> Result<(), FixtureError> {
     let bytes = valid_snapshot_bytes();
-    let snapshot = GraphSnapshot::validate(&bytes)?;
+    let snapshot = GraphSnapshot::open(&bytes)?;
     let graph = csr_graph(&snapshot)?;
 
     assert_eq!(graph.node_count(), 4);
@@ -176,7 +176,7 @@ fn opens_zero_node_snapshot() -> Result<(), SnapshotError> {
     let offsets = [0u32];
     let targets = [];
     let bytes = build_snapshot(0, &offsets, &targets);
-    let snapshot = GraphSnapshot::validate(&bytes)?;
+    let snapshot = GraphSnapshot::open(&bytes)?;
 
     assert_eq!(snapshot.node_count(), 0);
     assert_eq!(snapshot.section_count(), 2);
@@ -185,9 +185,20 @@ fn opens_zero_node_snapshot() -> Result<(), SnapshotError> {
 }
 
 #[test]
+fn try_from_opens_valid_snapshot() -> Result<(), SnapshotError> {
+    let bytes = valid_snapshot_bytes();
+    let snapshot = GraphSnapshot::try_from(bytes.as_slice())?;
+
+    assert_eq!(snapshot.node_count(), 4);
+    assert_eq!(snapshot.section_count(), 2);
+
+    Ok(())
+}
+
+#[test]
 fn snapshot_sections_open_as_csr_view() -> Result<(), FixtureError> {
     let bytes = valid_snapshot_bytes();
-    let snapshot = GraphSnapshot::validate(&bytes)?;
+    let snapshot = GraphSnapshot::open(&bytes)?;
     let graph = csr_graph(&snapshot)?;
 
     assert_eq!(graph.node_count(), 4);
@@ -208,7 +219,7 @@ fn snapshot_sections_open_as_csr_view() -> Result<(), FixtureError> {
 #[test]
 fn bfs_runs_over_snapshot_csr_graph() -> Result<(), FixtureError> {
     let bytes = valid_snapshot_bytes();
-    let snapshot = GraphSnapshot::validate(&bytes)?;
+    let snapshot = GraphSnapshot::open(&bytes)?;
     let graph = csr_graph(&snapshot)?;
 
     assert_eq!(
@@ -225,7 +236,7 @@ fn rejects_bad_magic() {
     bytes[0] = 0;
 
     assert_eq!(
-        GraphSnapshot::validate(&bytes).err(),
+        GraphSnapshot::open(&bytes).err(),
         Some(SnapshotError::BadMagic {
             actual: [0, 67, 84, 88, 71, 48, 0, 0],
         })
@@ -238,7 +249,7 @@ fn rejects_unsupported_version() {
     bytes[8] = 1;
 
     assert_eq!(
-        GraphSnapshot::validate(&bytes).err(),
+        GraphSnapshot::open(&bytes).err(),
         Some(SnapshotError::UnsupportedVersion { major: 1, minor: 1 })
     );
 }
@@ -246,7 +257,7 @@ fn rejects_unsupported_version() {
 #[test]
 fn rejects_malformed_header() {
     assert_eq!(
-        GraphSnapshot::validate(&[0; 8]).err(),
+        GraphSnapshot::open(&[0; 8]).err(),
         Some(SnapshotError::MalformedHeader)
     );
 }
@@ -257,7 +268,7 @@ fn rejects_truncated_section_table() {
     bytes.truncate(40);
 
     assert_eq!(
-        GraphSnapshot::validate(&bytes).err(),
+        GraphSnapshot::open(&bytes).err(),
         Some(SnapshotError::TruncatedSectionTable {
             needed: 24,
             actual: 16,
@@ -276,7 +287,7 @@ fn accepts_missing_layout_offsets_section() -> Result<(), SnapshotError> {
         }],
     );
 
-    let snapshot = GraphSnapshot::validate(&bytes)?;
+    let snapshot = GraphSnapshot::open(&bytes)?;
     assert_eq!(snapshot.section_count(), 1);
     assert!(snapshot.section_words(SECTION_CSR_OFFSETS)?.is_none());
 
@@ -294,7 +305,7 @@ fn accepts_missing_layout_targets_section() -> Result<(), SnapshotError> {
         }],
     );
 
-    let snapshot = GraphSnapshot::validate(&bytes)?;
+    let snapshot = GraphSnapshot::open(&bytes)?;
     assert_eq!(snapshot.section_count(), 1);
     assert!(snapshot.section_words(SECTION_CSR_TARGETS)?.is_none());
 
@@ -324,7 +335,7 @@ fn rejects_duplicate_offsets_section() {
     );
 
     assert_eq!(
-        GraphSnapshot::validate(&bytes).err(),
+        GraphSnapshot::open(&bytes).err(),
         Some(SnapshotError::DuplicateSection {
             kind: SECTION_CSR_OFFSETS,
         })
@@ -354,7 +365,7 @@ fn rejects_duplicate_targets_section() {
     );
 
     assert_eq!(
-        GraphSnapshot::validate(&bytes).err(),
+        GraphSnapshot::open(&bytes).err(),
         Some(SnapshotError::DuplicateSection {
             kind: SECTION_CSR_TARGETS,
         })
@@ -384,7 +395,7 @@ fn accepts_unknown_section_with_valid_range() -> Result<(), SnapshotError> {
         ],
     );
 
-    let snapshot = GraphSnapshot::validate(&bytes)?;
+    let snapshot = GraphSnapshot::open(&bytes)?;
     assert_eq!(snapshot.node_count(), 1);
     assert_eq!(snapshot.section_count(), 3);
     assert_eq!(
@@ -420,7 +431,7 @@ fn rejects_unknown_section_with_invalid_range() {
     set_u32(&mut bytes, 28, 1_000);
 
     assert_eq!(
-        GraphSnapshot::validate(&bytes).err(),
+        GraphSnapshot::open(&bytes).err(),
         Some(SnapshotError::SectionOutOfBounds {
             kind: SECTION_UNKNOWN,
             offset: 1_000,
@@ -436,7 +447,7 @@ fn rejects_required_section_out_of_bounds() {
     set_u32(&mut bytes, 28, 1_000);
 
     assert_eq!(
-        GraphSnapshot::validate(&bytes).err(),
+        GraphSnapshot::open(&bytes).err(),
         Some(SnapshotError::SectionOutOfBounds {
             kind: SECTION_CSR_OFFSETS,
             offset: 1_000,
@@ -452,7 +463,7 @@ fn rejects_overlapping_sections() {
     set_u32(&mut bytes, 40, 48);
 
     assert_eq!(
-        GraphSnapshot::validate(&bytes).err(),
+        GraphSnapshot::open(&bytes).err(),
         Some(SnapshotError::SectionOverlap {
             first_kind: SECTION_CSR_OFFSETS,
             second_kind: SECTION_CSR_TARGETS,
@@ -465,7 +476,7 @@ fn csr_layout_validation_remains_outside_snapshot() -> Result<(), FixtureError> 
     let offsets = [0u32, 1];
     let targets = [1u32];
     let bytes = build_snapshot(1, &offsets, &targets);
-    let snapshot = GraphSnapshot::validate(&bytes)?;
+    let snapshot = GraphSnapshot::open(&bytes)?;
     let offsets = snapshot
         .section_words(SECTION_CSR_OFFSETS)?
         .ok_or(FixtureError::MissingSection(SECTION_CSR_OFFSETS))?;
@@ -489,7 +500,7 @@ fn csr_layout_validation_remains_outside_snapshot() -> Result<(), FixtureError> 
 fn rejects_word_view_with_non_multiple_of_four_length() -> Result<(), SnapshotError> {
     let mut bytes = valid_snapshot_bytes();
     bytes[32] = 19;
-    let snapshot = GraphSnapshot::validate(&bytes)?;
+    let snapshot = GraphSnapshot::open(&bytes)?;
 
     assert_eq!(
         snapshot.section_words(SECTION_CSR_OFFSETS).err(),

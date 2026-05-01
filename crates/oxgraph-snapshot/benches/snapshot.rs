@@ -175,7 +175,7 @@ fn usize_to_u32_lossless(value: usize) -> u32 {
 
 /// Benchmarks snapshot section-table validation.
 ///
-/// Defends `GraphSnapshot::validate` `O(s^2)` duplicate and overlap checks for
+/// Defends `GraphSnapshot::open` `O(s^2)` duplicate and overlap checks for
 /// `s` section entries.
 fn bench_validate(c: &mut Criterion) {
     let mut group = c.benchmark_group("snapshot_validate");
@@ -187,7 +187,7 @@ fn bench_validate(c: &mut Criterion) {
             BenchmarkId::from_parameter(section_count),
             section_count,
             |b, _section_count| {
-                b.iter(|| black_box(GraphSnapshot::validate(black_box(&bytes))));
+                b.iter(|| black_box(GraphSnapshot::open(black_box(&bytes))));
             },
         );
     }
@@ -203,7 +203,7 @@ fn bench_open_csr(c: &mut Criterion) {
     for node_count in NODE_COUNTS {
         let (offsets, targets) = build_regular_csr(*node_count, DEGREE);
         let bytes = build_snapshot(*node_count, &offsets, &targets);
-        let snapshot = match GraphSnapshot::validate(&bytes) {
+        let snapshot = match GraphSnapshot::open(&bytes) {
             Ok(validated) => validated,
             Err(error) => panic!("benchmark snapshot fixture was invalid: {error:?}"),
         };
@@ -231,7 +231,7 @@ fn bench_traverse(c: &mut Criterion) {
     for node_count in NODE_COUNTS {
         let (offsets, targets) = build_regular_csr(*node_count, DEGREE);
         let bytes = build_snapshot(*node_count, &offsets, &targets);
-        let snapshot = match GraphSnapshot::validate(&bytes) {
+        let snapshot = match GraphSnapshot::open(&bytes) {
             Ok(validated) => validated,
             Err(error) => panic!("benchmark snapshot fixture was invalid: {error:?}"),
         };
@@ -260,7 +260,7 @@ fn bench_bfs(c: &mut Criterion) {
     for node_count in NODE_COUNTS {
         let (offsets, targets) = build_regular_csr(*node_count, DEGREE);
         let bytes = build_snapshot(*node_count, &offsets, &targets);
-        let snapshot = match GraphSnapshot::validate(&bytes) {
+        let snapshot = match GraphSnapshot::open(&bytes) {
             Ok(validated) => validated,
             Err(error) => panic!("benchmark snapshot fixture was invalid: {error:?}"),
         };

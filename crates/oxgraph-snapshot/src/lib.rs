@@ -75,7 +75,7 @@ pub struct GraphSnapshot<'view> {
 }
 
 impl<'view> GraphSnapshot<'view> {
-    /// Validates `bytes` as an internal v0 graph snapshot container.
+    /// Opens and validates `bytes` as an internal v0 graph snapshot container.
     ///
     /// # Errors
     ///
@@ -87,7 +87,12 @@ impl<'view> GraphSnapshot<'view> {
     ///
     /// Validation is `O(s^2)` for `s` section entries because duplicate section
     /// kinds and overlapping section ranges are checked without allocation.
-    pub fn validate(bytes: &'view [u8]) -> Result<Self, SnapshotError> {
+    pub fn open(bytes: &'view [u8]) -> Result<Self, SnapshotError> {
+        Self::validate(bytes)
+    }
+
+    /// Validates `bytes` as an internal v0 graph snapshot container.
+    fn validate(bytes: &'view [u8]) -> Result<Self, SnapshotError> {
         let (header, section_bytes) = parse_header(bytes)?;
         validate_version(header)?;
 
@@ -178,6 +183,14 @@ impl<'view> GraphSnapshot<'view> {
         self.sections
             .iter()
             .find(|section| section.kind.get() == kind)
+    }
+}
+
+impl<'view> TryFrom<&'view [u8]> for GraphSnapshot<'view> {
+    type Error = SnapshotError;
+
+    fn try_from(bytes: &'view [u8]) -> Result<Self, Self::Error> {
+        Self::open(bytes)
     }
 }
 

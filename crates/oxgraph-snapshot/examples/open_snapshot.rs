@@ -19,7 +19,7 @@ fn main() -> Result<(), ExampleError> {
         0, 0, 0, 4, 0, 0, 0, 4, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 2, 0, 0, 0, 3, 0, 0, 0,
     ];
 
-    let snapshot = GraphSnapshot::validate(BYTES)?;
+    let snapshot = GraphSnapshot::open(BYTES)?;
     let offsets = snapshot
         .section_words(SECTION_CSR_OFFSETS)?
         .ok_or(ExampleError::MissingSection(SECTION_CSR_OFFSETS))?;

@@ -559,7 +559,7 @@ fn default_bfs_runs_over_snapshot_sections() {
 
 /// Runs scratch-backed BFS on a CSR graph opened from snapshot fixture bytes.
 fn snapshot_csr_order(bytes: &[u8]) -> Result<Vec<CsrNodeId>, SnapshotFixtureError> {
-    let snapshot = GraphSnapshot::validate(bytes)?;
+    let snapshot = GraphSnapshot::open(bytes)?;
     let offsets = snapshot
         .section_words(SECTION_CSR_OFFSETS)?
         .ok_or(SnapshotFixtureError::MissingSection(SECTION_CSR_OFFSETS))?;
