@@ -1,0 +1,15 @@
+[package]
+name = "oxgraph"
+version = "0.0.0"
+description = "High-performance, zero-copy graph and topology substrate."
+license = "MIT"
+readme = "README.md"
+keywords = ["graph", "topology", "zero-copy", "no-std", "csr"]
+categories = ["data-structures", "no-std"]
+
+authors.workspace = true
+edition.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
