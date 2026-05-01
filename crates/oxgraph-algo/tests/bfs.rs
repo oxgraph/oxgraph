@@ -11,27 +11,22 @@ use oxgraph_algo::{
     BfsWorkspace, breadth_first_search, breadth_first_search_generic,
     breadth_first_search_with_workspace,
 };
-use oxgraph_csr::{CsrError, CsrGraph, CsrNodeId};
+use oxgraph_csr::{
+    CsrError, CsrGraph, CsrNodeId, CsrSnapshotError, SNAPSHOT_KIND_CSR_OFFSETS,
+    SNAPSHOT_KIND_CSR_TARGETS,
+};
 use oxgraph_graph::{NodeId, NodeIndex, OutgoingNeighborsGraph};
-use oxgraph_snapshot::{GraphSnapshot, SnapshotError};
+use oxgraph_snapshot::{Snapshot, SnapshotBuilder, SnapshotError};
 use oxgraph_topology::{ContainsElement, ElementIndex, TopologyBase};
 use proptest::prelude::*;
-
-/// CSR offsets section kind used by snapshot fixtures.
-const SECTION_CSR_OFFSETS: u32 = 1;
-
-/// CSR targets section kind used by snapshot fixtures.
-const SECTION_CSR_TARGETS: u32 = 2;
 
 /// Error returned while opening snapshot-backed CSR fixtures.
 #[derive(Debug, Eq, PartialEq)]
 enum SnapshotFixtureError {
     /// Snapshot validation failed.
     Snapshot(SnapshotError),
-    /// A required fixture section was missing.
-    MissingSection(u32),
-    /// CSR validation failed.
-    Csr(CsrError),
+    /// CSR snapshot adaptor failed.
+    Adaptor(CsrSnapshotError),
     /// BFS construction failed.
     Bfs(BfsError),
 }
@@ -42,9 +37,9 @@ impl From<SnapshotError> for SnapshotFixtureError {
     }
 }
 
-impl From<CsrError> for SnapshotFixtureError {
-    fn from(error: CsrError) -> Self {
-        Self::Csr(error)
+impl From<CsrSnapshotError> for SnapshotFixtureError {
+    fn from(error: CsrSnapshotError) -> Self {
+        Self::Adaptor(error)
     }
 }
 
@@ -52,8 +47,7 @@ impl std::fmt::Display for SnapshotFixtureError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Snapshot(error) => write!(formatter, "snapshot validation failed: {error}"),
-            Self::MissingSection(kind) => write!(formatter, "missing fixture section {kind}"),
-            Self::Csr(error) => write!(formatter, "CSR validation failed: {error}"),
+            Self::Adaptor(error) => write!(formatter, "CSR adaptor failed: {error}"),
             Self::Bfs(error) => write!(formatter, "BFS construction failed: {error}"),
         }
     }
@@ -559,61 +553,36 @@ fn default_bfs_runs_over_snapshot_sections() {
 
 /// Runs scratch-backed BFS on a CSR graph opened from snapshot fixture bytes.
 fn snapshot_csr_order(bytes: &[u8]) -> Result<Vec<CsrNodeId>, SnapshotFixtureError> {
-    let snapshot = GraphSnapshot::open(bytes)?;
-    let offsets = snapshot
-        .section_words(SECTION_CSR_OFFSETS)?
-        .ok_or(SnapshotFixtureError::MissingSection(SECTION_CSR_OFFSETS))?;
-    let targets = snapshot
-        .section_words(SECTION_CSR_TARGETS)?
-        .ok_or(SnapshotFixtureError::MissingSection(SECTION_CSR_TARGETS))?;
-
-    let graph = CsrGraph::validate(snapshot.node_count(), offsets, targets)?;
+    let snapshot = Snapshot::open(bytes)?;
+    let graph = CsrGraph::from_snapshot(&snapshot)?;
     scratch_order(&graph, CsrNodeId(0)).map_err(SnapshotFixtureError::Bfs)
 }
 
-/// Appends a little-endian `u32` to `bytes`.
-fn push_u32(bytes: &mut Vec<u8>, value: u32) {
-    bytes.extend_from_slice(&value.to_le_bytes());
+/// Encodes a sequence of `u32` words as a little-endian byte vector.
+fn words_to_bytes(words: &[u32]) -> Vec<u8> {
+    words.iter().flat_map(|word| word.to_le_bytes()).collect()
 }
 
-/// Builds a valid v0 snapshot byte vector for BFS tests.
+/// Builds a valid v1 snapshot byte vector for BFS tests.
 fn valid_snapshot_bytes() -> Vec<u8> {
-    let offsets = [0u32, 2, 3, 4, 4];
-    let targets = [1u32, 2, 3, 3];
-    let header_len = 24u32;
-    let section_table_len = 24u32;
-    let offsets_offset = header_len + section_table_len;
-    let offsets_len = usize_to_u32_lossless(offsets.len() * 4);
-    let targets_offset = offsets_offset + offsets_len;
-    let targets_len = usize_to_u32_lossless(targets.len() * 4);
-
-    let mut bytes = Vec::new();
-    bytes.extend_from_slice(b"OCTXG0\0\0");
-    push_u32(&mut bytes, 0);
-    push_u32(&mut bytes, 1);
-    push_u32(&mut bytes, 4);
-    push_u32(&mut bytes, 2);
-    push_u32(&mut bytes, 1);
-    push_u32(&mut bytes, offsets_offset);
-    push_u32(&mut bytes, offsets_len);
-    push_u32(&mut bytes, 2);
-    push_u32(&mut bytes, targets_offset);
-    push_u32(&mut bytes, targets_len);
-    for offset in offsets {
-        push_u32(&mut bytes, offset);
+    let mut builder = SnapshotBuilder::new();
+    if let Err(error) = builder.add_section(
+        SNAPSHOT_KIND_CSR_OFFSETS,
+        0,
+        2,
+        words_to_bytes(&[0, 2, 3, 4, 4]),
+    ) {
+        panic!("offsets section: {error:?}");
     }
-    for target in targets {
-        push_u32(&mut bytes, target);
+    if let Err(error) = builder.add_section(
+        SNAPSHOT_KIND_CSR_TARGETS,
+        0,
+        2,
+        words_to_bytes(&[1, 2, 3, 3]),
+    ) {
+        panic!("targets section: {error:?}");
     }
-    bytes
-}
-
-/// Converts fixture sizes into `u32`.
-fn usize_to_u32_lossless(value: usize) -> u32 {
-    match u32::try_from(value) {
-        Ok(converted) => converted,
-        Err(error) => panic!("fixture value did not fit u32: {error:?}"),
-    }
+    builder.finish()
 }
 
 proptest! {

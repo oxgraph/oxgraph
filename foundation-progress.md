@@ -4,7 +4,7 @@ This document tracks implementation progress against `vision.md`. It records wha
 
 ## Current Slice
 
-The workspace now has the neutral topology substrate, graph and hypergraph specializations, the first concrete graph layout, a directed graph algorithm crate, and a minimal CSR snapshot reader:
+The workspace now has the neutral topology substrate, graph and hypergraph specializations, the first concrete graph layout, a directed graph algorithm crate, and a topology-agnostic snapshot container:
 
 ```text
 crates/oxgraph-topology
@@ -25,7 +25,7 @@ crates/oxgraph-snapshot
 
 `oxgraph-algo` is a `no_std` crate with optional `alloc` and `std` traversal tiers. It defines directed graph algorithms over `oxgraph-graph` traits. It currently implements BFS over `OutgoingNeighborsGraph` plus dense node indexing and node containment for the indexed path. `oxgraph-graph` also exposes the symmetric reverse traversal bundle (`IncomingGraph + EdgeSourceGraph`) for CSC-style views and reverse algorithms.
 
-`oxgraph-snapshot` is a `no_std` crate that validates an internal v0 byte-level graph snapshot container and exposes borrowed section bytes without assigning layout semantics. CSR interpretation currently happens in callers by opening `oxgraph-csr` over CSR sections. The format is explicitly not a stable ABI.
+`oxgraph-snapshot` is a `no_std` crate that defines a topology-agnostic byte-level snapshot container (format v1.0). It validates a fixed header and a sectioned payload region, exposes borrowed section bytes via [`Snapshot::sections`] / [`Snapshot::section`], and lets consumers reinterpret payloads as typed slices via [`Section::try_as_slice`] (with actual-pointer alignment checked at the call site, not on the producer's declared metadata). The container holds no domain semantics — section kinds are opaque `u32`s registered by upper layers (e.g. `oxgraph-csr` defines `SNAPSHOT_KIND_CSR_OFFSETS` / `SNAPSHOT_KIND_CSR_TARGETS`). A no-`alloc` writer (`SnapshotPlan::encoded_len` / `write_into`) and an alloc-gated owning builder (`SnapshotBuilder`) emit identical bytes. The format is explicitly not a stable ABI yet.
 
 Current dependency hierarchy:
 
@@ -33,15 +33,14 @@ Current dependency hierarchy:
 oxgraph-topology
 ├── oxgraph-graph
 │   ├── oxgraph-csr
+│   │   └── oxgraph-snapshot
 │   └── oxgraph-algo
 └── oxgraph-hyper
 
 oxgraph-snapshot
 ```
 
-`oxgraph-snapshot` is runtime-independent of graph layouts. Its tests, examples, and benchmarks use
-`oxgraph-csr` and `oxgraph-algo` as dev-dependencies to prove that validated sections can be interpreted
-as a CSR graph without moving that layout dependency into the snapshot container crate.
+`oxgraph-snapshot` is the topology-agnostic container; it has no graph or hypergraph deps. `oxgraph-csr` depends on `oxgraph-snapshot` to expose `CsrGraph::from_snapshot`, which reads CSR offsets and targets from snapshot sections without copying. The snapshot crate's own tests, benches, and example exercise only the agnostic surface (header parsing, section table, builder/reader roundtrip, typed-slice views).
 
 ## Vision Alignment
 
@@ -166,7 +165,11 @@ Every added crate is expected to include executable examples.
 
 `oxgraph-snapshot` currently includes:
 
-- `examples/open_snapshot.rs`: validates a v0 CSR snapshot byte slice, exposes a CSR graph view, and runs traversal/BFS without heap reconstruction.
+- `examples/pack_two_sections.rs`: builds a snapshot containing one little-endian `u32` payload and one byte payload, opens it, and views both back through `try_as_slice` / `bytes`. The example contains no graph or hypergraph code.
+
+`oxgraph-csr` currently includes:
+
+- `examples/open_snapshot.rs`: builds a CSR snapshot using `oxgraph-csr`'s registered section kinds, opens it, validates the CSR layout via `CsrGraph::from_snapshot`, and runs BFS over the borrowed sections without heap reconstruction.
 
 The examples are intentionally educational. They are not optimized graph or hypergraph storage implementations.
 
@@ -227,17 +230,20 @@ The examples are intentionally educational. They are not optimized graph or hype
 - invalid starts are rejected through containment before dense indexing;
 - scratch-size errors have deterministic precedence over start-node validation.
 
-`oxgraph-snapshot` includes `tests/snapshot.rs`, which verifies:
+`oxgraph-snapshot` includes the following integration test files (six total), all of which exercise only the topology-agnostic surface:
 
-- valid v0 snapshot bytes open as a layout-neutral section container;
-- CSR sections from a snapshot can be validated externally as a `oxgraph-csr` view;
-- directed BFS runs over a `oxgraph-csr` view opened from snapshot sections;
-- bad magic, unsupported versions, truncated section tables, malformed word views, and invalid external CSR interpretation are rejected at the appropriate layer.
-- zero-node snapshots open successfully;
-- missing layout sections are accepted by the container while duplicate section kinds are rejected;
-- all section ranges, including unknown sections, are bounds checked;
-- overlapping sections are rejected;
-- unknown sections with valid ranges are safely skipped.
+- `tests/container_open.rs`: header truncation, bad magic, format major mismatch, format minor too new, header size mismatch, header reserved non-zero, section count too large, section table truncation, per-entry checksum/flags/reserved zero invariants, alignment-log2 cap, payload bounds, monotonic-offset enforcement, and duplicate-kind rejection are each surfaced as typed `SnapshotError` variants.
+- `tests/plan_writer.rs`: a no-`alloc` smoke test that builds a snapshot in a stack `[u8; N]` via `SnapshotPlan`, opens it back, and exercises `BufferTooSmall` / `DuplicateKind` / header-only validation paths.
+- `tests/builder_reader_roundtrip.rs`: proptest — the alloc-gated `SnapshotBuilder` followed by `Snapshot::open` yields byte-equal section payloads for arbitrary kinds, versions, alignments, and payload sizes.
+- `tests/determinism.rs`: proptest — the same logical input produces byte-equal output (deterministic padding).
+- `tests/malformed_bytes.rs`: proptest — `Snapshot::open` over arbitrary `Vec<u8>` returns a `Result`, never panics. This is the §22.1 keystone invariant.
+- `tests/section_view.rs`: `Section::try_as_slice<T>` succeeds when the actual borrowed pointer is aligned, returns `AlignmentMismatch` for sub-sliced misaligned payloads, and returns `LengthNotMultipleOfSize` for payloads whose length is not a multiple of `size_of::<T>()`. The declared `alignment_log2` is intentionally not consulted.
+
+`oxgraph-csr` includes `tests/snapshot_section.rs`, which verifies:
+
+- valid CSR snapshots open as `CsrGraph` via `from_snapshot` (with `node_count` derived from `offsets.len() - 1`, no separate metadata section);
+- directed BFS runs over a CSR view opened from snapshot sections;
+- missing offsets, empty offsets, target-out-of-range, and non-monotonic offsets are surfaced as typed `CsrSnapshotError` variants.
 
 ### Workspace Lints
 
@@ -308,11 +314,11 @@ Reason: mutation affects ID stability, deletion semantics, tombstones, compactio
 
 Reason: CSR is the smallest useful concrete graph layout and keeps this slice focused on the first wedge.
 
-### Internal Snapshot v0 Only
+### Topology-Agnostic Snapshot v1 (ABI candidate)
 
-`oxgraph-snapshot` now validates a minimal byte-level graph snapshot container, but the format is explicitly internal v0 and not a stable ABI.
+`oxgraph-snapshot` now validates a topology-agnostic byte-level snapshot container at format major 1, minor 0. The header carries magic / format version / `header_size` / `section_count` only — no graph- or hypergraph-specific metadata. Section entries carry `(offset, length, kind, version, reserved_checksum, alignment_log2, flags, reserved)` for 32 bytes each, with `u64` offsets and lengths so multi-GB mmap'd topologies are addressable.
 
-Reason: the snapshot reader exists to pressure-test zero-copy traversal and validation boundaries before locking down compatibility rules.
+Reason: the container is the topology-interchange layer per vision §20–§24.4; section semantics belong to upper layers (`oxgraph-csr`, future `oxgraph-hyper-layout`). Several deliberate cuts kept v1 small: no CRC verification (the 4-byte `reserved_checksum` field is reserved and must be zero in v1), no REQUIRED-section enforcement (the flags byte must be zero; required-vs-optional is consumer policy and the container has no kind registry), no multi-instance sections (one entry per kind), no mmap helpers (the `std` feature is reserved and unused). The bytes are not yet promised as a stable ABI, but the upgrade path for each deferred feature is preserved by the reserved fields.
 
 ### No Topology-General Algorithm Crate Yet
 
@@ -348,7 +354,8 @@ cargo run -p oxgraph-graph --example graph_directed
 cargo run -p oxgraph-hyper --example hyper_directed
 cargo run -p oxgraph-csr --example csr_directed
 cargo run -p oxgraph-algo --example bfs
-cargo run -p oxgraph-snapshot --example open_snapshot
+cargo run -p oxgraph-snapshot --example pack_two_sections --features alloc
+cargo run -p oxgraph-csr --example open_snapshot
 cargo bench --workspace --no-run
 cargo check --workspace --no-default-features
 cargo test -p oxgraph-algo --no-default-features
@@ -360,7 +367,8 @@ The current slice includes Criterion benchmarks for the first measurable graph p
 
 - `oxgraph-csr/benches/csr.rs`: CSR validation and outgoing traversal over deterministic regular graphs.
 - `oxgraph-algo/benches/bfs.rs`: scratch, epoch-scratch, allocating indexed, and workspace directed BFS over `OutgoingNeighborsGraph` using CSR-backed graph shapes.
-- `oxgraph-snapshot/benches/snapshot.rs`: v0 snapshot validation/opening, CSR-section traversal, and generic/indexed BFS over CSR sections.
+- `oxgraph-snapshot/benches/container.rs`: agnostic snapshot open over `s ∈ {1, 16, 256, 1024}` sections, last-section linear lookup, and `SnapshotBuilder::finish` over `s ∈ {16, 256, 1024}` × 1 KiB payloads.
+- `oxgraph-csr/benches/snapshot.rs`: snapshot-backed CSR open and BFS over deterministic ring graphs at `n ∈ {64, 1024, 16_384}` nodes.
 
 The synthetic benchmark sizes currently cover 10k, 100k, and 1M nodes. They are scale smoke tests, not final performance contracts. They do not yet compare against raw slice baselines, mmap-backed files, CSC/incoming traversal, or larger 100M-edge workloads.
 
@@ -369,7 +377,8 @@ The latest short run used:
 ```sh
 cargo bench -p oxgraph-csr --bench csr -- --sample-size 10 --warm-up-time 1 --measurement-time 2
 cargo bench -p oxgraph-algo --bench bfs -- --sample-size 10 --warm-up-time 1 --measurement-time 2
-cargo bench -p oxgraph-snapshot --bench snapshot -- --sample-size 10 --warm-up-time 1 --measurement-time 2
+cargo bench -p oxgraph-snapshot --bench container -- --sample-size 10 --warm-up-time 1 --measurement-time 2
+cargo bench -p oxgraph-csr --bench snapshot -- --sample-size 10 --warm-up-time 1 --measurement-time 2
 ```
 
 The latest short runs are directional numbers, not final published performance claims. They show that the dense-index capability removes the generic BFS bottleneck without removing the fallback path for arbitrary ID spaces.
@@ -389,6 +398,6 @@ The latest short runs are directional numbers, not final published performance c
 1. Decide whether slice-level graph capabilities belong in `oxgraph-graph` based on `oxgraph-csr` pressure.
 2. Add a minimal graph builder only if snapshot examples/tests need too much hand-written byte construction.
 3. Add CSC or reverse-index support when incoming traversal is needed by an algorithm or snapshot use case.
-4. Add a snapshot/container design document before treating the v0 bytes as anything more than an internal prototype.
+4. Promote the snapshot v1.0 bytes from "ABI candidate" to a stable ABI once a downstream consumer (e.g. mmap-backed graph store) has exercised them at scale.
 5. Add explicit payload capability sketches once a concrete morphism or metadata use case needs them.
 6. Add a concrete hypergraph layout only after `oxgraph-hyper` examples stop being enough.

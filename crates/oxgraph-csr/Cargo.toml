@@ -10,15 +10,22 @@ repository.workspace = true
 
 [dependencies]
 oxgraph-graph = { version = "0.0.0", path = "../oxgraph-graph" }
+oxgraph-snapshot = { version = "0.0.0", path = "../oxgraph-snapshot" }
 oxgraph-topology = { version = "0.0.0", path = "../oxgraph-topology" }
 zerocopy = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
+oxgraph-algo = { version = "0.0.0", path = "../oxgraph-algo", features = ["alloc"] }
+oxgraph-snapshot = { version = "0.0.0", path = "../oxgraph-snapshot", features = ["alloc"] }
 proptest = { workspace = true }
 
 [[bench]]
 name = "csr"
+harness = false
+
+[[bench]]
+name = "snapshot"
 harness = false
 
 [lints]

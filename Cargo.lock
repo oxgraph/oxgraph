@@ -425,7 +425,9 @@ name = "oxgraph-csr"
 version = "0.0.0"
 dependencies = [
  "criterion",
+ "oxgraph-algo",
  "oxgraph-graph",
+ "oxgraph-snapshot",
  "oxgraph-topology",
  "proptest",
  "zerocopy",
@@ -452,9 +454,7 @@ name = "oxgraph-snapshot"
 version = "0.0.0"
 dependencies = [
  "criterion",
- "oxgraph-algo",
- "oxgraph-csr",
- "oxgraph-graph",
+ "proptest",
  "zerocopy",
 ]
 

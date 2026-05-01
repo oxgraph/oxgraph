@@ -16,10 +16,32 @@ use core::fmt;
 use oxgraph_graph::{
     EdgeTargetGraph, GraphCounts, OutgoingEdgeCount, OutgoingGraph, OutgoingNeighborsGraph,
 };
+use oxgraph_snapshot::{SectionViewError, Snapshot};
 use oxgraph_topology::{
     ContainsElement, ContainsRelation, ElementIndex, RelationIndex, TopologyBase, TopologyCounts,
 };
 use zerocopy::byteorder::{LE, U32};
+
+/// Section kind for a CSR offsets array stored in an `oxgraph-snapshot`.
+///
+/// The payload is a sequence of unaligned little-endian `u32` words of
+/// length `node_count + 1`. The CSR view derives `node_count` from this
+/// length; no separate metadata section is required.
+///
+/// # Performance
+///
+/// `perf: unspecified`; this is a compile-time constant.
+pub const SNAPSHOT_KIND_CSR_OFFSETS: u32 = 0x0001;
+
+/// Section kind for a CSR targets array stored in an `oxgraph-snapshot`.
+///
+/// The payload is a sequence of unaligned little-endian `u32` words whose
+/// length equals the final value of the CSR offsets array.
+///
+/// # Performance
+///
+/// `perf: unspecified`; this is a compile-time constant.
+pub const SNAPSHOT_KIND_CSR_TARGETS: u32 = 0x0002;
 
 /// Integer word usable in borrowed CSR sections.
 ///
@@ -253,6 +275,53 @@ where
     fn outgoing_range(&self, node: CsrNodeId) -> (u32, u32) {
         let index = u32_to_usize_lossless(node.0);
         (self.offsets[index].get(), self.offsets[index + 1].get())
+    }
+}
+
+impl<'view> CsrGraph<'view, U32<LE>> {
+    /// Builds a snapshot-backed CSR view from a validated [`Snapshot`].
+    ///
+    /// Reads the [`SNAPSHOT_KIND_CSR_OFFSETS`] and [`SNAPSHOT_KIND_CSR_TARGETS`]
+    /// sections, derives `node_count` from `offsets.len() - 1`, and runs
+    /// CSR-shape validation. The returned view borrows directly from the
+    /// snapshot's byte slice — no copying.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CsrSnapshotError`] when either section is missing,
+    /// misaligned, of invalid length, or fails CSR validation.
+    ///
+    /// # Performance
+    ///
+    /// This function is `O(s + n + m)` for `s` snapshot sections, `n` graph
+    /// nodes, and `m` graph edges.
+    pub fn from_snapshot(snapshot: &Snapshot<'view>) -> Result<Self, CsrSnapshotError> {
+        let offsets_section = snapshot
+            .section(SNAPSHOT_KIND_CSR_OFFSETS)
+            .ok_or(CsrSnapshotError::MissingOffsets)?;
+        let targets_section = snapshot
+            .section(SNAPSHOT_KIND_CSR_TARGETS)
+            .ok_or(CsrSnapshotError::MissingTargets)?;
+
+        let offsets: &'view [U32<LE>] = offsets_section
+            .try_as_slice()
+            .map_err(CsrSnapshotError::OffsetsView)?;
+        let targets: &'view [U32<LE>] = targets_section
+            .try_as_slice()
+            .map_err(CsrSnapshotError::TargetsView)?;
+
+        if offsets.is_empty() {
+            return Err(CsrSnapshotError::OffsetsEmpty);
+        }
+
+        let node_count_usize = offsets.len() - 1;
+        let node_count = u32::try_from(node_count_usize).map_err(|_error| {
+            CsrSnapshotError::NodeCountOverflow {
+                offsets_len: offsets.len(),
+            }
+        })?;
+
+        Self::validate(node_count, offsets, targets).map_err(CsrSnapshotError::Csr)
     }
 }
 
@@ -545,6 +614,58 @@ impl fmt::Display for CsrError {
 }
 
 impl core::error::Error for CsrError {}
+
+/// Error returned when a snapshot cannot be opened as a CSR graph.
+///
+/// # Performance
+///
+/// `perf: unspecified`; errors are returned only from snapshot-bound paths.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CsrSnapshotError {
+    /// The snapshot has no [`SNAPSHOT_KIND_CSR_OFFSETS`] section.
+    MissingOffsets,
+    /// The snapshot has no [`SNAPSHOT_KIND_CSR_TARGETS`] section.
+    MissingTargets,
+    /// The CSR offsets section payload could not be borrowed as `[U32<LE>]`.
+    OffsetsView(SectionViewError),
+    /// The CSR targets section payload could not be borrowed as `[U32<LE>]`.
+    TargetsView(SectionViewError),
+    /// The CSR offsets section is empty; CSR requires at least one entry
+    /// for the n-plus-one layout.
+    OffsetsEmpty,
+    /// The derived node count would not fit in `u32`.
+    NodeCountOverflow {
+        /// Length of the offsets section.
+        offsets_len: usize,
+    },
+    /// CSR-shape validation failed on the borrowed sections.
+    Csr(CsrError),
+}
+
+impl fmt::Display for CsrSnapshotError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MissingOffsets => formatter.write_str("snapshot has no CSR offsets section"),
+            Self::MissingTargets => formatter.write_str("snapshot has no CSR targets section"),
+            Self::OffsetsView(error) => write!(
+                formatter,
+                "CSR offsets section cannot be borrowed as little-endian u32: {error}"
+            ),
+            Self::TargetsView(error) => write!(
+                formatter,
+                "CSR targets section cannot be borrowed as little-endian u32: {error}"
+            ),
+            Self::OffsetsEmpty => formatter.write_str("CSR offsets section is empty"),
+            Self::NodeCountOverflow { offsets_len } => write!(
+                formatter,
+                "derived node count from offsets length {offsets_len} does not fit u32"
+            ),
+            Self::Csr(error) => write!(formatter, "CSR validation failed: {error}"),
+        }
+    }
+}
+
+impl core::error::Error for CsrSnapshotError {}
 
 /// Converts a `u32` to `usize` and reports overflow on narrow targets.
 ///

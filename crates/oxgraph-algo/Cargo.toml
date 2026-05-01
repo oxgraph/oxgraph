@@ -19,7 +19,7 @@ std = ["alloc"]
 [dev-dependencies]
 criterion = { workspace = true }
 oxgraph-csr = { version = "0.0.0", path = "../oxgraph-csr" }
-oxgraph-snapshot = { version = "0.0.0", path = "../oxgraph-snapshot" }
+oxgraph-snapshot = { version = "0.0.0", path = "../oxgraph-snapshot", features = ["alloc"] }
 oxgraph-topology = { version = "0.0.0", path = "../oxgraph-topology" }
 proptest = { workspace = true }
 
