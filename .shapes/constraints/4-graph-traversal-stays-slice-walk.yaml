@@ -1,0 +1,51 @@
+id: 4
+name: graph traversal stays slice walk
+description: |
+  The ordinary directed graph hot path must compile down close to
+  `offsets[node]..offsets[node+1]` slice iteration. Generalized incidence traversal
+  is the substrate's shared conceptual model, but graph users must NEVER be forced
+  through it for outgoing/incoming edge traversal. A binary graph view can expose an
+  incidence view as a capability, but graph traversal does not flow through it.
+kind: invariant
+rule: |
+  OutgoingGraph / IncomingGraph / OutgoingNeighborsGraph / IncomingNeighborsGraph
+  implementations on borrowed-CSR-style layouts must yield from contiguous offset/
+  target slices without materializing or iterating intermediate incidence records.
+  No future trait change in oxgraph-graph or oxgraph-topology may require incidence-
+  record materialization on the graph hot path.
+enforcement: manual
+profile: 1
+status: canonical
+intent:
+  kind: invariant
+  summary: Ordinary graph traversal compiles to a slice walk — incidence is a separate capability, not a tax on graphs
+  source: human
+  impact_if_violated: |
+    Graphs become slower than petgraph or hand-rolled CSR — the substrate fails its
+    most common workload. The "ordinary graph hot path" promise from vision §9.4 is
+    forfeit and adoption stalls.
+  rationale: |
+    Vision §8.5 ("Incidence should not slow down ordinary graphs") and §9.4 ("Graph
+    performance contract") make this explicit. Confirmed in interview as half of the
+    sibling-layout justification: hot-path purity for graphs is independently
+    sufficient to require the topology / graph / hyper sibling structure rather than
+    encoding hyperedges as graphs.
+  verification_method: |
+    Criterion benches (oxgraph-csr/benches/csr.rs, oxgraph-algo/benches/bfs.rs)
+    defend the slice-walk perf contract. Manual review on any change to the
+    OutgoingGraph / IncomingGraph trait surface.
+realization:
+- bindings:
+  - scheme: path
+    value: crates/oxgraph-csr/src/lib.rs
+    metadata:
+      summary: CsrOutEdges / CsrOutNeighbors yield directly from `&[u32]` slices — no intermediate allocation, no incidence materialization.
+  - scheme: path
+    value: crates/oxgraph-csr/benches/csr.rs
+    metadata:
+      summary: Criterion bench measuring outgoing traversal per edge.
+  - scheme: path
+    value: vision.md
+    metadata:
+      summary: Sections 8.5, 9.4, 15.3 — incidence vs. graph hot-path separation.
+  role: primary

@@ -1,0 +1,46 @@
+id: 1
+name: topology here meaning elsewhere storage anywhere
+description: |
+  The central principle of the substrate. Topology — elements, relations, incidences,
+  roles — is what oxgraph models. Meaning (RDF, property graphs, AI memory, agent
+  workflows, compiler symbols, package deps, ontologies) lives in layers above.
+  Storage (heap, mmap, archived bytes, embedded static, foreign memory, database
+  pages) lives in layers below. Each crate must respect this three-way separation in
+  every public surface decision.
+kind: invariant
+rule: |
+  No public type, trait, function, or constant in any oxgraph crate may presuppose
+  a domain interpretation (RDF / KG / AI / provenance / compiler / etc.) or a
+  specific storage backend (heap / mmap / DB / etc.). Read views are capabilities
+  over abstract IDs; payloads are layered separately and keyed by topology IDs.
+enforcement: manual
+profile: 1
+status: canonical
+intent:
+  kind: invariant
+  summary: Topology is what we model; meaning lives above; storage lives below — every public surface respects the three-way separation
+  source: human
+  impact_if_violated: |
+    The substrate stops being foundational. Downstream domain layers can no longer
+    layer over oxgraph without contamination, and storage backends can no longer be
+    swapped without touching every consumer.
+  rationale: |
+    Without this principle the substrate becomes another opinionated graph framework
+    instead of a foundation. Confirmed in the engineer interview as the load-bearing
+    central principle: oxgraph is being built as the foundational layer that ANY graph
+    work — current or future — can sit on, which only works if domain interpretation
+    and storage decisions are explicitly excluded from the foundation.
+  verification_method: |
+    Manual review during PRs. Pause-and-ask gate (constraint 21) covers public API
+    reshuffles where this principle is most at risk.
+realization:
+- bindings:
+  - scheme: path
+    value: vision.md
+    metadata:
+      summary: Sections 5-12 — "Structure below. Meaning above." stated as the project's guiding phrase.
+  - scheme: path
+    value: README.md
+    metadata:
+      summary: First paragraph — "storage-agnostic, zero-copy-friendly topology access layer".
+  role: primary

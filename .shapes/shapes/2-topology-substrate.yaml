@@ -1,0 +1,52 @@
+id: 2
+name: topology substrate
+description: |
+  The truly minimal shared vocabulary beneath both binary graphs and hypergraphs:
+  elements, relations, incidences, roles, and capability-typed read views over them.
+  no_std. No concrete node, edge, vertex, hyperedge, incidence, storage, or role types
+  are defined here — implementations provide them through associated types. This crate
+  is for implementers and advanced library authors; most users never depend on it
+  directly because the graph and hypergraph wrapper crates re-export its trait surface.
+profile: 1
+status: canonical
+intent:
+  kind: module
+  summary: Minimal no_std vocabulary for discrete topology — elements, relations, incidences, roles
+  source: human
+  goals: |
+    - Define the smallest set of read-view capability traits both graph and hypergraph
+      backends need: TopologyBase, IncidenceBase, ElementIndex, RelationIndex,
+      ElementSuccessors, ElementPredecessors, RelationIncidences, ElementIncidences, etc.
+    - Stay no_std. Stay dependency-light. Stay boring and stable.
+    - Use associated types for IDs and roles so views can pick their own identity layer
+      and integer width.
+    - Re-export through oxgraph-graph and oxgraph-hyper so downstream impl crates do not
+      need to depend on oxgraph-topology directly.
+  non_goals: |
+    No CSR, CSC, COO, snapshot binary format, builders, graph or hypergraph algorithms,
+    RDF/property-graph/AI/provenance concepts, mutation storage engines, mmap support, or
+    domain semantics. No default concrete ID newtypes — see constraint 17.
+  rationale: |
+    Both binary graphs and hypergraphs need element/relation identity, incidence
+    traversal, and capability advertisement, but they should NOT be forced through the
+    same hot path. Putting the shared vocabulary in a sibling-root crate (with graph and
+    hyper above as siblings) is the only architecture that preserves both hot-path purity
+    and semantic honesty. Concrete ID newtypes are deliberately not provided: identity is
+    layer-specific (layout-local vs canonical-substrate vs domain), and width is target-
+    specific (u16 / u32 / u64). Locking either would be a substrate-level mistake.
+constraints:
+- 17
+realization:
+- bindings:
+  - scheme: path
+    value: crates/oxgraph-topology
+    metadata:
+      summary: The crate root. Defines the trait DAG and the no_std capability surface.
+  - scheme: path
+    value: crates/oxgraph-topology/src/lib.rs
+    metadata:
+      summary: All traits live in the single lib file — TopologyId, TopologyBase, IncidenceBase, indexes, counts, traversal, view bundle.
+  role: primary
+parents:
+- id: 1
+  role: component

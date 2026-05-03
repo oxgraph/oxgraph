@@ -1,0 +1,51 @@
+id: 18
+name: block bypass hook denies shortcuts
+description: |
+  `.claude/hooks/block-bypass.sh` is a `PreToolUse` Bash hook (wired through the
+  gitignored `.claude/settings.local.json`) that denies known agent-side bypass
+  patterns: `--no-verify`, clippy `-A` / `--allow` / `--cap-lints`,
+  `RUSTFLAGS=…-A`, `SKIP=`, `core.hooksPath`, `prek uninstall`. Tighten the regex
+  on false positives; do NOT route around the hook.
+kind: boundary
+rule: |
+  `.claude/hooks/block-bypass.sh` exists and is invoked from the local
+  `.claude/settings.local.json` PreToolUse Bash matcher. It denies any Bash
+  command containing the bypass patterns above. Agents must NOT modify the hook
+  script to widen what it allows; if a legitimate command produces a false
+  positive, the regex tightens (does not loosen). Direct edits to the hook
+  require pause-and-ask (constraint 21).
+enforcement: machine
+profile: 1
+status: canonical
+intent:
+  kind: boundary
+  summary: block-bypass.sh denies agent bypass attempts (--no-verify, -A, --cap-lints, RUSTFLAGS=…-A, SKIP=, core.hooksPath, prek uninstall) and is itself locked by pause-and-ask
+  source: human
+  impact_if_violated: |
+    Strict lint posture becomes voluntary; agents discover bypass paths over time;
+    quality gates degrade without anyone noticing because each individual bypass
+    looks reasonable in isolation.
+  rationale: |
+    Confirmed in interview as substrate longevity + scar tissue from past bypass
+    attempts + signal preservation under high agent write velocity, all stacked.
+    Agent write-cost is ~0; without a hook that fails closed on bypass patterns,
+    "the easy way" diverges from "the right way" and the strict-lint posture
+    erodes silently. The hook is itself a substrate-longevity decision.
+  verification_method: |
+    The Claude Code PreToolUse hook system enforces it on every Bash tool call.
+    Manual review on any change to `.claude/hooks/block-bypass.sh`.
+realization:
+- bindings:
+  - scheme: path
+    value: .claude/hooks/block-bypass.sh
+    metadata:
+      summary: The bash script that reads tool-use JSON on stdin, extracts tool_input.command, denies on bypass patterns, and fails closed on parse error.
+  - scheme: path
+    value: .claude/settings.local.json
+    metadata:
+      summary: Gitignored local settings — wires block-bypass.sh as the PreToolUse Bash matcher.
+  - scheme: path
+    value: README.md
+    metadata:
+      summary: README "Strictness" + "Getting started" sections explain how to install the hook locally.
+  role: primary

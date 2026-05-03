@@ -1,0 +1,118 @@
+id: 1
+name: software starter profile
+description: Starter profile seeded from the software kit (Software engineering project). Edit freely.
+status: canonical
+intent:
+  kind: governance
+  summary: Domain governance seeded from the software starter kit
+  source: system
+fields:
+  shape:
+    default_kind: feature
+    intent:
+      fields:
+      - name: goals
+        description: What this shape must achieve — concrete, observable outcomes
+        required: true
+      - name: rationale
+        description: Why this approach was chosen over alternatives
+        required: true
+      - name: non_goals
+        description: What is explicitly out of scope
+        required: false
+      - name: requirements
+        description: Specific functional requirements this shape must meet
+        required: false
+      kinds:
+      - name: system
+        description: Top-level system — the project as a whole
+        required: false
+      - name: service
+        description: A long-running service or daemon
+        required: false
+      - name: feature
+        description: A user-facing capability
+        required: false
+      - name: module
+        description: A cohesive code module
+        required: false
+      - name: interface
+        description: An API, contract, or boundary
+        required: false
+      - name: data-flow
+        description: How data moves through the system
+        required: false
+      - name: pattern
+        description: A reusable design pattern
+        required: false
+      sources:
+      - name: human
+        description: Hand-authored by an engineer
+        required: false
+      - name: ai
+        description: Authored by an AI agent
+        required: false
+    realization:
+      fields:
+      - name: summary
+        description: Brief description of what this binding points to
+        required: true
+    evidence:
+      fields:
+      - name: summary
+        description: Brief description of what this binding points to
+        required: true
+  constraint:
+    default_kind: invariant
+    intent:
+      fields:
+      - name: rationale
+        description: Why this rule exists — the incident or decision that created it
+        required: true
+      - name: impact_if_violated
+        description: What breaks if this rule is violated, and how badly
+        required: false
+      - name: exceptions
+        description: Known cases where this rule does not apply
+        required: false
+      - name: verification_method
+        description: How compliance is checked (test, review, lint, audit)
+        required: false
+      kinds:
+      - name: invariant
+        description: Must always hold — violating it is a bug
+        required: false
+      - name: requirement
+        description: Functional requirement the system must meet
+        required: false
+      - name: boundary
+        description: Hard architectural boundary
+        required: false
+      - name: guideline
+        description: Recommended practice; deviations need justification
+        required: false
+      - name: limit
+        description: A quantitative cap (rate, size, count, latency)
+        required: false
+      - name: policy
+        description: Organizational or compliance rule
+        required: false
+      sources:
+      - name: human
+        description: Hand-authored by an engineer
+        required: false
+      - name: ai
+        description: Authored by an AI agent
+        required: false
+    realization:
+      fields:
+      - name: summary
+        description: Brief description of what this binding points to
+        required: true
+    evidence:
+      fields:
+      - name: summary
+        description: Brief description of what this binding points to
+        required: true
+amendment_rules:
+  application: merge

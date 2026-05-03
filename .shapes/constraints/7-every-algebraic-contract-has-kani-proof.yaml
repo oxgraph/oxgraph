@@ -1,0 +1,52 @@
+id: 7
+name: every algebraic contract has kani proof
+description: |
+  Second row of the verification matrix from CLAUDE.md. Any data type with an
+  algebraic contract — PartialEq symmetry, Hash↔Eq agreement, Ord totality, serde
+  roundtrip, merge laws, identity laws — gets a `#[kani::proof]` per property.
+  Skip only where kani cannot reach (unbounded loops, IO, async); mark every skip
+  with `// kani-skip: <reason>`.
+kind: requirement
+rule: |
+  For each public type carrying an algebraic contract, there is a corresponding
+  `#[kani::proof]` harness in the same crate's `src/proofs.rs` (or equivalent
+  location) that exhausts the contract's symbolic input space. Properties skipped
+  because kani cannot reach them carry an inline `// kani-skip: <reason>` comment
+  naming the specific reachability obstacle (unbounded loop, IO, async, etc.).
+  `cargo kani --workspace` must pass under `just verify`.
+enforcement: manual
+profile: 1
+status: canonical
+intent:
+  kind: requirement
+  summary: 'Row 2 of the verification matrix: algebraic contracts get kani proofs; skips carry kani-skip reasons'
+  source: human
+  impact_if_violated: |
+    Algebraic-contract bugs (asymmetric PartialEq, broken Hash↔Eq, non-total Ord)
+    survive into production. The substrate's "provably correct" promise weakens.
+  rationale: |
+    CLAUDE.md verification-defaults table. Algebraic contracts are exactly the
+    properties symbolic execution can prove cheaply and proptest can only sample.
+    Skipping kani when it can reach a property is leaving correctness signal on the
+    table; using kani when it cannot reach (unbounded loops, IO, async) wastes CI
+    compute and is the ceiling violation the matrix exists to prevent.
+  verification_method: |
+    `cargo kani --workspace` (heavy `just verify` gate, run pre-PR or on demand).
+parents:
+- id: 10
+  role: component
+realization:
+- bindings:
+  - scheme: path
+    value: CLAUDE.md
+    metadata:
+      summary: Verification-defaults table, row 2.
+  - scheme: path
+    value: crates/oxgraph-snapshot/src/proofs.rs
+    metadata:
+      summary: Kani harnesses for the snapshot container — header parsing totality, malformed-bytes never panics, plan/open roundtrip, FORMAT_MAGIC.
+  - scheme: path
+    value: crates/oxgraph-hyper-bcsr/src/proofs.rs
+    metadata:
+      summary: Kani harnesses for bipartite-CSR — Layout/Strict totality, u32-cap arithmetic non-overflow, u32→usize narrowing safety.
+  role: primary

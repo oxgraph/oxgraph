@@ -1,0 +1,62 @@
+id: 8
+name: snapshot v1 format
+description: |
+  The actual byte layout that snapshot v1.0 commits to (read by any conformant reader
+  in this language or another). Header is 32 bytes — 8-byte magic "OXGTOPO\0", four
+  u32 LE fields (format_major=1, format_minor=0, header_size=32, section_count), and
+  8 bytes of `reserved` that must be zero. Each section table entry is 32 bytes —
+  u64 offset, u64 length, u32 kind, u32 version, 4 bytes reserved_checksum (must be
+  zero in v1, future per-section CRC32C slot), u8 alignment_log2 (cap 12), u8 flags
+  (must be zero in v1), 2 bytes reserved (must be zero in v1). All multi-byte fields
+  are little-endian and stored unaligned so snapshots can be borrowed from any byte
+  slice without an alignment check on the base pointer.
+profile: 1
+status: canonical
+intent:
+  kind: interface
+  summary: The byte layout of snapshot v1.0 — header, section table, payload region
+  source: human
+  goals: |
+    - Specify a portable, deterministic, mmap-friendly byte format independent of Rust
+      compiler layout.
+    - Reserve fields for forward compatibility (per-section CRC, REQUIRED flags, future
+      mmap helpers, future u64 BCSR variants in section kinds 0x0018..=0x001F).
+    - Bound validation cost (MAX_SECTION_COUNT=1024 keeps the duplicate-kind walk
+      O(s^2) but tractable; MAX_ALIGNMENT_LOG2=12 caps payload alignment at 4 KiB).
+    - Be the first ABI-candidate that future minors can extend without breaking
+      readers of the original format.
+  non_goals: |
+    Not yet a stable ABI — see constraint 22. No CRC verification. No REQUIRED-section
+    enforcement. No multi-instance sections. No mmap helpers in v1 (std feature
+    reserved). Reserved fields are forward-compatibility hooks following standard
+    binary-format hygiene; their activation discipline is intentionally undefined until
+    real downstream pressure surfaces.
+  rationale: |
+    Rust struct serialization is not a portable long-term format. A topology
+    interchange byte format must be independent of compiler layout choices. The
+    sectioned design preserves an upgrade path: unknown sections are skippable, the
+    flags byte gates required-vs-optional consumer policy, and minor bumps can enable
+    reserved fields one at a time. v1 deliberately ships strict
+    (MAX_SUPPORTED_MINOR=0, all reserved fields must be zero) so future activation of
+    a reserved field is a deliberate per-minor decision rather than gradual drift.
+constraints:
+- 15
+- 22
+realization:
+- bindings:
+  - scheme: path
+    value: crates/oxgraph-snapshot/src/container/header.rs
+    metadata:
+      summary: RawHeader — 32-byte fixed header with the four u32 LE fields + 8-byte reserved tail; alignment 1 so it borrows from any byte slice.
+  - scheme: path
+    value: crates/oxgraph-snapshot/src/container/section.rs
+    metadata:
+      summary: RawSectionEntry — 32-byte section table entry; reserved_checksum/flags/reserved fields gated to zero in v1.
+  - scheme: path
+    value: crates/oxgraph-snapshot/src/container/validate.rs
+    metadata:
+      summary: ValidationLevel and the layout walk that enforces zero-reserved invariants and bounds.
+  role: primary
+parents:
+- id: 7
+  role: component

@@ -1,0 +1,110 @@
+id: 1
+name: oxgraph substrate
+description: |
+  The root system: a storage-agnostic, zero-copy-friendly topology substrate for Rust.
+  "Topology here. Meaning elsewhere. Storage anywhere." It is not a graph database, an
+  RDF store, a knowledge-graph framework, or an AI-memory framework. It is the layered
+  lower-substrate that all of those things can build on top of without contaminating
+  each other or the foundation. The first concrete proof is opening a 100M-edge graph
+  snapshot and traversing it without heap reconstruction; the larger ambition is to
+  occupy a "bytes / serde / rkyv / Arrow / tracing" foundational role for topology-
+  shaped data.
+profile: 1
+status: canonical
+intent:
+  kind: system
+  summary: Storage-agnostic, zero-copy-friendly topology substrate for Rust
+  source: human
+  goals: |
+    - Layered architecture with a tiny no_std core and capability-typed read views.
+    - Provably correct, agnostic, performant substrate that anything can be built on top of.
+    - Serve all four user audiences as first-class: library/framework authors,
+      performance-sensitive end-users, embedded/no_std consumers, and substrate-shape
+      designers. No single audience wins trade-offs by default.
+    - Headline demo: build a large directed graph, freeze to a compact snapshot,
+      mmap-validate it, and traverse without heap reconstruction.
+  non_goals: |
+    Not a graph database, RDF store, property graph engine, ontology system, AI-memory
+    framework, GraphRAG framework, distributed graph processing system, full hypergraph
+    mathematics library, replacement for every in-memory graph crate, universal graph
+    algorithm library, semantic modeling language, or product/domain modeling framework.
+    The substrate may support systems that do those things; it must not become any of
+    them.
+  rationale: |
+    Graph-shaped data is everywhere, but every domain reinvents IDs, traversal,
+    snapshotting, validation, and indexes from scratch. Existing graph crates either own
+    the data structure (heap-graph centric) or ship as a domain-specific system (DBs, RDF
+    stores). The missing layer is a neutral substrate where algorithms target
+    *capabilities* rather than concrete owned types, and where a snapshot can be a
+    portable interchange artifact rather than a Rust-struct serialization. Choosing
+    "substrate first, features later" is the bet that getting the lower layer right pays
+    off across decades of consumers.
+constraints:
+- 1
+- 2
+- 3
+- 6
+- 7
+- 8
+- 9
+- 10
+- 11
+- 12
+- 13
+- 14
+- 15
+- 16
+- 18
+- 19
+- 20
+- 21
+- 23
+- 25
+realization:
+- bindings:
+  - scheme: path
+    value: Cargo.toml
+    metadata:
+      summary: Workspace manifest declaring the seven kernel crates plus the umbrella crate, with deny-by-default lint groups.
+  - scheme: path
+    value: vision.md
+    metadata:
+      summary: The reference document — what belongs in topology, what belongs in graph/hypergraph/layouts/snapshots, what does not belong at all.
+  - scheme: path
+    value: CLAUDE.md
+    metadata:
+      summary: Project-level guidance — verification matrix, library discipline, enforcement, anti-patterns, pause-and-ask triggers.
+  - scheme: path
+    value: foundation-progress.md
+    metadata:
+      summary: Implementation tracker — what has been built, what was deferred, where implementation diverged from the original plan and why.
+  role: primary
+children:
+- shape: 2
+  role: component
+- shape: 3
+  role: component
+- shape: 4
+  role: component
+- shape: 5
+  role: component
+- shape: 6
+  role: component
+- shape: 7
+  role: component
+- shape: 9
+  role: component
+- shape: 11
+  role: component
+- shape: 12
+  role: pattern
+- shape: 13
+  role: pattern
+- shape: 14
+  role: pattern
+- shape: 15
+  role: pattern
+- shape: 16
+  role: pending
+- shape: 17
+  role: pending

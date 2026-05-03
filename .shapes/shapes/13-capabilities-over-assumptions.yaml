@@ -1,0 +1,51 @@
+id: 13
+name: capabilities over assumptions
+description: |
+  The pattern that keeps oxgraph from forcing every backend to pay for every feature.
+  Each topology aspect — outgoing traversal, incoming traversal, endpoint lookup,
+  incidence access, mutability, append-only semantics, freezability, stable canonical
+  identity, domain identity mapping, contiguous-slice traversal — is a separate
+  capability trait. Algorithms declare what they need; views declare what they
+  provide; the type system rejects mismatches at compile time.
+profile: 1
+status: canonical
+intent:
+  kind: pattern
+  summary: Topology features are advertised through capability traits — algorithms declare what they need, views declare what they provide
+  source: human
+  goals: |
+    - One capability trait per discrete feature, with clear `extends` relationships
+      so consumers can require the smallest set that meets their needs.
+    - Tier capabilities (generic iterator → exact-size → contiguous slice → validated
+      section) so generic algorithms remain ergonomic while hot-path algorithms can
+      demand stronger contracts.
+    - Use blanket impls between sibling wrapper traits (graph/hyper) and the topology
+      trait surface so backends only implement once.
+  non_goals: |
+    Not capability-trait sprawl: capabilities should appear when concrete
+    implementation pressure justifies them, not speculatively. The verification matrix
+    catches "trait with no contract".
+  rationale: |
+    Different topology backends genuinely have different capabilities. A CSR view has
+    no incoming traversal; a mutable builder has no stable canonical IDs; a generated
+    projection may have no global counts. Modeling these as one universal trait would
+    force backends to lie or panic. Capability typing makes the missing piece a
+    compile-time fact.
+realization:
+- bindings:
+  - scheme: path
+    value: crates/oxgraph-topology/src/lib.rs
+    metadata:
+      summary: ContainsElement / ContainsRelation / ContainsIncidence / ElementSuccessors / ElementPredecessors / RelationIncidences / ElementIncidences — each is opt-in.
+  - scheme: path
+    value: crates/oxgraph-graph/src/lib.rs
+    metadata:
+      summary: OutgoingGraph / IncomingGraph / OutgoingNeighborsGraph / IncomingNeighborsGraph / EdgeEndpointGraph / DirectedGraph / ForwardGraph / ReverseGraph — separate capability traits with extends relationships.
+  - scheme: path
+    value: vision.md
+    metadata:
+      summary: Section 14 ("Capabilities Over Assumptions") and Section 15 ("Capability Tiers") — design principle stated explicitly.
+  role: primary
+parents:
+- id: 1
+  role: pattern

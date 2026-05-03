@@ -1,0 +1,47 @@
+id: 23
+name: examples are educational not optimized
+description: |
+  Every workspace crate ships executable `examples/` that show how the crate is
+  used. Examples are TEACHING tools — they demonstrate the trait surface, the
+  snapshot-open path, the BFS storage tiers — and are deliberately NOT optimized
+  or treated as production code paths. Their job is clarity, not throughput.
+kind: guideline
+rule: |
+  Each crate has at least one `examples/*.rs` that exercises its public surface.
+  Examples favor readability over throughput: no manual loop unrolling, no
+  unsafe optimizations, no suppressed lints, no SIMD. They follow the
+  verification matrix where applicable but do not act as benchmarks (those live
+  in `benches/`).
+enforcement: manual
+profile: 1
+status: canonical
+intent:
+  kind: guideline
+  summary: Every crate ships examples — they are educational, NOT optimized; do not let them become production code paths
+  source: human
+  impact_if_violated: |
+    Examples become unreadable to new contributors; documentation drifts; the
+    substrate's onboarding surface narrows.
+  rationale: |
+    Confirmed in interview as an unwritten project rule worth elevating. README and
+    foundation-progress both name the examples as educational. Without this
+    constraint, examples drift toward "the fastest way to do X" which then leaks
+    optimization patterns into the doc surface and confuses contributors about
+    what the substrate's contract actually is.
+  verification_method: |
+    Manual review at PR time on any change to `examples/*.rs`.
+realization:
+- bindings:
+  - scheme: path
+    value: README.md
+    metadata:
+      summary: Every workspace crate should include executable examples under examples/ that show how the crate is used.
+  - scheme: path
+    value: foundation-progress.md
+    metadata:
+      summary: Examples section — "The examples are intentionally educational. They are not optimized graph or hypergraph storage implementations."
+  - scheme: path
+    value: crates/oxgraph-csr/examples/csr_directed.rs
+    metadata:
+      summary: Example of the educational style — clear, minimal, exercises the trait surface.
+  role: primary

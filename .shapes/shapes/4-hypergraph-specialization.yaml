@@ -1,0 +1,52 @@
+id: 4
+name: hypergraph specialization
+description: |
+  The sibling specialization of oxgraph-topology for hypergraphs and directed
+  hypergraphs. Provides vertex/hyperedge/participant vocabulary, incident-hyperedge
+  traversal, directed source/target participant sets, directed vertex-expansion
+  primitives, and the Hypergraph capability bundle. Symmetric with oxgraph-graph: every
+  topology trait used by hypergraph backends has a hypergraph-facing wrapper with a
+  delegating default and a blanket impl. Re-exports the topology trait surface.
+profile: 1
+status: canonical
+intent:
+  kind: module
+  summary: Storage-agnostic vertex/hyperedge/participant vocabulary above the topology substrate
+  source: human
+  goals: |
+    - Expose hypergraph-facing aliases (VertexId, HyperedgeId, ParticipantId,
+      ParticipantRole) and the hyperedge/participant trait DAG.
+    - Preserve "one relation, many participants" as a first-class concept — hyperedges
+      are not encoded as graphs.
+    - Provide directed hyperedge primitives: head/tail participant sets, directed vertex
+      successors, directed vertex predecessors.
+    - Stay first-class architecturally even if concrete hypergraph features mature later
+      than the graph hot path.
+  non_goals: |
+    No oriented-hypergraph variants beyond head/tail directed participation. No factor
+    graphs, simplicial complexes, cell complexes, tensors, or category-theoretic
+    structures. No concrete hypergraph layout, snapshot, builder, mutation, or payload
+    types in this crate.
+  rationale: |
+    A hyperedge connecting 5 participants in one relation is fundamentally different
+    from 5 pairwise graph edges — collapsing them loses information at the substrate.
+    Hypergraphs are not "graphs with bigger edges"; they are a different specialization
+    of topology. Building hyper above graph (encoding hyperedges as star/clique
+    expansions) would lose semantic honesty at the substrate level. The sibling layout
+    is non-negotiable.
+constraints:
+- 5
+realization:
+- bindings:
+  - scheme: path
+    value: crates/oxgraph-hyper
+    metadata:
+      summary: The crate root. Defines hypergraph-facing aliases and the wrapper trait DAG over topology elements/relations/incidences.
+  - scheme: path
+    value: crates/oxgraph-hyper/src/lib.rs
+    metadata:
+      summary: All hypergraph traits — HypergraphBase, HypergraphCounts, vertex/hyperedge/participant indexes, HyperedgeParticipants, IncidentHyperedges, DirectedHyperedgeParticipants, DirectedVertexSuccessors/Predecessors, Hypergraph bundle.
+  role: primary
+parents:
+- id: 1
+  role: component

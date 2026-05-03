@@ -1,0 +1,35 @@
+id: 17
+name: CSC reverse traversal
+description: |
+  The deliberately-pending design slot for incoming traversal in binary graphs.
+  oxgraph-csr is forward-only by design; CSC (compressed sparse column) or another
+  reverse-index layout will be added when an algorithm or snapshot use case actually
+  requires incoming traversal. Reserved here so the design space is acknowledged
+  without implying it ships in v1.
+profile: 1
+status: proposed
+intent:
+  kind: feature
+  summary: Incoming traversal layout for binary graphs — added when an algorithm or snapshot use case requires it
+  source: human
+  goals: |
+    - Make the missing reverse-traversal layer visible in the shape graph so future
+      contributors can find it before reinventing the same slot.
+    - When pressure arrives, ship as a sibling crate to oxgraph-csr (e.g., oxgraph-csc
+      or a unified oxgraph-graph-layout crate) rather than bolting incoming traversal
+      onto oxgraph-csr.
+    - Validate by an algorithm that needs reverse reachability (impact analysis,
+      bidirectional search, provenance backtracking) or a snapshot consumer that needs
+      backlinks at scale.
+  non_goals: |
+    No COO, edge-table, or unified layout abstraction in this shape — those are
+    independent design slots. No commitment to a specific section-kind layout until
+    the first consumer surfaces.
+  rationale: |
+    CSR is the smallest useful concrete graph layout; CSC doubles the storage cost and
+    adds a second validation surface. Adding it before a real consumer needs it would
+    be speculative work that defends no contract. The reservation here is an honest
+    acknowledgment that the substrate's read surface is currently asymmetric.
+parents:
+- id: 1
+  role: pending

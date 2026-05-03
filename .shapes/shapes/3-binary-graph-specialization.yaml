@@ -1,0 +1,49 @@
+id: 3
+name: binary graph specialization
+description: |
+  The sibling specialization of oxgraph-topology for ordinary directed binary graphs.
+  Provides node/edge vocabulary, endpoint lookup, outgoing and incoming traversal,
+  direct-neighbor capability, and the DirectedGraph capability bundle. Anchored to
+  oxgraph-topology — graph nodes ARE topology elements, graph edges ARE topology
+  relations — and re-exports the topology trait surface so downstream layouts only
+  depend on oxgraph-graph. This is the crate ordinary graph users target.
+profile: 1
+status: canonical
+intent:
+  kind: module
+  summary: Storage-agnostic node/edge vocabulary above the topology substrate
+  source: human
+  goals: |
+    - Expose node/edge vocabulary aliases (NodeId, EdgeId, EndpointId, EndpointRole) for
+      ergonomic graph code over topology IDs.
+    - Provide outgoing/incoming traversal, endpoint lookup, in/out-degree counts, and
+      direct-neighbor capability as separate capability traits.
+    - Keep the graph hot path close to `offsets[node]..offsets[node+1]` — never require
+      ordinary graph traversal to materialize generalized incidence records.
+  non_goals: |
+    No concrete graph, node, edge, CSR/CSC/COO, snapshot, builder, mutation, or payload
+    types. Direct-neighbor traversal is exposed as a capability, but layouts that cannot
+    materialize neighbor IDs without edge-ID resolution simply do not implement it.
+  rationale: |
+    Ordinary directed graphs are the most common and performance-critical case, and a
+    graph user should not have to think about general incidence topology to run BFS or
+    traverse dependencies. Sibling layout (graph + hyper as peers above topology) was
+    chosen because it preserves both (a) the slice-walk hot path for graphs and (b) the
+    one-relation-many-participants semantics for hypergraphs — either reason alone would
+    have justified the split.
+constraints:
+- 4
+realization:
+- bindings:
+  - scheme: path
+    value: crates/oxgraph-graph
+    metadata:
+      summary: The crate root. Defines graph-facing aliases and capability traits over topology elements/relations.
+  - scheme: path
+    value: crates/oxgraph-graph/src/lib.rs
+    metadata:
+      summary: All graph traits — GraphBase, GraphCounts, NodeIndex, EdgeIndex, OutgoingGraph, IncomingGraph, OutgoingNeighborsGraph, IncomingNeighborsGraph, DirectedGraph, ForwardGraph, ReverseGraph.
+  role: primary
+parents:
+- id: 1
+  role: component

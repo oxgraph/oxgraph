@@ -1,0 +1,53 @@
+id: 15
+name: wire formats use zerocopy derive
+description: |
+  Any struct that crosses an IO boundary — wire formats, stored records, audit
+  entries, snapshot headers, section table entries — uses zerocopy derives
+  (`#[derive(FromBytes, IntoBytes, Immutable, KnownLayout)]`). Borrow validated
+  bytes, do not parse into owned intermediaries. Allocations on the data path
+  require contract-level justification.
+kind: invariant
+rule: |
+  Every struct in any oxgraph crate that represents an IO-boundary record (read
+  from / written to bytes) carries `#[derive(FromBytes, IntoBytes, Immutable,
+  KnownLayout)]` and `#[repr(C)]`. Allocations on the data path (Vec, String,
+  Box) require an inline doc comment justifying the contract that necessitates
+  them.
+enforcement: manual
+profile: 1
+status: canonical
+intent:
+  kind: invariant
+  summary: IO-boundary structs use zerocopy derives — no owned-intermediary parse step
+  source: human
+  impact_if_violated: |
+    The headline mmap-traversal demo collapses; allocation cost dominates open
+    time; the substrate fails its "zero-copy-friendly" promise.
+  rationale: |
+    CLAUDE.md "Data layout: zero-copy" states this directly. The headline use case
+    (open a 100M-edge snapshot from mmap'd bytes and traverse without heap
+    reconstruction) requires that the substrate never inserts a parse-and-allocate
+    step between bytes and traversal. zerocopy gives that without touching unsafe
+    code (constraint 11 stays forbid).
+  verification_method: |
+    Manual review at PR time, plus the kani harness for snapshot::open totality
+    that ensures malformed inputs never crash through safe APIs (§22.1 invariant).
+realization:
+- bindings:
+  - scheme: path
+    value: CLAUDE.md
+    metadata:
+      summary: 'Data layout: zero-copy — Reach for zerocopy before String / Vec — allocations on the data path need a contract-level justification.'
+  - scheme: path
+    value: Cargo.toml
+    metadata:
+      summary: '[workspace.dependencies] declares zerocopy = 0.8.48 with derive feature.'
+  - scheme: path
+    value: crates/oxgraph-snapshot/src/container/header.rs
+    metadata:
+      summary: 'RawHeader uses #[derive(FromBytes, IntoBytes, Immutable, KnownLayout)] + #[repr(C)].'
+  - scheme: path
+    value: crates/oxgraph-snapshot/src/container/section.rs
+    metadata:
+      summary: RawSectionEntry uses zerocopy derives; alignment 1 so it borrows from any byte slice.
+  role: primary

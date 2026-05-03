@@ -1,0 +1,47 @@
+id: 9
+name: "every pub doc states perf contract"
+description: |
+    Fourth row of the verification matrix. Every pub item's doc must include a perf
+    contract — either an explicit complexity / latency claim ("O(n)", "≤ 1ms for n ≤
+    10k") or the literal string "perf: unspecified" when no contract is being made.
+    Both are valid; silence is not.
+kind: "requirement"
+rule: |
+    Every pub item (struct, enum, trait, fn, const, type alias, module) in any
+    oxgraph crate has a `# Performance` doc section that states either a specific
+    complexity / latency contract or the literal phrase `perf: unspecified`. The
+    doc-lint settings (missing_docs = deny, missing_docs_in_private_items = deny)
+    catch the missing-doc case; manual review catches the missing-perf-section case.
+enforcement: manual
+profile: 1
+status: canonical
+intent:
+  kind: "requirement"
+  summary: "Row 4 of the verification matrix: every pub doc states a perf contract or perf: unspecified"
+  source: "human"
+  rationale: |
+    CLAUDE.md verification-defaults table. Perf contracts in docs are how consumers
+    plan their workloads. Saying "perf: unspecified" honestly is far better than
+    silence (consumers can ask) — and it tells the next bench author NOT to write a
+    criterion bench (constraint 8) for this surface.
+  impact_if_violated: |
+    Consumers infer perf characteristics from naming and surface area instead of
+    contracts; the substrate's perf claims drift from reality. CI cannot tell which
+    pub items genuinely defend a contract vs. which simply have not committed yet.
+  verification_method: |
+    Manual review on every PR; the doc-lint floor catches the broader missing-doc
+    failure.
+parents:
+- id: 10
+  role: component
+realization:
+  - bindings:
+      - scheme: path
+        value: CLAUDE.md
+        metadata:
+          summary: Verification-defaults table, row 4.
+      - scheme: path
+        value: crates/oxgraph-topology/src/lib.rs
+        metadata:
+          summary: 'Every trait and item carries a `# Performance` section; uses `perf: unspecified` for trait-level items whose performance is inherited from impls.'
+    role: primary

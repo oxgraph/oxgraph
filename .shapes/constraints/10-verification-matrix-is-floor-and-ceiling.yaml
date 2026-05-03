@@ -1,0 +1,55 @@
+id: 10
+name: "verification matrix is floor and ceiling"
+description: |
+    The matrix from CLAUDE.md (rows captured in constraints 6, 7, 8, 9) is BOTH a
+    floor AND a ceiling. Floor: every stated public contract gets matrix verification.
+    Ceiling: nothing without a stated public contract gets matrix verification —
+    benches that defend no contract, kani proofs of what the type system already
+    guarantees, and proptests of trivial pure functions are anti-patterns.
+kind: "invariant"
+rule: |
+    For each public surface in any oxgraph crate, the verification effort must match
+    the contract: a stated perf contract requires a criterion bench (and not a kani
+    proof); an algebraic contract requires a kani proof (and not a perf bench); a
+    documented invariant on data input requires a proptest. Verification effort
+    without a stated contract — bench files for surfaces with no perf claim, kani
+    harnesses for properties the type system already enforces, redundant proptests
+    that re-prove what kani already proved — must be removed during review.
+enforcement: manual
+profile: 1
+status: canonical
+intent:
+  kind: "invariant"
+  summary: "The verification matrix is BOTH a floor (must hit it for stated contracts) AND a ceiling (do not bench/prove things that defend no contract)"
+  source: "human"
+  rationale: |
+    Confirmed in interview. CLAUDE.md anti-patterns list: "Benchmarks defending no
+    contract", "Proving things the type system already guarantees", "Coverage
+    chasing" are all named as forbidden. The matrix exists so verification quantity
+    tracks contract quantity — agent write-cost is ~0 and CI compute / signal
+    quality are the real constraints.
+  impact_if_violated: |
+    Either the substrate underverifies its real contracts (defects ship) or it
+    oververifies trivia (CI compute drowns, signal degrades, real defects hide in
+    the noise). Both outcomes forfeit the "provably correct, performant" v1 promise.
+  verification_method: |
+    PR review against CLAUDE.md anti-patterns list and the verification-defaults
+    table.
+
+children:
+  - constraint: 6
+    role: component
+  - constraint: 7
+    role: component
+  - constraint: 8
+    role: component
+  - constraint: 9
+    role: component
+
+realization:
+  - bindings:
+      - scheme: path
+        value: CLAUDE.md
+        metadata:
+          summary: '"Verification defaults" table + "Anti-patterns" list — floor and ceiling stated together.'
+    role: primary

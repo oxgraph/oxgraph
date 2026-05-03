@@ -1,0 +1,41 @@
+id: 21
+name: pause and ask before major changes
+description: |
+  Some changes are irreversible enough that an agent must pause and ask the
+  engineer before proceeding: public API reshuffles, adding a workspace crate,
+  lifting `unsafe_code = "forbid"`, and touching `block-bypass.sh`,
+  `.pre-commit-config.yaml`, or the workspace lint table. Routine code is fair
+  game; structural changes need explicit approval.
+kind: policy
+rule: |
+  Before any of the following actions, an agent stops and asks the engineer:
+  (a) reshuffling a public API in any oxgraph crate, (b) adding a new crate to
+  the workspace, (c) lifting `unsafe_code = "forbid"` in any crate or the
+  workspace, (d) editing `.claude/hooks/block-bypass.sh`, (e) editing
+  `.pre-commit-config.yaml`, (f) editing the `[workspace.lints]` tables in
+  `Cargo.toml`. The agent does not proceed until the engineer responds.
+enforcement: manual
+profile: 1
+status: canonical
+intent:
+  kind: policy
+  summary: Pause and ask before public API reshuffles, adding a workspace crate, lifting unsafe forbid, or touching block-bypass.sh / pre-commit / lint table
+  source: human
+  impact_if_violated: |
+    Surprise breaking changes ship; the substrate's stability story degrades;
+    enforcement gates erode without the engineer realizing.
+  rationale: |
+    CLAUDE.md "Pause and ask before" lists these explicitly. Each action has high
+    blast radius — public API churn breaks consumers; new crates change the
+    dependency DAG; lint table changes cascade across every crate; bypass and
+    pre-commit changes erode the enforcement floor. Asking adds a round-trip;
+    not asking can cost a release.
+  verification_method: |
+    Self-enforcement during agent work. PR review catches anything that escapes.
+realization:
+- bindings:
+  - scheme: path
+    value: CLAUDE.md
+    metadata:
+      summary: Pause and ask before — full list of triggers.
+  role: primary

@@ -1,0 +1,36 @@
+id: 20
+name: no co authored by claude on commits
+description: |
+  Commits in this repo do NOT include "Co-Authored-By: Claude …" trailers (or any
+  other AI-tool co-authorship trailer). Authorship in git history reflects the
+  human responsible for the change, not the tools they used to produce it.
+kind: policy
+rule: |
+  No commit message in any branch under this repo includes a "Co-Authored-By:
+  Claude" trailer or any equivalent AI-tool co-authorship line. The commit
+  message default in the global Claude Code prompt is overridden — agents
+  creating commits must omit the trailer.
+enforcement: manual
+profile: 1
+status: canonical
+intent:
+  kind: policy
+  summary: 'Commits never include Co-Authored-By: Claude (or any AI-tool co-authorship trailer)'
+  source: human
+  impact_if_violated: |
+    Git history pollution; downstream tools that filter authorship break; blame
+    attribution becomes ambiguous.
+  rationale: |
+    CLAUDE.md "Enforcement" states this directly. Authorship in git history is a
+    human-accountability artifact; tools used to produce a change are separate
+    metadata. Mixing them muddies blame, review, and audit. Stays a project policy
+    even though it differs from the global Claude Code default.
+  verification_method: |
+    Manual review at PR time. Agents creating commits must remember to omit.
+realization:
+- bindings:
+  - scheme: path
+    value: CLAUDE.md
+    metadata:
+      summary: 'Enforcement — "No Co-Authored-By: Claude … on commits."'
+  role: primary

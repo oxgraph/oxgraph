@@ -1,0 +1,48 @@
+id: 14
+name: no box dyn or anyhow on public surface
+description: |
+  Public errors are concrete enums implementing `Display` and `core::error::Error`.
+  No `Box<dyn Error>`, no `anyhow::Error`, no `eyre::Report` on the public API.
+  Consumers get to match on specific variants and decide their response per
+  variant.
+kind: boundary
+rule: |
+  No public function in any oxgraph crate returns `Box<dyn Error>`, `anyhow::Error`,
+  or any other type-erased error type. Errors are concrete enums with
+  `impl Display` and `impl core::error::Error` (and `#[non_exhaustive]` where
+  forward extensibility matters).
+enforcement: manual
+profile: 1
+status: canonical
+intent:
+  kind: boundary
+  summary: Public errors are concrete enums implementing Display + core::error::Error — no Box<dyn Error> or anyhow
+  source: human
+  impact_if_violated: |
+    Consumers cannot reliably handle specific failures; downstream integrations
+    accumulate string matching against error messages; substrate stability
+    promises weaken.
+  rationale: |
+    CLAUDE.md "Library discipline" states this. A type-erased public error is a
+    long-term support burden disguised as convenience — consumers cannot match,
+    cannot tell which failure modes exist, cannot tell which variants are stable.
+    Concrete enums force the substrate to enumerate its failure modes, which IS
+    the contract.
+  verification_method: |
+    Manual review at PR time. Workspace lints catch some related smells but
+    Box<dyn Error> requires manual inspection.
+realization:
+- bindings:
+  - scheme: path
+    value: CLAUDE.md
+    metadata:
+      summary: Library discipline — Errors are concrete enums implementing Display and core::error::Error. No Box<dyn Error> / anyhow on the public surface.
+  - scheme: path
+    value: crates/oxgraph-snapshot/src/container/error.rs
+    metadata:
+      summary: Concrete SnapshotError, PlanError, SectionViewError enums — exhaustively listed variants, Display + core::error::Error impls.
+  - scheme: path
+    value: crates/oxgraph-hyper-bcsr/src/error.rs
+    metadata:
+      summary: Concrete BcsrError / BcsrSnapshotError enums — exhaustively listed variants.
+  role: primary

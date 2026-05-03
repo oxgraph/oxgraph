@@ -1,0 +1,39 @@
+id: 16
+name: mutation capabilities
+description: |
+  The deliberately-pending design slot for mutable topology — opt-in capability traits
+  for owned mutable graphs, owned mutable hypergraphs, mutable builders, append-only
+  topologies, base+delta layers, overlay views, copy-on-write topology, and freeze-to-
+  snapshot workflows. Modeled early as a placeholder because mutation changes ID
+  stability, deletion semantics, tombstones, compaction, freezing, and stale-handle
+  behavior — those decisions cannot be retrofitted onto read views without breaking
+  them. Concrete implementation is deferred until pressure surfaces.
+profile: 1
+status: proposed
+intent:
+  kind: interface
+  summary: Capability traits for mutable views — modeled early, implemented incrementally; specific layer shape decided when implementation pressure arrives
+  source: human
+  goals: |
+    - Reserve the design space — make it explicit that mutation is opt-in and capability-
+      typed, not retrofitted onto read traits later.
+    - Distinguish concept tiers up-front: immutable view, mutable view, append-only
+      mutable view, removable mutable view, overlay view, freezable builder, validated
+      snapshot.
+    - When the first concrete need arrives (builder, overlay, or both), commit to a
+      specific layer shape and promote this shape from proposed to canonical with the
+      decision recorded.
+  non_goals: |
+    No concrete builder, overlay, or mutation impl in v1. No commitment yet to
+    generational IDs, tombstones, or compaction policies. No mutation methods on
+    existing read traits — mutation lives in its own capability traits when it lands.
+  rationale: |
+    Mutation cannot be deferred entirely — it is one of the next things to implement.
+    But the specific layer shape is undecided: producer-side (builder + freeze →
+    snapshot), consumer-side (overlay/delta over an immutable view), and capability-
+    traits-only (markers without impls) are all viable first moves and the user has
+    not picked one. Modeling the shape as deliberately-proposed reserves the slot
+    without overfitting it to whichever direction has not yet been chosen.
+parents:
+- id: 1
+  role: pending

@@ -1,0 +1,50 @@
+id: 24
+name: indexed bfs bitset needs benchmark justification
+description: |
+  The indexed BFS visited storage is currently `Vec<u8>` (one byte per node). A
+  move to a packed bitset is the right substrate direction in principle, but it
+  is gated on a criterion benchmark that demonstrates the bitset wins on cache
+  locality without losing on the mutation hot path. Treat the change as a
+  perf-contract change, not a default refactor.
+kind: guideline
+rule: |
+  Before changing `oxgraph-algo`'s indexed BFS visited representation from
+  `Vec<u8>` to a packed bitset (or any other representation), a criterion bench
+  in `oxgraph-algo/benches/bfs.rs` must demonstrate the new representation wins
+  across at least the existing `n ∈ {10k, 100k, 1M}` BFS benchmark sizes
+  without regressing visited-mutation cost. The bench results live with the PR.
+enforcement: manual
+profile: 1
+status: canonical
+intent:
+  kind: guideline
+  summary: Move indexed BFS to packed bitset only after a criterion bench proves it wins on cache without losing on mutation
+  source: human
+  impact_if_violated: |
+    Either the substrate ships a worse representation under the wrong assumption
+    that bitset is always better, or it stays on Vec<u8> forever despite a real
+    cache locality win going unmeasured. Both forfeit the verification-as-
+    contract posture.
+  rationale: |
+    Confirmed in interview as the chosen position from foundation-progress.md's
+    open questions. Bitset is what a serious substrate would expose, but the
+    matrix is also a ceiling (constraint 10) — making the change without
+    benchmark justification is exactly the "benchmarks defending no contract"
+    anti-pattern in reverse. A perf-contract change needs perf-contract evidence.
+  verification_method: |
+    PR review against the existing `oxgraph-algo/benches/bfs.rs` numbers.
+realization:
+- bindings:
+  - scheme: path
+    value: crates/oxgraph-algo/src/bfs/indexed.rs
+    metadata:
+      summary: Current indexed BFS — Vec<u8> visited storage; the implementation this constraint governs.
+  - scheme: path
+    value: crates/oxgraph-algo/benches/bfs.rs
+    metadata:
+      summary: Existing BFS criterion bench — the baseline any future bitset change must beat.
+  - scheme: path
+    value: foundation-progress.md
+    metadata:
+      summary: Open Questions — "Should indexed BFS use a packed bitset instead of Vec<u8> for visited state once benchmarked against cache and mutation costs?" Constraint 24 is the long-term answer.
+  role: primary

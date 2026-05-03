@@ -1,0 +1,50 @@
+id: 6
+name: every public fn taking data has proptest
+description: |
+  First row of the verification matrix from CLAUDE.md. Every public function whose
+  behavior depends on its data argument must be exercised by a proptest strategy
+  that covers its documented invariants. Pure data-free functions (constructors of
+  constants, type-level helpers) are exempt.
+kind: requirement
+rule: |
+  For each public fn in any oxgraph crate that takes a non-trivial data argument
+  (slice, struct, generic input), there must exist a proptest in the same crate's
+  `tests/` (or crate-internal `#[cfg(test)] mod tests`) that constructs arbitrary
+  inputs through a strategy and asserts the documented invariant holds. Functions
+  intentionally outside this requirement carry a doc comment naming why
+  (e.g. "perf: unspecified" alone is NOT sufficient — the doc must explain why
+  proptest is omitted, e.g. "exhaustively covered by kani harness X").
+enforcement: manual
+profile: 1
+status: canonical
+intent:
+  kind: requirement
+  summary: 'Row 1 of the verification matrix: public fns taking data have proptest strategies covering their invariants'
+  source: human
+  impact_if_violated: |
+    Bugs that would be caught by random-input strategies ship to consumers; the
+    "provably correct" promise from the engineer's v1 vision becomes hollow.
+  rationale: |
+    CLAUDE.md verification-defaults table. Floor side of the matrix: a public surface
+    that takes data and is not exercised by a proptest is a defect, because the
+    invariant the function documents is unverified beyond example tests.
+  verification_method: |
+    PR review. The verification matrix table in CLAUDE.md is the authoritative source.
+parents:
+- id: 10
+  role: component
+realization:
+- bindings:
+  - scheme: path
+    value: CLAUDE.md
+    metadata:
+      summary: Verification-defaults table, row 1.
+  - scheme: path
+    value: crates/oxgraph-snapshot/tests/builder_reader_roundtrip.rs
+    metadata:
+      summary: Example proptest — SnapshotBuilder followed by Snapshot::open yields byte-equal section payloads.
+  - scheme: path
+    value: crates/oxgraph-snapshot/tests/malformed_bytes.rs
+    metadata:
+      summary: Example proptest — Snapshot::open over arbitrary Vec<u8> returns Result, never panics.
+  role: primary

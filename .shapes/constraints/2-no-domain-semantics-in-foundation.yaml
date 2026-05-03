@@ -1,0 +1,48 @@
+id: 2
+name: no domain semantics in foundation
+description: |
+  The foundation crates (oxgraph-topology, oxgraph-graph, oxgraph-hyper, and
+  oxgraph-snapshot) must not interpret what their elements, relations, incidences,
+  or section payloads MEAN at the application level. A node is not necessarily an
+  entity. An edge is not necessarily a semantic relation. A hyperedge is not
+  necessarily an event. A section kind is an opaque u32 the container assigns no
+  semantics to — upper layers register kinds.
+kind: boundary
+rule: |
+  No symbol, comment, or doc in oxgraph-topology / oxgraph-graph / oxgraph-hyper /
+  oxgraph-snapshot may name a domain concept (entity, claim, evidence, package,
+  document, person, RDF term, ontology class, embedding, agent memory, provenance,
+  etc.). The single allowed exception is documentation that shows examples FROM
+  upper-layer or downstream domain code, where the example's purpose is to illustrate
+  that the foundation does NOT know about the domain.
+enforcement: manual
+profile: 1
+status: canonical
+intent:
+  kind: boundary
+  summary: The four foundation crates must not interpret domain meaning — payloads, semantics, and ontology live in upper layers
+  source: human
+  impact_if_violated: |
+    Substrate becomes domain-shaped. Downstream consumers either inherit unwanted
+    vocabulary or have to fork the foundation. The foundational role (bytes / serde /
+    rkyv / Arrow / tracing analogue) is forfeit.
+  rationale: |
+    Vision §6.1 lists the explicit non-goals for the foundation; vision §12 makes the
+    "structure below, meaning above" boundary explicit. Once a domain concept leaks
+    into the substrate, the substrate is no longer reusable across domains and the
+    promise of "anything can be built on top" is broken. The cost of removing a
+    leaked concept later is much higher than the cost of catching it in review.
+  verification_method: |
+    Manual review at PR time. Pause-and-ask (constraint 21) covers public API
+    reshuffles where leakage is most likely.
+realization:
+- bindings:
+  - scheme: path
+    value: vision.md
+    metadata:
+      summary: Sections 6.1, 8.4, 9.3, 12.2 — explicit non-goals and "must not know about" lists.
+  - scheme: path
+    value: crates/oxgraph-snapshot/src/container/section.rs
+    metadata:
+      summary: RawSectionEntry.kind is `u32` the container assigns no semantics to — upper layers register kinds (CSR, BCSR, future).
+  role: primary

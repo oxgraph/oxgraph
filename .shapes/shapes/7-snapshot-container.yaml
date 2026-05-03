@@ -1,0 +1,65 @@
+id: 7
+name: snapshot container
+description: |
+  The topology-agnostic byte-level snapshot crate. Validates a fixed header and a
+  sectioned payload region; exposes borrowed section bytes via Snapshot::sections /
+  Snapshot::section; lets consumers reinterpret payloads as typed slices via
+  Section::try_as_slice with actual-pointer alignment checked at the call site, not on
+  the producer's declared metadata. The container holds NO domain semantics — section
+  kinds are opaque u32s registered by upper layers (oxgraph-csr, oxgraph-hyper-bcsr).
+  A no-alloc writer (SnapshotPlan) and an alloc-gated owning builder (SnapshotBuilder)
+  emit identical bytes.
+profile: 1
+status: canonical
+intent:
+  kind: module
+  summary: Topology-agnostic byte-level snapshot container with sectioned payload
+  source: human
+  goals: |
+    - Define a stable byte-level container (header + section table + payload) that any
+      topology can serialize into and any reader can validate without knowing graph or
+      hypergraph specifics.
+    - Provide tiered ValidationLevel (Header, SectionTable, Layout) so consumers can
+      pick a cost/safety trade-off; default Snapshot::open is Layout (O(s^2) duplicate-
+      kind walk).
+    - Stay no_std for the reader; gate SnapshotBuilder behind the alloc feature; keep
+      the std feature reserved for future mmap helpers.
+    - Make malformed input never panic through safe APIs (the §22.1 keystone invariant).
+  non_goals: |
+    No section-kind registry. No CRC verification in v1. No REQUIRED-section enforcement.
+    No mmap helpers in v1 (std feature reserved). Bytes are not yet promised as a stable
+    ABI — see shape 8 and constraint 22.
+  rationale: |
+    Per vision §20-§24.4 the container IS the topology-interchange layer; section
+    semantics belong to upper layers. Several deliberate cuts kept v1 small: no CRC
+    verification (the 4-byte reserved_checksum field MUST be zero in v1), no REQUIRED-
+    section enforcement (the flags byte MUST be zero), no multi-instance sections (one
+    entry per kind), no mmap helpers. The reserved fields preserve the upgrade path for
+    each deferred feature.
+constraints:
+- 22
+realization:
+- bindings:
+  - scheme: path
+    value: crates/oxgraph-snapshot
+    metadata:
+      summary: The crate root. Topology-agnostic byte-level snapshot container.
+  - scheme: path
+    value: crates/oxgraph-snapshot/src/container/mod.rs
+    metadata:
+      summary: Format constants — FORMAT_MAGIC, FORMAT_MAJOR=1, FORMAT_MINOR=0, MAX_SUPPORTED_MINOR=0, HEADER_SIZE=32, SECTION_ENTRY_SIZE=32, MAX_ALIGNMENT_LOG2=12, MAX_SECTION_COUNT=1024.
+  - scheme: path
+    value: crates/oxgraph-snapshot/src/container
+    metadata:
+      summary: Module tree — header, section, plan, reader, validate, builder, error. Will move wholesale if the container ever graduates to a separate topology-snapshot crate.
+  - scheme: path
+    value: crates/oxgraph-snapshot/src/proofs.rs
+    metadata:
+      summary: Kani harnesses — header parsing totality, Snapshot::open never panics on arbitrary 64-byte input, two-section roundtrip, FORMAT_MAGIC constant.
+  role: primary
+parents:
+- id: 1
+  role: component
+children:
+- shape: 8
+  role: component

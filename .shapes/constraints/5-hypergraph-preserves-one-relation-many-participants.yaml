@@ -1,0 +1,50 @@
+id: 5
+name: hypergraph preserves one relation many participants
+description: |
+  A hyperedge connecting N participants is one relation, not N pairwise edges, not a
+  star expansion through a synthetic node. The hypergraph trait surface and any
+  concrete hypergraph layout must preserve the fact that a single relation has many
+  participants. Projections to ordinary graphs (clique expansion, star expansion)
+  are interop tools, not the native representation.
+kind: invariant
+rule: |
+  No public API in oxgraph-hyper or downstream hypergraph layouts may collapse a
+  hyperedge into pairwise graph edges as the default representation. Projection
+  helpers are explicitly named (`to_clique_graph`, `to_incidence_graph`, etc.) and
+  documented as lossy interop, not native hypergraph storage.
+enforcement: manual
+profile: 1
+status: canonical
+intent:
+  kind: invariant
+  summary: Hyperedges remain one relation with many participants — never silently collapsed into pairwise edges
+  source: human
+  impact_if_violated: |
+    Substrate cannot serve hypergraph consumers — they get the same lossy encoding
+    they could have built themselves. Hypergraph branch becomes a thin veneer over
+    graph code instead of a sibling specialization.
+  rationale: |
+    Vision §10.2 ("Hyper-core should not be an encoding trick") states this directly.
+    Confirmed in interview as the other half of the sibling-layout justification:
+    semantic honesty for hyperedges is independently sufficient to require the
+    sibling structure. A meeting involving people, documents, decisions, and
+    deadlines is one relation; encoding it as N(N-1)/2 edges loses that fact.
+  verification_method: |
+    Trait-surface review. The DirectedHyperedgeParticipants / HyperedgeParticipants /
+    IncidentHyperedges traits are the canonical "one relation, many participants" API
+    and any new trait must preserve that shape.
+realization:
+- bindings:
+  - scheme: path
+    value: crates/oxgraph-hyper/src/lib.rs
+    metadata:
+      summary: HyperedgeParticipants / DirectedHyperedgeParticipants — yield all participants of one hyperedge, not pairs.
+  - scheme: path
+    value: crates/oxgraph-hyper-bcsr/src/lib.rs
+    metadata:
+      summary: Bipartite-CSR layout stores head/tail participant arrays per hyperedge — preserves the one-to-many shape natively.
+  - scheme: path
+    value: vision.md
+    metadata:
+      summary: Sections 10.2, 10.4 — hyperedges are NOT encoded graphs; projections are interop, not native.
+  role: primary

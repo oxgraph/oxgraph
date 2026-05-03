@@ -1,0 +1,50 @@
+id: 11
+name: umbrella crate
+description: |
+  The single ergonomic dependency point that re-exports the kernel set behind feature
+  flags so most users never type the sub-crate names directly. Today is a 0.0.0
+  placeholder with crate metadata only; v1 promotes it to curated re-exports gated by
+  feature sets so that consumers can pick "topology + graph + csr + snapshot + algo"
+  without paying for hyper, and vice versa. Exists because oxgraph is a monorepo: the
+  umbrella keeps the published surface tidy while letting downstream consumers depend
+  on individual crates when they want minimal compile times.
+profile: 1
+status: canonical
+intent:
+  kind: module
+  summary: Curated re-exports across the workspace, gated by feature sets
+  source: human
+  goals: |
+    - Curated re-exports of the kernel crates (topology + graph + csr + snapshot + algo)
+      under a single import path, with hyper and bcsr gated behind a feature.
+    - Tidy publish surface so the world depends on `oxgraph` by default and reaches for
+      individual crates only when they need minimal compile time or no_std isolation.
+    - Stay 0.0.0 until v1 actually pins the re-export shape; do not invent helpers in
+      the umbrella that the kernel crates lack.
+  non_goals: |
+    No helpers that don't exist in the kernel crates. No "happy-path" wrappers that
+    hide capability requirements. No stable promises until v1 actually freezes the
+    re-export shape.
+  rationale: |
+    Without an umbrella, every consumer has to remember which kernel crate exports
+    which trait. The umbrella concentrates discovery in one place. Feature gates keep
+    the umbrella honest about what the consumer is actually pulling in (no hidden hyper
+    cost in a graph-only build).
+realization:
+- bindings:
+  - scheme: path
+    value: crates/oxgraph
+    metadata:
+      summary: The umbrella crate. Currently 0.0.0 with crate metadata only — no_std lib with no body yet.
+  - scheme: path
+    value: crates/oxgraph/Cargo.toml
+    metadata:
+      summary: Crate metadata — license, keywords, categories, version 0.0.0; no dependencies yet.
+  - scheme: path
+    value: crates/oxgraph/src/lib.rs
+    metadata:
+      summary: Crate root — currently just `#![no_std]` and the crate-level doc string.
+  role: primary
+parents:
+- id: 1
+  role: component

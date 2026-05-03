@@ -1,0 +1,58 @@
+id: 14
+name: zero copy friendly data layout
+description: |
+  The data-layout pattern: any struct that crosses an IO boundary — wire formats,
+  stored records, audit entries, snapshot headers, section table entries — uses
+  zerocopy derives (FromBytes, IntoBytes, Immutable, KnownLayout). The reading flow
+  is bytes → validate → topology view → traverse, never bytes → parse → allocate
+  graph → copy edges → traverse. Allocations on the data path require contract-level
+  justification.
+profile: 1
+status: canonical
+intent:
+  kind: pattern
+  summary: IO-boundary structs use zerocopy derives — borrow validated bytes, do not parse into owned intermediaries
+  source: human
+  goals: |
+    - Reach for zerocopy before String / Vec when the value crosses an IO boundary.
+    - Validate once at open time; bound and align checks at typed-slice access; safe
+      traversal APIs over the underlying bytes thereafter.
+    - Make malformed input never panic through the safe surface — the §22.1 keystone
+      invariant.
+    - Snapshot opens from byte slices, mmap'd files, static embedded bytes, or any
+      borrowed `&[u8]` without an alignment requirement on the base pointer.
+  non_goals: |
+    Not arguing against owned data where it makes sense (builders, owned indexes, in-
+    memory mutable views can allocate freely). Just asserting that on the data path
+    crossing an IO boundary, allocations are the exception that needs a contract-level
+    justification, not the default.
+  rationale: |
+    Topology snapshots want to be portable, mmap-friendly, no_std-readable, and ABI-
+    candidate (eventually stable interchange). Rust struct serialization is none of
+    those. Zero-copy + explicit byte layout + validated views is what lets a 100M-edge
+    snapshot be opened and traversed without heap reconstruction — the headline use
+    case the substrate exists to enable.
+constraints:
+- 15
+realization:
+- bindings:
+  - scheme: path
+    value: crates/oxgraph-snapshot/src/container/header.rs
+    metadata:
+      summary: RawHeader uses zerocopy derives; alignment 1 so it borrows from any byte slice.
+  - scheme: path
+    value: crates/oxgraph-snapshot/src/container/section.rs
+    metadata:
+      summary: RawSectionEntry uses zerocopy derives; Section::try_as_slice checks actual pointer alignment at the call site.
+  - scheme: path
+    value: crates/oxgraph-csr/src/lib.rs
+    metadata:
+      summary: CSR offsets and targets are borrowed `&[u32]` over snapshot section payloads; validation gates traversal.
+  - scheme: path
+    value: vision.md
+    metadata:
+      summary: Sections 18 ("Zero-Copy Friendly by Default"), 19 ("Snapshot Format Is Not Rust Serialization"), 22 ("Safety Model").
+  role: primary
+parents:
+- id: 1
+  role: pattern

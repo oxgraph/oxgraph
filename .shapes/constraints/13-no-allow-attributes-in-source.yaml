@@ -1,0 +1,49 @@
+id: 13
+name: no allow attributes in source
+description: |
+  `#[allow(...)]` is forbidden in source. Silencing a lint requires either
+  `#[expect(..., reason = "...")]` (which errors if the lint stops firing — auto-
+  cleanup) or a reasoned, deliberate entry in the workspace `[lints.clippy]` table
+  with a comment explaining why. The pre-commit `no-clippy-allow` hook greps every
+  `*.rs` file for `#[allow(clippy::...)]` and rejects matches.
+kind: invariant
+rule: |
+  The workspace lints set `allow_attributes = "deny"` and
+  `allow_attributes_without_reason = "deny"`. Source files contain no
+  `#[allow(clippy::...)]` (the prek pre-commit `no-clippy-allow` hook enforces
+  this with a literal grep). Silencing requires `#[expect(..., reason = "...")]`
+  locally or a workspace-level `[lints.clippy]` entry with an inline comment
+  explaining why.
+enforcement: machine
+profile: 1
+status: canonical
+intent:
+  kind: invariant
+  summary: 'No #[allow(...)] in source — use #[expect(..., reason = ...)] or workspace-level reasoned entry'
+  source: human
+  impact_if_violated: |
+    Lint suppressions accumulate invisibly; the strictness gate becomes meaningless;
+    the substrate's signal-quality posture (CLAUDE.md "Posture") forfeits.
+  rationale: |
+    `#[allow(...)]` is silent and permanent — the lint can stop firing for an
+    unrelated reason and the suppression silently keeps the freshly-irrelevant
+    annotation. `#[expect(..., reason)]` errors when the lint stops firing,
+    forcing cleanup. Workspace-level entries make the suppression visible to
+    everyone instead of hidden inline. The CLAUDE.md anti-pattern
+    "#[allow(clippy::...)] with a TODO" is the canonical failure mode this
+    constraint exists to prevent.
+  verification_method: |
+    Workspace clippy lints (allow_attributes / allow_attributes_without_reason =
+    deny) + the prek `no-clippy-allow` pre-commit hook that greps for the literal
+    pattern.
+realization:
+- bindings:
+  - scheme: path
+    value: Cargo.toml
+    metadata:
+      summary: '[workspace.lints.clippy] sets allow_attributes = deny and allow_attributes_without_reason = deny.'
+  - scheme: path
+    value: .pre-commit-config.yaml
+    metadata:
+      summary: 'no-clippy-allow hook — greps every *.rs file for #[allow(clippy::...)] and rejects matches.'
+  role: primary

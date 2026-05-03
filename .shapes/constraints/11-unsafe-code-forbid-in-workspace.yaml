@@ -1,0 +1,48 @@
+id: 11
+name: "unsafe code forbid in workspace"
+description: |
+    `unsafe_code = "forbid"` stays at the workspace lint level for every crate. Lifting
+    it to "deny" or "allow" — even per-crate, even temporarily — requires the
+    pause-and-ask gate (constraint 21). When unsafe is genuinely required (extremely
+    rare in this substrate, since zerocopy gives us safe layout interpretation),
+    every unsafe block carries a `// SAFETY:` comment explaining the invariants the
+    block relies on.
+kind: "invariant"
+rule: |
+    `Cargo.toml` `[workspace.lints.rust]` keeps `unsafe_code = "forbid"`. No crate
+    overrides this. If unsafe ever becomes necessary (post-pause-and-ask approval),
+    the workspace lint is lifted to "deny" for that crate only and every `unsafe`
+    block carries a `// SAFETY:` comment per use.
+enforcement: machine
+profile: 1
+status: canonical
+intent:
+  kind: "invariant"
+  summary: "unsafe_code stays forbid at the workspace level — lifting requires pause-and-ask + per-block SAFETY comments"
+  source: "human"
+  rationale: |
+    CLAUDE.md states this explicitly. The substrate uses zerocopy derives at IO
+    boundaries (constraint 15) which gives safe layout interpretation, so unsafe is
+    nearly never the right tool here. Forbidding at the workspace level catches
+    accidental use; the pause-and-ask gate catches deliberate use that might not be
+    justified.
+  impact_if_violated: |
+    Unsafe leaks into the substrate; UB risk surfaces; the "safe substrate" promise
+    consumers can build on weakens. The pause-and-ask gate exists specifically to
+    prevent quiet erosion of this lint.
+  verification_method: |
+    `cargo clippy --workspace --all-targets --all-features -- -D warnings` (run via
+    `just lint` and prek pre-commit) — workspace-level lint configuration is
+    enforced by rustc.
+
+realization:
+  - bindings:
+      - scheme: path
+        value: Cargo.toml
+        metadata:
+          summary: "[workspace.lints.rust] sets unsafe_code = \"forbid\"."
+      - scheme: path
+        value: CLAUDE.md
+        metadata:
+          summary: '"Library discipline" — "unsafe_code = forbid stays forbid. Lifting: // SAFETY: per use."'
+    role: primary

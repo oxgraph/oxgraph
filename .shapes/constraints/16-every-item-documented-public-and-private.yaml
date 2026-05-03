@@ -1,0 +1,41 @@
+id: 16
+name: every item documented public and private
+description: |
+  Every item — public and private — has a doc string. `missing_docs = "deny"` AND
+  `missing_docs_in_private_items = "deny"` are both set at the workspace lint
+  level. This is unusually strict; the rationale is substrate longevity (a
+  contributor returning to private code six months later needs to know what it's
+  for) and signal preservation (an undocumented private fn is a future
+  refactoring landmine).
+kind: invariant
+rule: |
+  Every struct, enum, trait, function, const, type alias, module — public or
+  private — has at least a one-line doc comment. The workspace lints
+  `missing_docs = "deny"` and `clippy::missing_docs_in_private_items = "deny"`
+  enforce this at compile time.
+enforcement: machine
+profile: 1
+status: canonical
+intent:
+  kind: invariant
+  summary: Every item has a doc string — public and private both. Lint-enforced.
+  source: human
+  impact_if_violated: |
+    Private code becomes write-only; contributors cannot tell what private items
+    were FOR; refactoring becomes an archaeology task.
+  rationale: |
+    CLAUDE.md states "Docs on every item, public and private. Lint-enforced."
+    Substrate code outlives its author; private items that are obvious today are
+    landmines for the next contributor (human or agent). The lint catches the
+    omission at the cheapest moment — compile time — not at the most expensive
+    moment, code review.
+  verification_method: |
+    Workspace lints `missing_docs` + `clippy::missing_docs_in_private_items` =
+    deny, enforced by `just lint` and prek pre-commit.
+realization:
+- bindings:
+  - scheme: path
+    value: Cargo.toml
+    metadata:
+      summary: '[workspace.lints.rust] missing_docs = deny; [workspace.lints.clippy] missing_docs_in_private_items = deny.'
+  role: primary

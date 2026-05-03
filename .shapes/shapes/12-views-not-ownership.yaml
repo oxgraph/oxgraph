@@ -1,0 +1,45 @@
+id: 12
+name: views not ownership
+description: |
+  The pattern that makes oxgraph a substrate rather than a graph library: the primary
+  abstraction is a view (any value that exposes topology through capability traits),
+  not an owned `Graph` or `Hypergraph` type. A view can be backed by heap vectors,
+  borrowed slices, mmap'd files, archived bytes, embedded static bytes, database
+  pages, generated projections, overlays, or remote/proxy storage. Algorithms target
+  the capability contract; the view decides its own boundary and what it represents.
+profile: 1
+status: canonical
+intent:
+  kind: pattern
+  summary: Primary abstraction is the view, not an owned graph type — algorithms target capabilities, not concrete structures
+  source: human
+  goals: |
+    - Express every read API as a trait the view implements, never as a method on an
+      owned struct.
+    - Let backends pick their storage (heap, borrowed, mmap, archived, embedded,
+      foreign) without changing the algorithm code.
+    - Make "what topology capabilities does this view provide?" the deepest design
+      question, not "what graph type do we own?".
+  non_goals: |
+    Not arguing against owned types existing — builders, mutable structures, and
+    overlays will all be owned. Just asserting that the read-side foundational
+    abstraction is the view, not the owner.
+  rationale: |
+    Owned structures are useful but not foundational enough — they tie consumers to
+    one storage decision. A substrate becomes foundational when algorithms can target
+    access contracts rather than concrete data structures, which is exactly what makes
+    bytes / serde / rkyv / Arrow / tracing foundational in their respective domains.
+realization:
+- bindings:
+  - scheme: path
+    value: crates/oxgraph-topology/src/lib.rs
+    metadata:
+      summary: All topology capability traits are defined as view-shaped — `&self` methods returning borrowed iterators, no `&mut self` in read traits.
+  - scheme: path
+    value: vision.md
+    metadata:
+      summary: Section 13 ("Views, Not Ownership") — the design principle stated explicitly.
+  role: primary
+parents:
+- id: 1
+  role: pattern

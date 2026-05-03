@@ -1,0 +1,42 @@
+id: 19
+name: prek pre commit is the floor
+description: |
+  `prek` runs the local pre-commit hook chain (fmt-check, fmt-toml-check, clippy,
+  deny, no-clippy-allow grep, plus test on pre-push). This is the FLOOR — fix
+  failures, do NOT skip. The block-bypass hook (constraint 18) explicitly denies
+  `--no-verify`, `SKIP=`, and `prek uninstall`.
+kind: invariant
+rule: |
+  `just hooks-install` is part of getting-started; every commit goes through prek.
+  Failures are fixed at root, not bypassed. `--no-verify` and `SKIP=` are denied
+  by the block-bypass hook. Modifying `.pre-commit-config.yaml` requires the
+  pause-and-ask gate (constraint 21).
+enforcement: machine
+profile: 1
+status: canonical
+intent:
+  kind: invariant
+  summary: prek pre-commit (fmt + taplo + clippy + deny + no-clippy-allow grep) is the floor — fix failures, do not skip
+  source: human
+  impact_if_violated: |
+    Style/lint/dep-check failures accumulate in the repo; the fast `just ci` gate
+    fails for unrelated reasons in CI; signal noise degrades and real defects hide.
+  rationale: |
+    CLAUDE.md "Enforcement" states this directly. The pre-commit hook chain is
+    cheaper to fix at commit time than at PR review or, worse, in production.
+    Skipping it once normalizes skipping it always — see CLAUDE.md "Posture":
+    signal quality is the real constraint.
+  verification_method: |
+    `just ci` (which prek runs) plus the block-bypass hook denying `--no-verify` /
+    `SKIP=` / `prek uninstall`.
+realization:
+- bindings:
+  - scheme: path
+    value: .pre-commit-config.yaml
+    metadata:
+      summary: prek hook chain — fmt-check, fmt-toml-check, clippy, deny, no-clippy-allow, test (pre-push only).
+  - scheme: path
+    value: justfile
+    metadata:
+      summary: '`just ci` and `just hooks-install` — the fast gate and the install command.'
+  role: primary

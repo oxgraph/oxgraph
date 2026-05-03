@@ -1,0 +1,50 @@
+id: 5
+name: CSR graph layout
+description: |
+  A concrete, borrowed compressed-sparse-row view that implements oxgraph-graph
+  capability traits over validated `&[u32]` offsets and targets. Forward-only by
+  design — incoming traversal is intentionally NOT implemented because that requires a
+  CSC or reverse index. Opens directly from oxgraph-snapshot sections via
+  CsrGraph::from_snapshot, exercising the zero-copy validate-then-borrow path that the
+  headline demo depends on.
+profile: 1
+status: canonical
+intent:
+  kind: module
+  summary: Borrowed CSR view implementing oxgraph-graph traits — forward-only by design
+  source: human
+  goals: |
+    - Validate CSR offsets and targets at construction (offset count, monotonicity,
+      target bounds, final-offset equality) and surface failures as typed errors.
+    - Implement OutgoingGraph + OutgoingNeighborsGraph + EdgeEndpointGraph over borrowed
+      slices with no allocation.
+    - Open from snapshot sections via CsrGraph::from_snapshot using the registered
+      SNAPSHOT_KIND_CSR_OFFSETS / SNAPSHOT_KIND_CSR_TARGETS section kinds.
+    - Pressure-test the oxgraph-graph trait surface — be the first concrete view that
+      proves the traits are right.
+  non_goals: |
+    No incoming traversal, no edge-endpoint inverse lookup, no mutation. No general
+    graph-layout abstraction yet — CSR is the concrete pressure point that justifies a
+    broader layout crate later, if it justifies one at all.
+  rationale: |
+    CSR is the smallest useful concrete graph layout and the canonical pressure-test for
+    the graph trait surface. Forward-only is deliberate: the lack of ElementPredecessors
+    is a type-level constraint, not an oversight. CSC and other reverse-index layouts get
+    their own crate when an algorithm or snapshot use case actually requires incoming
+    traversal — see shape 17.
+constraints:
+- 4
+realization:
+- bindings:
+  - scheme: path
+    value: crates/oxgraph-csr
+    metadata:
+      summary: The crate root. Borrowed CSR view + snapshot-open path + forward traversal capabilities.
+  - scheme: path
+    value: crates/oxgraph-csr/src/lib.rs
+    metadata:
+      summary: CsrGraph, CsrOutEdges, CsrOutNeighbors, CSR validation, CsrSnapshotError, from_snapshot, registered SNAPSHOT_KIND_CSR_* constants.
+  role: primary
+parents:
+- id: 1
+  role: component

@@ -1,0 +1,52 @@
+id: 8
+name: every measurable public input has criterion bench
+description: |
+  Third row of the verification matrix. Every public API that takes a measurable
+  input (a size, a count, a payload length) and has a stated perf contract is
+  defended by a criterion benchmark. Benchmarks for things WITHOUT a stated perf
+  contract are noise — see constraint 10 (matrix is also the ceiling).
+kind: requirement
+rule: |
+  For each public API with a stated perf contract (e.g., "O(n) for n ≤ 10k",
+  "≤ 1ms for 100k offsets"), there is a criterion bench in the same crate's
+  `benches/` that varies the measurable input across the contract's range and
+  asserts the contract holds. Adding a bench for an API without a stated perf
+  contract is forbidden — first state the contract in the doc, then bench it.
+enforcement: manual
+profile: 1
+status: canonical
+intent:
+  kind: requirement
+  summary: 'Row 3 of the verification matrix: measurable public input with a stated perf contract gets a criterion bench'
+  source: human
+  impact_if_violated: |
+    Either perf contracts go undefended (regressions ship silently) or criterion
+    sprawl drowns CI in noise that nobody reads.
+  rationale: |
+    CLAUDE.md verification-defaults table. Benchmarks defending no contract are
+    explicitly listed as anti-patterns. The matrix is intentionally floor + ceiling:
+    benches without contracts produce noise that looks like progress but isn't.
+  verification_method: |
+    `cargo bench --workspace` reviewed against documented perf contracts.
+parents:
+- id: 10
+  role: component
+realization:
+- bindings:
+  - scheme: path
+    value: CLAUDE.md
+    metadata:
+      summary: Verification-defaults table, row 3, plus anti-patterns list.
+  - scheme: path
+    value: crates/oxgraph-csr/benches/csr.rs
+    metadata:
+      summary: Criterion bench for CSR validation and outgoing traversal over deterministic regular graphs.
+  - scheme: path
+    value: crates/oxgraph-snapshot/benches/container.rs
+    metadata:
+      summary: Criterion bench — agnostic snapshot open over s ∈ {1, 16, 256, 1024} sections, last-section linear lookup, builder finish over s × 1KiB payloads.
+  - scheme: path
+    value: crates/oxgraph-hyper-bcsr/benches/bcsr.rs
+    metadata:
+      summary: Criterion bench — Layout/Strict validation, hyperedge-major head/tail iteration, vertex-major incident iteration, directed successor expansion.
+  role: primary

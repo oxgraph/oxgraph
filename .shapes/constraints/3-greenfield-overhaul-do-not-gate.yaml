@@ -1,0 +1,41 @@
+id: 3
+name: "greenfield overhaul do not gate"
+description: |
+    oxgraph is greenfield with no released versions and no external consumers; do not
+    add backwards-compat shims, deprecation cycles, feature flags around new work, or
+    "removed once X" comments around dead code. Fold cleanups, follow-ups, and renames
+    into the main change instead of deferring them as separate gated work. There is
+    nothing to defer FROM yet.
+kind: "guideline"
+rule: |
+    PRs must not add: deprecation attributes, "removed once X ships" TODO comments,
+    feature flags around new work whose removal is the obvious next step, renamed
+    `_old` modules kept for symmetry, or "v1 leaves this for v2" gates. If the new
+    code replaces old code, delete the old code in the same PR.
+enforcement: manual
+profile: 1
+status: canonical
+intent:
+  kind: "guideline"
+  summary: "Greenfield project: fold cleanups into the main change, do not stage them behind backwards-compat gates"
+  source: "human"
+  rationale: |
+    Confirmed in user memory and re-confirmed in interview: oxgraph is greenfield, so
+    every backwards-compat shim is shadow infrastructure that exists to protect users
+    that don't exist. Each shim is a future cleanup PR that may never happen. Fold
+    work in instead and let the workspace stay coherent.
+  impact_if_violated: |
+    The codebase accumulates dead alternative paths and "TODO: remove" cruft, and the
+    next contributor (human or agent) can't tell which path is current. Greenfield
+    posture is forfeit; project starts paying maintenance cost for users that don't
+    exist.
+  verification_method: |
+    Manual review at PR time.
+
+realization:
+  - bindings:
+      - scheme: path
+        value: foundation-progress.md
+        metadata:
+          summary: '"Intentional Deviations" section — every deferred decision is documented as deferred, not gated by a shim.'
+    role: primary

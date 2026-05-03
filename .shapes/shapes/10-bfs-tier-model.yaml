@@ -1,0 +1,62 @@
+id: 10
+name: BFS tier model
+description: |
+  Six BFS storage tiers that span no_std, alloc, and std environments — scratch,
+  epoch_scratch, workspace, indexed, generic_btree, generic_hash — plus a single
+  direction-parameterized core driver. Forward variants bind on ElementSuccessors;
+  reverse variants bind on ElementPredecessors. The reusable BfsEpochScratch and
+  BfsWorkspace types are direction-agnostic and serve both directions over the same
+  view without a full mark clear between runs. The sealed ExpansionDirection policy
+  monomorphizes to one direct call into element_successors / element_predecessors per
+  yield.
+profile: 1
+status: canonical
+intent:
+  kind: feature
+  summary: BFS storage tiers — scratch, epoch_scratch, workspace, indexed, generic_btree, generic_hash, plus a single direction-parameterized core
+  source: human
+  goals: |
+    - Expose a tier per environment so callers pick visibility/membership storage that
+      fits their constraints (stack-only no_std → scratch; alloc → indexed/workspace;
+      std → hash-membership generic).
+    - Share one direction-parameterized core (Bfs<…, D>) so forward and reverse
+      monomorphize cleanly without code duplication.
+    - Ship reusable scratch and workspace types that can drive both directions across
+      the same view without intermediate clears.
+  non_goals: |
+    No alternative search algorithms in this shape (DFS, IDDFS, A*, etc. live elsewhere
+    if and when added). No parallel or work-stealing variants. No bitset visited storage
+    yet — see constraint 24.
+  rationale: |
+    Tiering avoids forcing every BFS user to pay for hash-set membership or to give up
+    on ordered membership in no_std. Direction parameterization through a sealed policy
+    is what keeps forward/reverse from forking the implementation while staying zero-
+    cost at runtime.
+constraints:
+- 24
+realization:
+- bindings:
+  - scheme: path
+    value: crates/oxgraph-algo/src/bfs/mod.rs
+    metadata:
+      summary: Tier exports — scratch / epoch / workspace / indexed / generic_btree / generic_hash, plus the BfsError type.
+  - scheme: path
+    value: crates/oxgraph-algo/src/bfs/core.rs
+    metadata:
+      summary: Direction-parameterized Bfs<…, D> driver and the sealed ExpansionDirection policy.
+  - scheme: path
+    value: crates/oxgraph-algo/src/bfs/epoch.rs
+    metadata:
+      summary: BfsEpochScratch — direction-agnostic reusable scratch with epoch counter to avoid full mark clears.
+  - scheme: path
+    value: crates/oxgraph-algo/src/bfs/workspace.rs
+    metadata:
+      summary: BfsWorkspace — direction-agnostic reusable workspace.
+  - scheme: path
+    value: crates/oxgraph-algo/src/bfs/indexed.rs
+    metadata:
+      summary: Allocating indexed BFS — Vec<u8> visited storage; bitset upgrade gated on benchmarks per constraint 24.
+  role: primary
+parents:
+- id: 9
+  role: component
