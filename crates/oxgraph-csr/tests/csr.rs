@@ -2,9 +2,9 @@
 
 use oxgraph_csr::{CsrEdgeId, CsrError, CsrGraph, CsrNodeId};
 use oxgraph_graph::{
-    EdgeTargetGraph, GraphCounts, OutgoingEdgeCount, OutgoingGraph, OutgoingNeighborsGraph,
+    EdgeTargetGraph, ElementIndex, GraphCounts, OutgoingEdgeCount, OutgoingGraph,
+    OutgoingNeighborsGraph, RelationIndex,
 };
-use oxgraph_topology::{ElementIndex, RelationIndex};
 use proptest::prelude::*;
 use zerocopy::byteorder::{LE, U32};
 

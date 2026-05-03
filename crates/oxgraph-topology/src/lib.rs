@@ -71,6 +71,30 @@ pub trait TopologyBase {
     type RelationId: TopologyId;
 }
 
+/// Substrate-neutral alias for a topology view's element ID type.
+///
+/// Mirrors the substrate-specific `NodeId<G>` / `VertexId<H>` aliases exposed
+/// by graph and hypergraph wrapper crates and gives substrate-agnostic code
+/// (algorithms, snapshot tooling) a short way to name the element identity of
+/// a topology view in generic signatures and return types.
+///
+/// # Performance
+///
+/// `perf: unspecified`; performance is inherited from the underlying
+/// [`TopologyBase::ElementId`] type.
+pub type ElementId<T> = <T as TopologyBase>::ElementId;
+
+/// Substrate-neutral alias for a topology view's relation ID type.
+///
+/// Mirrors the substrate-specific `EdgeId<G>` / `HyperedgeId<H>` aliases exposed
+/// by graph and hypergraph wrapper crates.
+///
+/// # Performance
+///
+/// `perf: unspecified`; performance is inherited from the underlying
+/// [`TopologyBase::RelationId`] type.
+pub type RelationId<T> = <T as TopologyBase>::RelationId;
+
 /// Incidence identity and role vocabulary for topology views with incidences.
 ///
 /// Incidence support is separate from [`TopologyBase`] so graph-only views can
@@ -482,4 +506,82 @@ pub trait IncidenceView:
 impl<T> IncidenceView for T where
     T: RelationIncidences + IncidenceElement + IncidenceRelation + IncidenceRole
 {
+}
+
+/// Capability for expanding an element to its directed successor elements.
+///
+/// This is the substrate-neutral form of "follow outgoing connections from
+/// this element." For binary graphs the successors are the targets of
+/// outgoing edges; for hypergraphs they are the vertices reachable through
+/// outgoing hyperedges. Substrate-agnostic algorithms (forward BFS, forward
+/// reachability) bind on this trait so the same code drives any topology
+/// view that can answer the question.
+///
+/// Implementations define whether parallel connections produce repeated
+/// successor elements. Implementations that preserve multiplicity should
+/// document that behavior; consumers that need set semantics should
+/// deduplicate at their own level.
+///
+/// # Performance
+///
+/// Creating the iterator should be `O(1)` unless an implementation documents a
+/// weaker contract. Yielding `k` successors should be `O(k)` and should not
+/// allocate unless the implementation documents otherwise.
+pub trait ElementSuccessors: TopologyBase {
+    /// Iterator over successor element IDs reached from one element.
+    ///
+    /// # Performance
+    ///
+    /// Advancing the iterator should be amortized `O(1)` unless an
+    /// implementation documents otherwise.
+    type Successors<'view>: Iterator<Item = Self::ElementId>
+    where
+        Self: 'view;
+
+    /// Returns elements reachable through outgoing connections from `element`.
+    ///
+    /// # Performance
+    ///
+    /// Expected `O(1)` to create the iterator; yielding `k` successors is
+    /// expected `O(k)`.
+    fn element_successors(&self, element: Self::ElementId) -> Self::Successors<'_>;
+}
+
+/// Capability for expanding an element to its directed predecessor elements.
+///
+/// This is the substrate-neutral form of "follow incoming connections to this
+/// element." For binary graphs the predecessors are the sources of incoming
+/// edges; for hypergraphs they are the vertices that reach this vertex
+/// through outgoing hyperedges. Substrate-agnostic algorithms (reverse BFS,
+/// reverse reachability) bind on this trait so the same code drives any
+/// topology view that can answer the question.
+///
+/// Implementations define whether parallel connections produce repeated
+/// predecessor elements. Implementations that preserve multiplicity should
+/// document that behavior; consumers that need set semantics should
+/// deduplicate at their own level.
+///
+/// # Performance
+///
+/// Creating the iterator should be `O(1)` unless an implementation documents a
+/// weaker contract. Yielding `k` predecessors should be `O(k)` and should not
+/// allocate unless the implementation documents otherwise.
+pub trait ElementPredecessors: TopologyBase {
+    /// Iterator over predecessor element IDs reaching one element.
+    ///
+    /// # Performance
+    ///
+    /// Advancing the iterator should be amortized `O(1)` unless an
+    /// implementation documents otherwise.
+    type Predecessors<'view>: Iterator<Item = Self::ElementId>
+    where
+        Self: 'view;
+
+    /// Returns elements that reach `element` through outgoing connections.
+    ///
+    /// # Performance
+    ///
+    /// Expected `O(1)` to create the iterator; yielding `k` predecessors is
+    /// expected `O(k)`.
+    fn element_predecessors(&self, element: Self::ElementId) -> Self::Predecessors<'_>;
 }

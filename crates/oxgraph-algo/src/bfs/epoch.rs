@@ -1,27 +1,34 @@
-//! Epoch-marked no-allocation indexed BFS.
+//! Epoch-marked no-allocation indexed BFS (forward and reverse).
 
 use core::{iter::FusedIterator, marker::PhantomData};
 
-use oxgraph_graph::{ContainsNode, NodeId, NodeIndex, OutgoingNeighborsGraph};
+use oxgraph_topology::{
+    ContainsElement, ElementId, ElementIndex, ElementPredecessors, ElementSuccessors,
+};
 
 use crate::bfs::{
     BfsError,
-    core::{Bfs, SeededEpochFrontier, ValidatedScratch},
+    core::{Bfs, Forward, Reverse, SeededEpochFrontier, ValidatedScratch},
 };
 
 /// Reusable caller-provided scratch for epoch-marked indexed BFS, branded to
-/// a specific graph type.
+/// a specific topology view type.
 ///
 /// The mark slice stores traversal epochs instead of byte flags. Reusing this
-/// value across traversals avoids clearing all `graph.node_bound()` entries each
-/// time; only epoch overflow performs a full mark clear.
+/// value across traversals avoids clearing all `graph.element_bound()` entries
+/// each time; only epoch overflow performs a full mark clear.
 ///
 /// The `G` type parameter brands the scratch at compile time: a
-/// `BfsEpochScratch<'_, GraphA>` cannot be passed to a traversal of `GraphB`.
+/// `BfsEpochScratch<'_, ViewA>` cannot be passed to a traversal of `ViewB`.
 /// `PhantomData<fn() -> G>` is covariant in `G` (function-return position is
 /// covariant) and crucially keeps `Send` / `Sync` independent of `G`'s
 /// thread-safety, so the scratch remains usable from threads that `G` itself
 /// cannot cross.
+///
+/// The same scratch is usable for both forward and reverse traversal because
+/// epoch advancement is direction-agnostic and the visited semantics of
+/// "already discovered along the current expansion" hold regardless of
+/// whether expansion follows successors or predecessors.
 ///
 /// # Performance
 ///
@@ -31,31 +38,31 @@ use crate::bfs::{
 /// and queue lengths `m` and `q`.
 pub struct BfsEpochScratch<'scratch, G>
 where
-    G: ContainsNode + NodeIndex,
+    G: ContainsElement + ElementIndex,
 {
-    /// Dense visited epoch marks indexed by `NodeIndex::node_index`.
+    /// Dense visited epoch marks indexed by `ElementIndex::element_index`.
     marks: &'scratch mut [u32],
-    /// Queue storage for discovered nodes.
-    queue: &'scratch mut [NodeId<G>],
+    /// Queue storage for discovered elements.
+    queue: &'scratch mut [ElementId<G>],
     /// Current non-zero traversal epoch. Zero is reserved for "never visited".
     epoch: u32,
-    /// Brands the scratch to a specific graph type without coupling
+    /// Brands the scratch to a specific topology view type without coupling
     /// `Send`/`Sync` to `G`.
     _graph: PhantomData<fn() -> G>,
 }
 
 impl<'scratch, G> BfsEpochScratch<'scratch, G>
 where
-    G: ContainsNode + NodeIndex,
+    G: ContainsElement + ElementIndex,
 {
     /// Creates reusable epoch scratch over caller-provided mark and queue
     /// slices.
     ///
-    /// The graph type `G` is bound by the queue slice's element type
-    /// `NodeId<G>`; type inference picks it up from the queue argument when
-    /// `NodeId<G>` is unique. When inference cannot resolve `G` (because
-    /// multiple graph types share the same `NodeId`), pair this with
-    /// [`BfsEpochScratch::for_graph`] or use turbofish.
+    /// The view type `G` is bound by the queue slice's element type
+    /// `ElementId<G>`; type inference picks it up from the queue argument
+    /// when `ElementId<G>` is unique. When inference cannot resolve `G`
+    /// (because multiple view types share the same `ElementId`), pair this
+    /// with [`BfsEpochScratch::for_graph`] or use turbofish.
     ///
     /// Existing mark contents are cleared so the first traversal starts from
     /// a known epoch state. Queue contents are ignored.
@@ -64,7 +71,7 @@ where
     ///
     /// Clears `O(m)` entries for `m = marks.len()` and performs no heap
     /// allocation.
-    pub fn new(marks: &'scratch mut [u32], queue: &'scratch mut [NodeId<G>]) -> Self {
+    pub fn new(marks: &'scratch mut [u32], queue: &'scratch mut [ElementId<G>]) -> Self {
         marks.fill(0);
         Self {
             marks,
@@ -74,12 +81,12 @@ where
         }
     }
 
-    /// Creates reusable epoch scratch with the graph type bound from a
+    /// Creates reusable epoch scratch with the view type bound from a
     /// borrowed reference.
     ///
     /// Equivalent to [`BfsEpochScratch::new`] but takes `&G` purely as a
-    /// type witness so callers do not need turbofish when multiple graph
-    /// types share `NodeId`. The graph reference is consumed only for type
+    /// type witness so callers do not need turbofish when multiple view
+    /// types share `ElementId`. The view reference is consumed only for type
     /// inference; its runtime value is not retained.
     ///
     /// # Performance
@@ -89,7 +96,7 @@ where
     pub fn for_graph(
         _graph: &G,
         marks: &'scratch mut [u32],
-        queue: &'scratch mut [NodeId<G>],
+        queue: &'scratch mut [ElementId<G>],
     ) -> Self {
         Self::new(marks, queue)
     }
@@ -136,7 +143,7 @@ where
     }
 }
 
-/// Directed BFS iterator using caller-provided epoch-marked scratch.
+/// Forward BFS iterator using caller-provided epoch-marked scratch.
 ///
 /// Constructed only via [`breadth_first_search_with_epoch_scratch`]. The
 /// internal storage policy ([`SeededEpochFrontier`]) is intentionally not
@@ -144,23 +151,23 @@ where
 ///
 /// # Performance
 ///
-/// For a reachable subgraph with `n` nodes and `m` outgoing neighbor entries
+/// For a reachable subgraph with `n` elements and `m` successor entries
 /// inspected, traversal is `O(n + m)` and uses `O(b)` caller-provided scratch
-/// memory for `b = graph.node_bound()`.
+/// memory for `b = graph.element_bound()`.
 #[must_use = "iterators are lazy and do nothing unless consumed"]
 pub struct BreadthFirstSearchEpochScratch<'graph, 'borrow, G>
 where
-    G: ContainsNode + OutgoingNeighborsGraph + NodeIndex,
+    G: ContainsElement + ElementSuccessors + ElementIndex,
 {
     /// Underlying generic BFS driver carrying the seeded frontier.
-    inner: Bfs<'graph, G, SeededEpochFrontier<'borrow, G>>,
+    inner: Bfs<'graph, G, SeededEpochFrontier<'borrow, G>, Forward>,
 }
 
 impl<G> Iterator for BreadthFirstSearchEpochScratch<'_, '_, G>
 where
-    G: ContainsNode + OutgoingNeighborsGraph + NodeIndex,
+    G: ContainsElement + ElementSuccessors + ElementIndex,
 {
-    type Item = NodeId<G>;
+    type Item = ElementId<G>;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.inner.next()
@@ -168,51 +175,123 @@ where
 }
 
 impl<G> FusedIterator for BreadthFirstSearchEpochScratch<'_, '_, G> where
-    G: ContainsNode + OutgoingNeighborsGraph + NodeIndex
+    G: ContainsElement + ElementSuccessors + ElementIndex
 {
 }
 
-/// Creates a directed breadth-first traversal using reusable epoch scratch.
+/// Creates a forward breadth-first traversal using reusable epoch scratch.
 ///
-/// Traversal follows outgoing neighbor nodes and yields each reachable node at most once.
-/// `scratch` must provide at least `graph.node_bound()` mark entries and queue
-/// slots. Unlike [`crate::breadth_first_search_with_scratch`], construction does
-/// not clear all visited entries on every traversal except when the epoch wraps.
+/// Traversal follows outgoing connections and yields each reachable element
+/// at most once. `scratch` must provide at least `graph.element_bound()` mark
+/// entries and queue slots. Unlike
+/// [`crate::breadth_first_search_with_scratch`], construction does not clear
+/// all visited entries on every traversal except when the epoch wraps.
 ///
-/// `start` and all IDs returned by `graph.outgoing_neighbors` must be valid for
-/// `graph` and must map to indexes below `graph.node_bound()`. A neighbor
-/// index at or past the bound observed at construction time will panic with
-/// [`BfsError::NeighborIndexOutOfBounds`]; this is a graph-view contract
-/// violation, not a recoverable failure.
+/// `start` and all IDs returned by `graph.element_successors` must be valid
+/// for `graph` and must map to indexes below `graph.element_bound()`. An
+/// expansion-target index at or past the bound observed at construction time
+/// will panic with [`BfsError::NeighborIndexOutOfBounds`]; this is a topology
+/// contract violation, not a recoverable failure.
 ///
 /// # Errors
 ///
 /// Returns [`BfsError::VisitedTooSmall`] or [`BfsError::QueueTooSmall`] when
-/// the corresponding scratch storage is smaller than `graph.node_bound()`,
-/// [`BfsError::StartNodeNotContained`] when `start` is not contained in
-/// `graph`, or [`BfsError::StartIndexOutOfBounds`] when `start` maps outside
-/// `graph.node_bound()`. Errors are returned in that order: scratch sizes are
-/// checked before start-node validation.
+/// the corresponding scratch storage is smaller than
+/// `graph.element_bound()`, [`BfsError::StartElementNotContained`] when
+/// `start` is not contained in `graph`, or [`BfsError::StartIndexOutOfBounds`]
+/// when `start` maps outside `graph.element_bound()`. Errors are returned in
+/// that order: scratch sizes are checked before start-element validation.
 ///
 /// # Performance
 ///
 /// Construction is `O(1)` after scratch capacity validation except on epoch
 /// overflow, where it clears `O(m)` mark entries for `m = scratch.mark_capacity()`.
-/// Traversal over a reachable subgraph with `n` nodes and `m` outgoing neighbor
+/// Traversal over a reachable subgraph with `n` elements and `m` successor
 /// entries inspected is `O(n + m)` and performs no heap allocation.
 pub fn breadth_first_search_with_epoch_scratch<'graph, 'borrow, 'scratch, G>(
     graph: &'graph G,
-    start: NodeId<G>,
+    start: ElementId<G>,
     scratch: &'borrow mut BfsEpochScratch<'scratch, G>,
 ) -> Result<BreadthFirstSearchEpochScratch<'graph, 'borrow, G>, BfsError>
 where
     'scratch: 'borrow,
-    G: ContainsNode + OutgoingNeighborsGraph + NodeIndex,
+    G: ContainsElement + ElementSuccessors + ElementIndex,
 {
     let witness = ValidatedScratch::new(graph, start, scratch.marks.len(), scratch.queue.len())?;
     let epoch = scratch.advance_epoch();
     let frontier = SeededEpochFrontier::new(scratch.marks, scratch.queue, epoch, start, witness);
     Ok(BreadthFirstSearchEpochScratch {
+        inner: Bfs::new(graph, frontier),
+    })
+}
+
+/// Reverse BFS iterator using caller-provided epoch-marked scratch.
+///
+/// Constructed only via [`reverse_breadth_first_search_with_epoch_scratch`].
+/// The internal storage policy ([`SeededEpochFrontier`]) is intentionally not
+/// part of the public API.
+///
+/// # Performance
+///
+/// For a reverse-reachable subgraph with `n` elements and `m` predecessor
+/// entries inspected, traversal is `O(n + m)` and uses `O(b)` caller-provided
+/// scratch memory for `b = graph.element_bound()`.
+#[must_use = "iterators are lazy and do nothing unless consumed"]
+pub struct ReverseBreadthFirstSearchEpochScratch<'graph, 'borrow, G>
+where
+    G: ContainsElement + ElementPredecessors + ElementIndex,
+{
+    /// Underlying generic BFS driver carrying the seeded frontier and reverse
+    /// direction selector.
+    inner: Bfs<'graph, G, SeededEpochFrontier<'borrow, G>, Reverse>,
+}
+
+impl<G> Iterator for ReverseBreadthFirstSearchEpochScratch<'_, '_, G>
+where
+    G: ContainsElement + ElementPredecessors + ElementIndex,
+{
+    type Item = ElementId<G>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.inner.next()
+    }
+}
+
+impl<G> FusedIterator for ReverseBreadthFirstSearchEpochScratch<'_, '_, G> where
+    G: ContainsElement + ElementPredecessors + ElementIndex
+{
+}
+
+/// Creates a reverse breadth-first traversal using reusable epoch scratch.
+///
+/// Traversal follows incoming connections and yields each reverse-reachable
+/// element at most once. Same scratch / contract / error shape as
+/// [`breadth_first_search_with_epoch_scratch`]; the only difference is that
+/// expansion uses
+/// [`ElementPredecessors`](oxgraph_topology::ElementPredecessors) instead of
+/// [`ElementSuccessors`](oxgraph_topology::ElementSuccessors).
+///
+/// # Errors
+///
+/// Same as [`breadth_first_search_with_epoch_scratch`].
+///
+/// # Performance
+///
+/// Same as [`breadth_first_search_with_epoch_scratch`] with predecessor
+/// expansion in place of successor expansion.
+pub fn reverse_breadth_first_search_with_epoch_scratch<'graph, 'borrow, 'scratch, G>(
+    graph: &'graph G,
+    start: ElementId<G>,
+    scratch: &'borrow mut BfsEpochScratch<'scratch, G>,
+) -> Result<ReverseBreadthFirstSearchEpochScratch<'graph, 'borrow, G>, BfsError>
+where
+    'scratch: 'borrow,
+    G: ContainsElement + ElementPredecessors + ElementIndex,
+{
+    let witness = ValidatedScratch::new(graph, start, scratch.marks.len(), scratch.queue.len())?;
+    let epoch = scratch.advance_epoch();
+    let frontier = SeededEpochFrontier::new(scratch.marks, scratch.queue, epoch, start, witness);
+    Ok(ReverseBreadthFirstSearchEpochScratch {
         inner: Bfs::new(graph, frontier),
     })
 }

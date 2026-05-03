@@ -1,24 +1,42 @@
-//! Tests for directed BFS over oxgraph-graph traits.
+//! Tests for substrate-agnostic BFS over oxgraph-topology traits.
+//!
+//! BFS is exercised against three substrates:
+//!
+//! - an in-test `FixtureGraph` that impls only the topology traits BFS needs, covering both forward
+//!   and reverse directions;
+//! - the `oxgraph-csr::CsrGraph` graph layout (forward only — CSR is forward-only by design);
+//! - the `oxgraph-hyper-bcsr::BcsrHypergraph` hypergraph layout (forward and reverse).
 
-#[cfg(feature = "std")]
-use oxgraph_algo::breadth_first_search_generic_hash;
 use oxgraph_algo::{
     BfsEpochScratch, BfsError, breadth_first_search_with_epoch_scratch,
-    breadth_first_search_with_scratch,
+    breadth_first_search_with_scratch, reverse_breadth_first_search_with_epoch_scratch,
+    reverse_breadth_first_search_with_scratch,
 };
 #[cfg(feature = "alloc")]
 use oxgraph_algo::{
     BfsWorkspace, breadth_first_search, breadth_first_search_generic,
-    breadth_first_search_with_workspace,
+    breadth_first_search_with_workspace, reverse_breadth_first_search,
+    reverse_breadth_first_search_generic, reverse_breadth_first_search_with_workspace,
 };
+#[cfg(feature = "std")]
+use oxgraph_algo::{breadth_first_search_generic_hash, reverse_breadth_first_search_generic_hash};
 use oxgraph_csr::{
     CsrError, CsrGraph, CsrNodeId, CsrSnapshotError, SNAPSHOT_KIND_CSR_OFFSETS,
     SNAPSHOT_KIND_CSR_TARGETS,
 };
-use oxgraph_graph::{NodeId, NodeIndex, OutgoingNeighborsGraph};
+use oxgraph_hyper_bcsr::{
+    BcsrError, BcsrHypergraph, BcsrSnapshotError, BcsrVertexId, SNAPSHOT_KIND_BCSR_HEAD_OFFSETS,
+    SNAPSHOT_KIND_BCSR_HEAD_PARTICIPANTS, SNAPSHOT_KIND_BCSR_TAIL_OFFSETS,
+    SNAPSHOT_KIND_BCSR_TAIL_PARTICIPANTS, SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_HYPEREDGES,
+    SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_OFFSETS, SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_HYPEREDGES,
+    SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_OFFSETS,
+};
 use oxgraph_snapshot::{Snapshot, SnapshotBuilder, SnapshotError};
-use oxgraph_topology::{ContainsElement, ElementIndex, TopologyBase};
+use oxgraph_topology::{
+    ContainsElement, ElementId, ElementIndex, ElementPredecessors, ElementSuccessors, TopologyBase,
+};
 use proptest::prelude::*;
+use zerocopy::byteorder::{LE, U32};
 
 /// Error returned while opening snapshot-backed CSR fixtures.
 #[derive(Debug, Eq, PartialEq)]
@@ -64,10 +82,15 @@ struct Node(usize);
 struct Edge(usize);
 
 /// Small graph fixture implementing only the traits BFS requires.
+///
+/// Carries both successor and predecessor adjacency so the same fixture
+/// covers forward and reverse traversal end-to-end.
 #[derive(Debug)]
 struct FixtureGraph {
     /// Direct outgoing neighbor nodes per node.
     outgoing_neighbors: &'static [&'static [Node]],
+    /// Direct incoming neighbor nodes per node.
+    incoming_neighbors: &'static [&'static [Node]],
 }
 
 impl TopologyBase for FixtureGraph {
@@ -91,18 +114,32 @@ impl ContainsElement for FixtureGraph {
     }
 }
 
-impl OutgoingNeighborsGraph for FixtureGraph {
-    type OutNeighbors<'view>
+impl ElementSuccessors for FixtureGraph {
+    type Successors<'view>
         = core::iter::Copied<core::slice::Iter<'view, Node>>
     where
         Self: 'view;
 
-    fn outgoing_neighbors(&self, node: Node) -> Self::OutNeighbors<'_> {
+    fn element_successors(&self, node: Node) -> Self::Successors<'_> {
         self.outgoing_neighbors[node.0].iter().copied()
     }
 }
 
+impl ElementPredecessors for FixtureGraph {
+    type Predecessors<'view>
+        = core::iter::Copied<core::slice::Iter<'view, Node>>
+    where
+        Self: 'view;
+
+    fn element_predecessors(&self, node: Node) -> Self::Predecessors<'_> {
+        self.incoming_neighbors[node.0].iter().copied()
+    }
+}
+
 /// Returns a graph shaped like `0 -> {1, 2}`, `1 -> {3}`, `2 -> {3}`.
+///
+/// Reverse adjacency is the obvious transpose:
+/// `0 <- {}`, `1 <- {0}`, `2 <- {0}`, `3 <- {1, 2}`.
 fn fixture() -> FixtureGraph {
     static OUT_N_0: &[Node] = &[Node(1), Node(2)];
     static OUT_N_1: &[Node] = &[Node(3)];
@@ -110,42 +147,85 @@ fn fixture() -> FixtureGraph {
     static OUT_N_3: &[Node] = &[];
     static OUTGOING_NEIGHBORS: &[&[Node]] = &[OUT_N_0, OUT_N_1, OUT_N_2, OUT_N_3];
 
+    static IN_N_0: &[Node] = &[];
+    static IN_N_1: &[Node] = &[Node(0)];
+    static IN_N_2: &[Node] = &[Node(0)];
+    static IN_N_3: &[Node] = &[Node(1), Node(2)];
+    static INCOMING_NEIGHBORS: &[&[Node]] = &[IN_N_0, IN_N_1, IN_N_2, IN_N_3];
+
     FixtureGraph {
         outgoing_neighbors: OUTGOING_NEIGHBORS,
+        incoming_neighbors: INCOMING_NEIGHBORS,
     }
 }
 
-/// Runs scratch-backed BFS and collects the order for assertions.
-fn scratch_order<G>(graph: &G, start: NodeId<G>) -> Result<Vec<NodeId<G>>, BfsError>
+/// Runs forward scratch-backed BFS and collects the order for assertions.
+fn scratch_order<G>(graph: &G, start: ElementId<G>) -> Result<Vec<ElementId<G>>, BfsError>
 where
-    G: NodeIndex + OutgoingNeighborsGraph + oxgraph_graph::ContainsNode,
+    G: ContainsElement + ElementSuccessors + ElementIndex,
 {
-    let bound = graph.node_bound();
+    let bound = graph.element_bound();
     let mut visited = vec![0; bound];
     let mut queue = vec![start; bound];
     Ok(breadth_first_search_with_scratch(graph, start, &mut visited, &mut queue)?.collect())
 }
 
-/// Runs epoch-scratch-backed BFS and collects the order for assertions.
-fn epoch_order<G>(graph: &G, start: NodeId<G>) -> Result<Vec<NodeId<G>>, BfsError>
+/// Runs reverse scratch-backed BFS and collects the order for assertions.
+fn reverse_scratch_order<G>(graph: &G, start: ElementId<G>) -> Result<Vec<ElementId<G>>, BfsError>
 where
-    G: NodeIndex + OutgoingNeighborsGraph + oxgraph_graph::ContainsNode,
+    G: ContainsElement + ElementPredecessors + ElementIndex,
 {
-    let bound = graph.node_bound();
+    let bound = graph.element_bound();
+    let mut visited = vec![0; bound];
+    let mut queue = vec![start; bound];
+    Ok(
+        reverse_breadth_first_search_with_scratch(graph, start, &mut visited, &mut queue)?
+            .collect(),
+    )
+}
+
+/// Runs forward epoch-scratch-backed BFS and collects the order.
+fn epoch_order<G>(graph: &G, start: ElementId<G>) -> Result<Vec<ElementId<G>>, BfsError>
+where
+    G: ContainsElement + ElementSuccessors + ElementIndex,
+{
+    let bound = graph.element_bound();
     let mut marks = vec![0; bound];
     let mut queue = vec![start; bound];
     let mut scratch = BfsEpochScratch::for_graph(graph, &mut marks, &mut queue);
     Ok(breadth_first_search_with_epoch_scratch(graph, start, &mut scratch)?.collect())
 }
 
-/// Runs workspace-backed BFS and collects the order for assertions.
-#[cfg(feature = "alloc")]
-fn workspace_order<G>(graph: &G, start: NodeId<G>) -> Result<Vec<NodeId<G>>, BfsError>
+/// Runs reverse epoch-scratch-backed BFS and collects the order.
+fn reverse_epoch_order<G>(graph: &G, start: ElementId<G>) -> Result<Vec<ElementId<G>>, BfsError>
 where
-    G: NodeIndex + OutgoingNeighborsGraph + oxgraph_graph::ContainsNode,
+    G: ContainsElement + ElementPredecessors + ElementIndex,
+{
+    let bound = graph.element_bound();
+    let mut marks = vec![0; bound];
+    let mut queue = vec![start; bound];
+    let mut scratch = BfsEpochScratch::for_graph(graph, &mut marks, &mut queue);
+    Ok(reverse_breadth_first_search_with_epoch_scratch(graph, start, &mut scratch)?.collect())
+}
+
+/// Runs forward workspace-backed BFS and collects the order.
+#[cfg(feature = "alloc")]
+fn workspace_order<G>(graph: &G, start: ElementId<G>) -> Result<Vec<ElementId<G>>, BfsError>
+where
+    G: ContainsElement + ElementSuccessors + ElementIndex,
 {
     let mut workspace = BfsWorkspace::new();
     Ok(breadth_first_search_with_workspace(graph, start, &mut workspace)?.collect())
+}
+
+/// Runs reverse workspace-backed BFS and collects the order.
+#[cfg(feature = "alloc")]
+fn reverse_workspace_order<G>(graph: &G, start: ElementId<G>) -> Result<Vec<ElementId<G>>, BfsError>
+where
+    G: ContainsElement + ElementPredecessors + ElementIndex,
+{
+    let mut workspace = BfsWorkspace::new();
+    Ok(reverse_breadth_first_search_with_workspace(graph, start, &mut workspace)?.collect())
 }
 
 #[test]
@@ -159,10 +239,30 @@ fn bfs_runs_over_trait_fixture() {
 }
 
 #[test]
+fn reverse_bfs_runs_over_trait_fixture() {
+    let graph = fixture();
+
+    assert_eq!(
+        reverse_scratch_order(&graph, Node(3)),
+        Ok(vec![Node(3), Node(1), Node(2), Node(0)])
+    );
+}
+
+#[test]
 fn epoch_bfs_matches_scratch_bfs_on_trait_fixture() {
     let graph = fixture();
 
     assert_eq!(epoch_order(&graph, Node(0)), scratch_order(&graph, Node(0)));
+}
+
+#[test]
+fn reverse_epoch_bfs_matches_reverse_scratch_bfs_on_trait_fixture() {
+    let graph = fixture();
+
+    assert_eq!(
+        reverse_epoch_order(&graph, Node(3)),
+        reverse_scratch_order(&graph, Node(3))
+    );
 }
 
 #[cfg(feature = "alloc")]
@@ -178,12 +278,34 @@ fn allocating_bfs_matches_generic_bfs_on_trait_fixture() {
 
 #[cfg(feature = "alloc")]
 #[test]
+fn reverse_allocating_bfs_matches_reverse_generic_bfs_on_trait_fixture() {
+    let graph = fixture();
+
+    assert_eq!(
+        reverse_breadth_first_search(&graph, Node(3)).map(std::iter::Iterator::collect::<Vec<_>>),
+        Ok(reverse_breadth_first_search_generic(&graph, Node(3)).collect::<Vec<_>>())
+    );
+}
+
+#[cfg(feature = "alloc")]
+#[test]
 fn workspace_bfs_matches_scratch_bfs_on_trait_fixture() {
     let graph = fixture();
 
     assert_eq!(
         workspace_order(&graph, Node(0)),
         scratch_order(&graph, Node(0))
+    );
+}
+
+#[cfg(feature = "alloc")]
+#[test]
+fn reverse_workspace_bfs_matches_reverse_scratch_bfs_on_trait_fixture() {
+    let graph = fixture();
+
+    assert_eq!(
+        reverse_workspace_order(&graph, Node(3)),
+        reverse_scratch_order(&graph, Node(3))
     );
 }
 
@@ -195,6 +317,17 @@ fn hash_bfs_matches_generic_bfs_on_trait_fixture() {
     assert_eq!(
         breadth_first_search_generic_hash(&graph, Node(0)).collect::<Vec<_>>(),
         breadth_first_search_generic(&graph, Node(0)).collect::<Vec<_>>()
+    );
+}
+
+#[cfg(feature = "std")]
+#[test]
+fn reverse_hash_bfs_matches_reverse_generic_bfs_on_trait_fixture() {
+    let graph = fixture();
+
+    assert_eq!(
+        reverse_breadth_first_search_generic_hash(&graph, Node(3)).collect::<Vec<_>>(),
+        reverse_breadth_first_search_generic(&graph, Node(3)).collect::<Vec<_>>()
     );
 }
 
@@ -229,14 +362,14 @@ fn scratch_bfs_rejects_small_queue_slice() {
 }
 
 #[test]
-fn scratch_bfs_rejects_uncontained_start_node() {
+fn scratch_bfs_rejects_uncontained_start_element() {
     let graph = fixture();
     let mut visited = [0; 4];
     let mut queue = [Node(0); 4];
 
     assert_eq!(
         breadth_first_search_with_scratch(&graph, Node(4), &mut visited, &mut queue).err(),
-        Some(BfsError::StartNodeNotContained)
+        Some(BfsError::StartElementNotContained)
     );
 }
 
@@ -287,6 +420,24 @@ fn epoch_bfs_reuses_scratch_without_full_clear() {
 }
 
 #[test]
+fn reverse_epoch_bfs_shares_scratch_with_forward() {
+    let graph = fixture();
+    let mut marks = [0; 4];
+    let mut queue = [Node(0); 4];
+    let mut scratch = BfsEpochScratch::for_graph(&graph, &mut marks, &mut queue);
+
+    // Forward then reverse using the same scratch — epoch advancement isolates
+    // the two traversals without a full mark clear.
+    let forward = breadth_first_search_with_epoch_scratch(&graph, Node(0), &mut scratch)
+        .map(std::iter::Iterator::collect::<Vec<_>>);
+    assert_eq!(forward, Ok(vec![Node(0), Node(1), Node(2), Node(3)]));
+
+    let reverse = reverse_breadth_first_search_with_epoch_scratch(&graph, Node(3), &mut scratch)
+        .map(std::iter::Iterator::collect::<Vec<_>>);
+    assert_eq!(reverse, Ok(vec![Node(3), Node(1), Node(2), Node(0)]));
+}
+
+#[test]
 fn epoch_bfs_rejects_small_mark_slice() {
     let graph = fixture();
     let mut marks = [0; 3];
@@ -318,8 +469,8 @@ fn epoch_bfs_rejects_small_queue_slice() {
     );
 }
 
-/// Misbehaving fixture that yields a neighbor index past `node_bound()` from
-/// node 0, exercising the structured `NeighborIndexOutOfBounds` panic.
+/// Misbehaving fixture that yields a successor index past `element_bound()`
+/// from element 0, exercising the structured `NeighborIndexOutOfBounds` panic.
 struct OutOfBoundFixture;
 
 impl TopologyBase for OutOfBoundFixture {
@@ -343,15 +494,15 @@ impl ContainsElement for OutOfBoundFixture {
     }
 }
 
-impl OutgoingNeighborsGraph for OutOfBoundFixture {
-    type OutNeighbors<'view>
+impl ElementSuccessors for OutOfBoundFixture {
+    type Successors<'view>
         = core::iter::Copied<core::slice::Iter<'view, Node>>
     where
         Self: 'view;
 
-    fn outgoing_neighbors(&self, node: Node) -> Self::OutNeighbors<'_> {
-        // Node 0 yields a neighbor whose index (7) is past node_bound (2).
-        // Node 1 yields no neighbors.
+    fn element_successors(&self, node: Node) -> Self::Successors<'_> {
+        // Element 0 yields a successor whose index (7) is past element_bound (2).
+        // Element 1 yields no successors.
         static OUT_OF_BOUND: &[Node] = &[Node(7)];
         static EMPTY: &[Node] = &[];
         match node.0 {
@@ -388,11 +539,11 @@ fn scratch_bfs_panics_with_neighbor_oob_message_on_bad_neighbor() {
     }));
 
     let Err(payload) = result else {
-        panic!("scratch traversal must panic on out-of-bound neighbor")
+        panic!("scratch traversal must panic on out-of-bound expanded element")
     };
     let message = panic_message(&*payload);
     assert!(
-        message.contains("neighbor node index 7 is outside node index bound 2"),
+        message.contains("expanded element index 7 is outside element index bound 2"),
         "panic message did not match BfsError::NeighborIndexOutOfBounds Display: {message}"
     );
 }
@@ -412,11 +563,11 @@ fn epoch_bfs_panics_with_neighbor_oob_message_on_bad_neighbor() {
     }));
 
     let Err(payload) = result else {
-        panic!("epoch traversal must panic on out-of-bound neighbor")
+        panic!("epoch traversal must panic on out-of-bound expanded element")
     };
     let message = panic_message(&*payload);
     assert!(
-        message.contains("neighbor node index 7 is outside node index bound 2"),
+        message.contains("expanded element index 7 is outside element index bound 2"),
         "panic message did not match BfsError::NeighborIndexOutOfBounds Display: {message}"
     );
 }
@@ -436,11 +587,11 @@ fn allocating_bfs_panics_with_neighbor_oob_message_on_bad_neighbor() {
     ));
 
     let Err(payload) = result else {
-        panic!("allocating traversal must panic on out-of-bound neighbor")
+        panic!("allocating traversal must panic on out-of-bound expanded element")
     };
     let message = panic_message(&*payload);
     assert!(
-        message.contains("neighbor node index 7 is outside node index bound 2"),
+        message.contains("expanded element index 7 is outside element index bound 2"),
         "panic message did not match BfsError::NeighborIndexOutOfBounds Display: {message}"
     );
 }
@@ -461,11 +612,11 @@ fn workspace_bfs_panics_with_neighbor_oob_message_on_bad_neighbor() {
     }));
 
     let Err(payload) = result else {
-        panic!("workspace traversal must panic on out-of-bound neighbor")
+        panic!("workspace traversal must panic on out-of-bound expanded element")
     };
     let message = panic_message(&*payload);
     assert!(
-        message.contains("neighbor node index 7 is outside node index bound 2"),
+        message.contains("expanded element index 7 is outside element index bound 2"),
         "panic message did not match BfsError::NeighborIndexOutOfBounds Display: {message}"
     );
 }
@@ -479,11 +630,26 @@ fn workspace_bfs_reuses_owned_storage() {
     let first = breadth_first_search_with_workspace(&graph, Node(0), &mut workspace)
         .map(std::iter::Iterator::collect::<Vec<_>>);
     assert_eq!(first, Ok(vec![Node(0), Node(1), Node(2), Node(3)]));
-    assert_eq!(workspace.node_bound_capacity(), 4);
+    assert_eq!(workspace.element_bound_capacity(), 4);
 
     let second = breadth_first_search_with_workspace(&graph, Node(2), &mut workspace)
         .map(std::iter::Iterator::collect::<Vec<_>>);
     assert_eq!(second, Ok(vec![Node(2), Node(3)]));
+}
+
+#[cfg(feature = "alloc")]
+#[test]
+fn workspace_shares_between_forward_and_reverse() {
+    let graph = fixture();
+    let mut workspace = BfsWorkspace::new();
+
+    let forward = breadth_first_search_with_workspace(&graph, Node(0), &mut workspace)
+        .map(std::iter::Iterator::collect::<Vec<_>>);
+    assert_eq!(forward, Ok(vec![Node(0), Node(1), Node(2), Node(3)]));
+
+    let reverse = reverse_breadth_first_search_with_workspace(&graph, Node(3), &mut workspace)
+        .map(std::iter::Iterator::collect::<Vec<_>>);
+    assert_eq!(reverse, Ok(vec![Node(3), Node(1), Node(2), Node(0)]));
 }
 
 #[test]
@@ -583,6 +749,255 @@ fn valid_snapshot_bytes() -> Vec<u8> {
         panic!("targets section: {error:?}");
     }
     builder.finish()
+}
+
+// ============================================================================
+// Hypergraph (BCSR) coverage — the key proof that algo runs unchanged on a
+// non-graph substrate.
+// ============================================================================
+
+/// Error returned while opening snapshot-backed BCSR fixtures.
+#[derive(Debug)]
+enum BcsrFixtureError {
+    /// Snapshot validation failed.
+    Snapshot(SnapshotError),
+    /// BCSR snapshot adaptor failed.
+    Adaptor(BcsrSnapshotError),
+    /// BCSR validation failed.
+    Validation(BcsrError),
+}
+
+impl From<SnapshotError> for BcsrFixtureError {
+    fn from(error: SnapshotError) -> Self {
+        Self::Snapshot(error)
+    }
+}
+
+impl From<BcsrSnapshotError> for BcsrFixtureError {
+    fn from(error: BcsrSnapshotError) -> Self {
+        Self::Adaptor(error)
+    }
+}
+
+impl From<BcsrError> for BcsrFixtureError {
+    fn from(error: BcsrError) -> Self {
+        Self::Validation(error)
+    }
+}
+
+impl std::fmt::Display for BcsrFixtureError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Snapshot(error) => write!(formatter, "snapshot validation failed: {error}"),
+            Self::Adaptor(error) => write!(formatter, "BCSR adaptor failed: {error}"),
+            Self::Validation(error) => write!(formatter, "BCSR validation failed: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for BcsrFixtureError {}
+
+/// Builds a small directed hypergraph snapshot whose vertex-level reachability
+/// matches the four-element fixture used elsewhere in this file:
+///
+/// `0 -> {1, 2}` via hyperedge 0 (head: {0}, tail: {1, 2}),
+/// `1 -> {3}`   via hyperedge 1 (head: {1}, tail: {3}),
+/// `2 -> {3}`   via hyperedge 2 (head: {2}, tail: {3}).
+///
+/// Forward BFS from vertex 0 reaches {0, 1, 2, 3}; reverse BFS from vertex 3
+/// reaches {3, 1, 2, 0}.
+fn bcsr_snapshot_bytes() -> Vec<u8> {
+    // Hyperedge-major: per hyperedge, list of head vertices and tail vertices.
+    // Hyperedge 0: head [0],    tail [1, 2]
+    // Hyperedge 1: head [1],    tail [3]
+    // Hyperedge 2: head [2],    tail [3]
+    let head_offsets: &[u32] = &[0, 1, 2, 3];
+    let head_participants: &[u32] = &[0, 1, 2];
+    let tail_offsets: &[u32] = &[0, 2, 3, 4];
+    let tail_participants: &[u32] = &[1, 2, 3, 3];
+
+    // Vertex-major: per vertex, hyperedges where vertex is a head (outgoing)
+    // or a tail (incoming).
+    // Vertex 0: outgoing [0],    incoming []
+    // Vertex 1: outgoing [1],    incoming [0]
+    // Vertex 2: outgoing [2],    incoming [0]
+    // Vertex 3: outgoing [],     incoming [1, 2]
+    let vertex_outgoing_offsets: &[u32] = &[0, 1, 2, 3, 3];
+    let vertex_outgoing_hyperedges: &[u32] = &[0, 1, 2];
+    let vertex_incoming_offsets: &[u32] = &[0, 0, 1, 2, 4];
+    let vertex_incoming_hyperedges: &[u32] = &[0, 0, 1, 2];
+
+    let mut builder = SnapshotBuilder::new();
+
+    let add = |builder: &mut SnapshotBuilder, kind: u32, words: &[u32]| {
+        if let Err(error) = builder.add_section(kind, 0, 2, words_to_bytes(words)) {
+            panic!("snapshot section {kind:#06x}: {error:?}");
+        }
+    };
+
+    add(&mut builder, SNAPSHOT_KIND_BCSR_HEAD_OFFSETS, head_offsets);
+    add(
+        &mut builder,
+        SNAPSHOT_KIND_BCSR_HEAD_PARTICIPANTS,
+        head_participants,
+    );
+    add(&mut builder, SNAPSHOT_KIND_BCSR_TAIL_OFFSETS, tail_offsets);
+    add(
+        &mut builder,
+        SNAPSHOT_KIND_BCSR_TAIL_PARTICIPANTS,
+        tail_participants,
+    );
+    add(
+        &mut builder,
+        SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_OFFSETS,
+        vertex_outgoing_offsets,
+    );
+    add(
+        &mut builder,
+        SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_HYPEREDGES,
+        vertex_outgoing_hyperedges,
+    );
+    add(
+        &mut builder,
+        SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_OFFSETS,
+        vertex_incoming_offsets,
+    );
+    add(
+        &mut builder,
+        SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_HYPEREDGES,
+        vertex_incoming_hyperedges,
+    );
+
+    builder.finish()
+}
+
+/// Opens a BCSR hypergraph from bytes produced by [`bcsr_snapshot_bytes`].
+fn open_bcsr(bytes: &[u8]) -> Result<BcsrHypergraph<'_, U32<LE>>, BcsrFixtureError> {
+    let snapshot = Snapshot::open(bytes)?;
+    let view = BcsrHypergraph::<U32<LE>>::from_snapshot(&snapshot)?;
+    Ok(view)
+}
+
+/// Opens a BCSR hypergraph from `bytes` or panics with the underlying error.
+fn open_bcsr_or_panic(bytes: &[u8]) -> BcsrHypergraph<'_, U32<LE>> {
+    match open_bcsr(bytes) {
+        Ok(view) => view,
+        Err(error) => panic!("BCSR fixture open failed: {error}"),
+    }
+}
+
+/// Runs forward scratch BFS on a BCSR view or panics with the underlying error.
+fn scratch_order_bcsr(
+    view: &BcsrHypergraph<'_, U32<LE>>,
+    start: BcsrVertexId,
+) -> Vec<BcsrVertexId> {
+    match scratch_order(view, start) {
+        Ok(order) => order,
+        Err(error) => panic!("forward scratch BFS on BCSR failed: {error}"),
+    }
+}
+
+/// Runs reverse scratch BFS on a BCSR view or panics with the underlying error.
+fn reverse_scratch_order_bcsr(
+    view: &BcsrHypergraph<'_, U32<LE>>,
+    start: BcsrVertexId,
+) -> Vec<BcsrVertexId> {
+    match reverse_scratch_order(view, start) {
+        Ok(order) => order,
+        Err(error) => panic!("reverse scratch BFS on BCSR failed: {error}"),
+    }
+}
+
+#[test]
+fn forward_bfs_runs_over_bcsr_hypergraph() {
+    let bytes = bcsr_snapshot_bytes();
+    let view = open_bcsr_or_panic(&bytes);
+
+    let order = scratch_order_bcsr(&view, BcsrVertexId(0));
+    assert_eq!(
+        order,
+        vec![
+            BcsrVertexId(0),
+            BcsrVertexId(1),
+            BcsrVertexId(2),
+            BcsrVertexId(3)
+        ]
+    );
+}
+
+#[test]
+fn reverse_bfs_runs_over_bcsr_hypergraph() {
+    let bytes = bcsr_snapshot_bytes();
+    let view = open_bcsr_or_panic(&bytes);
+
+    let order = reverse_scratch_order_bcsr(&view, BcsrVertexId(3));
+    assert_eq!(
+        order,
+        vec![
+            BcsrVertexId(3),
+            BcsrVertexId(1),
+            BcsrVertexId(2),
+            BcsrVertexId(0)
+        ]
+    );
+}
+
+#[cfg(feature = "alloc")]
+#[test]
+fn allocating_bfs_matches_scratch_on_bcsr_hypergraph() {
+    let bytes = bcsr_snapshot_bytes();
+    let view = open_bcsr_or_panic(&bytes);
+
+    let allocating = match breadth_first_search(&view, BcsrVertexId(0)) {
+        Ok(traversal) => traversal.collect::<Vec<_>>(),
+        Err(error) => panic!("forward indexed BFS on BCSR failed: {error}"),
+    };
+    let scratch = scratch_order_bcsr(&view, BcsrVertexId(0));
+    assert_eq!(allocating, scratch);
+
+    let reverse_allocating = match reverse_breadth_first_search(&view, BcsrVertexId(3)) {
+        Ok(traversal) => traversal.collect::<Vec<_>>(),
+        Err(error) => panic!("reverse indexed BFS on BCSR failed: {error}"),
+    };
+    let reverse_scratch = reverse_scratch_order_bcsr(&view, BcsrVertexId(3));
+    assert_eq!(reverse_allocating, reverse_scratch);
+}
+
+#[cfg(feature = "std")]
+#[test]
+fn hash_bfs_runs_over_bcsr_hypergraph() {
+    use std::collections::HashSet;
+
+    let bytes = bcsr_snapshot_bytes();
+    let view = open_bcsr_or_panic(&bytes);
+
+    // BFS yield order through `HashSet` is implementation-defined; the
+    // algorithm's contract is set semantics, not order. Collect directly into
+    // a `HashSet` and compare — that is the property substrate-agnostic BFS
+    // actually guarantees.
+    let forward_set: HashSet<_> =
+        breadth_first_search_generic_hash(&view, BcsrVertexId(0)).collect();
+    let expected_forward: HashSet<_> = [
+        BcsrVertexId(0),
+        BcsrVertexId(1),
+        BcsrVertexId(2),
+        BcsrVertexId(3),
+    ]
+    .into_iter()
+    .collect();
+    assert_eq!(forward_set, expected_forward);
+
+    let reverse_set: HashSet<_> =
+        reverse_breadth_first_search_generic_hash(&view, BcsrVertexId(3)).collect();
+    let expected_reverse: HashSet<_> = [
+        BcsrVertexId(3),
+        BcsrVertexId(1),
+        BcsrVertexId(2),
+        BcsrVertexId(0),
+    ]
+    .into_iter()
+    .collect();
+    assert_eq!(reverse_set, expected_reverse);
 }
 
 proptest! {

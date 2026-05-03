@@ -1,15 +1,13 @@
 //! Tests that `oxgraph-hyper` traits support static-dispatch hypergraph consumers.
 
 use oxgraph_hyper::{
-    ContainsHyperedge, ContainsParticipant, ContainsVertex, DirectedHyperedgeParticipants,
-    DirectedVertexPredecessors, DirectedVertexSuccessors, HyperedgeIndex,
-    HyperedgeParticipantCount, HyperedgeParticipants, Hypergraph, HypergraphCounts,
-    IncidentHyperedgeCount, IncidentHyperedges, ParticipantIndex, VertexIndex,
-};
-use oxgraph_topology::{
-    ContainsElement, ContainsIncidence, ContainsRelation, ElementIncidences, ElementIndex,
-    IncidenceBase, IncidenceElement, IncidenceIndex, IncidenceRelation, RelationIncidences,
-    RelationIndex, TopologyBase, TopologyCounts,
+    ContainsElement, ContainsHyperedge, ContainsIncidence, ContainsParticipant, ContainsRelation,
+    ContainsVertex, DirectedHyperedgeParticipants, DirectedVertexPredecessors,
+    DirectedVertexSuccessors, ElementIncidences, ElementIndex, ElementPredecessors,
+    ElementSuccessors, HyperedgeIndex, HyperedgeParticipantCount, HyperedgeParticipants,
+    Hypergraph, HypergraphCounts, IncidenceBase, IncidenceElement, IncidenceIndex,
+    IncidenceRelation, IncidentHyperedgeCount, IncidentHyperedges, ParticipantIndex,
+    RelationIncidences, RelationIndex, TopologyBase, TopologyCounts, VertexIndex,
 };
 use proptest::prelude::*;
 
@@ -236,24 +234,24 @@ impl DirectedHyperedgeParticipants for FixtureHypergraph {
     }
 }
 
-impl DirectedVertexSuccessors for FixtureHypergraph {
+impl ElementSuccessors for FixtureHypergraph {
     type Successors<'view>
         = core::iter::Copied<core::slice::Iter<'view, Vertex>>
     where
         Self: 'view;
 
-    fn successor_vertices(&self, vertex: Vertex) -> Self::Successors<'_> {
+    fn element_successors(&self, vertex: Vertex) -> Self::Successors<'_> {
         self.successors[vertex.0].iter().copied()
     }
 }
 
-impl DirectedVertexPredecessors for FixtureHypergraph {
+impl ElementPredecessors for FixtureHypergraph {
     type Predecessors<'view>
         = core::iter::Copied<core::slice::Iter<'view, Vertex>>
     where
         Self: 'view;
 
-    fn predecessor_vertices(&self, vertex: Vertex) -> Self::Predecessors<'_> {
+    fn element_predecessors(&self, vertex: Vertex) -> Self::Predecessors<'_> {
         self.predecessors[vertex.0].iter().copied()
     }
 }
@@ -364,7 +362,7 @@ where
 /// Returns directed successor vertices through static dispatch.
 fn successor_vertices<H>(hypergraph: &H, vertex: H::ElementId) -> Vec<H::ElementId>
 where
-    H: DirectedVertexSuccessors,
+    H: DirectedVertexSuccessors + TopologyBase,
 {
     hypergraph.successor_vertices(vertex).collect()
 }
@@ -372,7 +370,7 @@ where
 /// Returns directed predecessor vertices through static dispatch.
 fn predecessor_vertices<H>(hypergraph: &H, vertex: H::ElementId) -> Vec<H::ElementId>
 where
-    H: DirectedVertexPredecessors,
+    H: DirectedVertexPredecessors + TopologyBase,
 {
     hypergraph.predecessor_vertices(vertex).collect()
 }

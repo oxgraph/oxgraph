@@ -1,7 +1,7 @@
 [package]
 name = "oxgraph-algo"
 version = "0.0.0"
-description = "Graph algorithms over oxgraph-graph traits."
+description = "Substrate-agnostic graph algorithms over oxgraph-topology traits."
 publish = false
 
 authors.workspace = true
@@ -9,7 +9,7 @@ edition.workspace = true
 repository.workspace = true
 
 [dependencies]
-oxgraph-graph = { version = "0.0.0", path = "../oxgraph-graph" }
+oxgraph-topology = { version = "0.0.0", path = "../oxgraph-topology" }
 
 [features]
 default = []
@@ -19,9 +19,11 @@ std = ["alloc"]
 [dev-dependencies]
 criterion = { workspace = true }
 oxgraph-csr = { version = "0.0.0", path = "../oxgraph-csr" }
+oxgraph-hyper = { version = "0.0.0", path = "../oxgraph-hyper" }
+oxgraph-hyper-bcsr = { version = "0.0.0", path = "../oxgraph-hyper-bcsr" }
 oxgraph-snapshot = { version = "0.0.0", path = "../oxgraph-snapshot", features = ["alloc"] }
-oxgraph-topology = { version = "0.0.0", path = "../oxgraph-topology" }
 proptest = { workspace = true }
+zerocopy = { workspace = true }
 
 [[bench]]
 name = "bfs"

@@ -9,38 +9,40 @@ use core::fmt;
 /// `perf: unspecified`; errors are returned only before traversal starts.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BfsError {
-    /// The start node is not valid and visible in the graph view.
-    StartNodeNotContained,
-    /// The visited scratch slice is smaller than `graph.node_bound()`.
+    /// The start element is not valid and visible in the topology view.
+    StartElementNotContained,
+    /// The visited scratch slice is smaller than `graph.element_bound()`.
     VisitedTooSmall {
         /// Required visited entries.
         needed: usize,
         /// Provided visited entries.
         actual: usize,
     },
-    /// The queue scratch slice is smaller than `graph.node_bound()`.
+    /// The queue scratch slice is smaller than `graph.element_bound()`.
     QueueTooSmall {
         /// Required queue entries.
         needed: usize,
         /// Provided queue entries.
         actual: usize,
     },
-    /// The start node maps outside `graph.node_bound()`.
+    /// The start element maps outside `graph.element_bound()`.
     StartIndexOutOfBounds {
-        /// Dense index returned for the start node.
+        /// Dense index returned for the start element.
         index: usize,
-        /// Exclusive node index bound for the graph view.
+        /// Exclusive element index bound for the topology view.
         bound: usize,
     },
-    /// Traversal observed an outgoing neighbor whose dense index is at or past
-    /// `graph.node_bound()`. Indicates the graph view violated its
-    /// [`OutgoingNeighborsGraph`](oxgraph_graph::OutgoingNeighborsGraph)
-    /// contract: a neighbor ID must map below the node bound that was in effect
-    /// when traversal started.
+    /// Traversal observed a successor or predecessor element whose dense index
+    /// is at or past `graph.element_bound()`. Indicates the topology view
+    /// violated its
+    /// [`ElementSuccessors`](oxgraph_topology::ElementSuccessors) or
+    /// [`ElementPredecessors`](oxgraph_topology::ElementPredecessors)
+    /// contract: an expanded element ID must map below the element bound that
+    /// was in effect when traversal started.
     NeighborIndexOutOfBounds {
-        /// Dense index returned for the offending neighbor.
+        /// Dense index returned for the offending element.
         index: usize,
-        /// Exclusive node index bound that was in effect for this traversal.
+        /// Exclusive element index bound that was in effect for this traversal.
         bound: usize,
     },
 }
@@ -48,8 +50,8 @@ pub enum BfsError {
 impl fmt::Display for BfsError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::StartNodeNotContained => {
-                formatter.write_str("start node is not contained in the graph view")
+            Self::StartElementNotContained => {
+                formatter.write_str("start element is not contained in the topology view")
             }
             Self::VisitedTooSmall { needed, actual } => write!(
                 formatter,
@@ -61,11 +63,11 @@ impl fmt::Display for BfsError {
             ),
             Self::StartIndexOutOfBounds { index, bound } => write!(
                 formatter,
-                "start node index {index} is outside node index bound {bound}"
+                "start element index {index} is outside element index bound {bound}"
             ),
             Self::NeighborIndexOutOfBounds { index, bound } => write!(
                 formatter,
-                "neighbor node index {index} is outside node index bound {bound}"
+                "expanded element index {index} is outside element index bound {bound}"
             ),
         }
     }

@@ -13,10 +13,11 @@
 #[cfg(kani)]
 extern crate kani;
 
-use oxgraph_topology::{
-    ContainsElement, ContainsIncidence, ContainsRelation, ElementIncidences, ElementIndex,
-    IncidenceBase, IncidenceElement, IncidenceIndex, IncidenceRelation, RelationIncidences,
-    RelationIndex, TopologyBase, TopologyCounts,
+pub use oxgraph_topology::{
+    ContainsElement, ContainsIncidence, ContainsRelation, ElementIncidenceCount, ElementIncidences,
+    ElementIndex, ElementPredecessors, ElementSuccessors, IncidenceBase, IncidenceCounts,
+    IncidenceElement, IncidenceIndex, IncidenceRelation, IncidenceRole, RelationIncidenceCount,
+    RelationIncidences, RelationIndex, TopologyBase, TopologyCounts, TopologyId,
 };
 
 /// Hypergraph-facing alias for a topology element ID.
@@ -65,6 +66,42 @@ pub type ParticipantId<H> = <H as IncidenceBase>::IncidenceId;
 /// [`IncidenceBase::Role`] type.
 pub type ParticipantRole<H> = <H as IncidenceBase>::Role;
 
+/// Base capability for hypergraph views over topology storage.
+///
+/// This is the hypergraph-facing name for [`TopologyBase`]. It bundles the
+/// associated `ElementId` and `RelationId` types under hypergraph vocabulary so
+/// generic code can require a hypergraph base contract without naming topology
+/// traits directly.
+///
+/// # Performance
+///
+/// `perf: unspecified`; this trait carries only associated types.
+pub trait HypergraphBase: TopologyBase {}
+
+/// Blanket implementation for any view that implements [`TopologyBase`].
+///
+/// # Performance
+///
+/// `perf: unspecified`; performance is inherited from [`TopologyBase`].
+impl<T> HypergraphBase for T where T: TopologyBase {}
+
+/// Base capability for hypergraph views that expose participant records.
+///
+/// This is the hypergraph-facing name for [`IncidenceBase`]. It bundles the
+/// associated `IncidenceId` and `Role` types under hypergraph vocabulary.
+///
+/// # Performance
+///
+/// `perf: unspecified`; this trait carries only associated types.
+pub trait ParticipantBase: IncidenceBase {}
+
+/// Blanket implementation for any view that implements [`IncidenceBase`].
+///
+/// # Performance
+///
+/// `perf: unspecified`; performance is inherited from [`IncidenceBase`].
+impl<T> ParticipantBase for T where T: IncidenceBase {}
+
 /// Count capability for a hypergraph view.
 ///
 /// This trait gives hypergraph-facing names to [`TopologyCounts`] values for
@@ -93,6 +130,33 @@ pub trait HypergraphCounts: TopologyCounts {
         self.relation_count()
     }
 }
+
+/// Participant-record count capability for hypergraph views.
+///
+/// This is the hypergraph-facing name for [`IncidenceCounts`]. Backends that
+/// store participants as topology incidences can report the total participant
+/// count without traversal.
+///
+/// # Performance
+///
+/// Expected `O(1)` unless the implementation documents otherwise.
+pub trait ParticipantCounts: IncidenceCounts {
+    /// Returns the total number of participant records visible in this view.
+    ///
+    /// # Performance
+    ///
+    /// Expected `O(1)` unless the implementation documents otherwise.
+    fn participant_count(&self) -> usize {
+        self.incidence_count()
+    }
+}
+
+/// Blanket implementation for hypergraph views with incidence counts.
+///
+/// # Performance
+///
+/// `perf: unspecified`; performance is inherited from [`IncidenceCounts`].
+impl<T> ParticipantCounts for T where T: IncidenceCounts {}
 
 /// Dense vertex-index capability for hypergraph views.
 ///
@@ -292,6 +356,192 @@ pub trait ContainsParticipant: ContainsIncidence {
 /// `perf: unspecified`; performance is inherited from [`ContainsIncidence`].
 impl<T> ContainsParticipant for T where T: ContainsIncidence {}
 
+/// Capability for traversing participant records attached to one hyperedge.
+///
+/// This is the hypergraph-facing name for [`RelationIncidences`]. It yields raw
+/// participant IDs rather than resolved vertices; pair with
+/// [`HyperedgeParticipants`] when callers want vertices directly.
+///
+/// # Performance
+///
+/// Creating the iterator should be `O(1)` unless an implementation documents a
+/// weaker contract. Yielding `k` participants should be `O(k)`.
+pub trait HyperedgeIncidences: RelationIncidences {
+    /// Iterator over participant IDs attached to one hyperedge.
+    ///
+    /// # Performance
+    ///
+    /// Advancing the iterator should be amortized `O(1)` unless an
+    /// implementation documents otherwise.
+    type ParticipantIds<'view>: Iterator<Item = ParticipantId<Self>>
+    where
+        Self: 'view;
+
+    /// Returns participant IDs attached to `hyperedge`.
+    ///
+    /// # Performance
+    ///
+    /// Expected `O(1)` to create the iterator; yielding `k` participants is
+    /// expected `O(k)`.
+    fn hyperedge_incidences(&self, hyperedge: HyperedgeId<Self>) -> Self::ParticipantIds<'_>;
+}
+
+/// Blanket implementation for hypergraph views with relation-side incidence traversal.
+///
+/// Any view that implements [`RelationIncidences`] automatically exposes
+/// hypergraph-facing participant traversal under hyperedge vocabulary.
+///
+/// # Performance
+///
+/// `perf: unspecified`; performance is inherited from [`RelationIncidences`].
+impl<T> HyperedgeIncidences for T
+where
+    T: RelationIncidences,
+{
+    type ParticipantIds<'view>
+        = <T as RelationIncidences>::Incidences<'view>
+    where
+        T: 'view;
+
+    fn hyperedge_incidences(&self, hyperedge: HyperedgeId<Self>) -> Self::ParticipantIds<'_> {
+        <Self as RelationIncidences>::relation_incidences(self, hyperedge)
+    }
+}
+
+/// Capability for traversing participant records attached to one vertex.
+///
+/// This is the hypergraph-facing name for [`ElementIncidences`]. It yields raw
+/// participant IDs rather than resolved hyperedges; pair with
+/// [`IncidentHyperedges`] when callers want hyperedges directly.
+///
+/// # Performance
+///
+/// Creating the iterator should be `O(1)` unless an implementation documents a
+/// weaker contract. Yielding `k` participants should be `O(k)`.
+pub trait VertexIncidences: ElementIncidences {
+    /// Iterator over participant IDs attached to one vertex.
+    ///
+    /// # Performance
+    ///
+    /// Advancing the iterator should be amortized `O(1)` unless an
+    /// implementation documents otherwise.
+    type ParticipantIds<'view>: Iterator<Item = ParticipantId<Self>>
+    where
+        Self: 'view;
+
+    /// Returns participant IDs attached to `vertex`.
+    ///
+    /// # Performance
+    ///
+    /// Expected `O(1)` to create the iterator; yielding `k` participants is
+    /// expected `O(k)`.
+    fn vertex_incidences(&self, vertex: VertexId<Self>) -> Self::ParticipantIds<'_>;
+}
+
+/// Blanket implementation for hypergraph views with element-side incidence traversal.
+///
+/// Any view that implements [`ElementIncidences`] automatically exposes
+/// hypergraph-facing participant traversal under vertex vocabulary.
+///
+/// # Performance
+///
+/// `perf: unspecified`; performance is inherited from [`ElementIncidences`].
+impl<T> VertexIncidences for T
+where
+    T: ElementIncidences,
+{
+    type ParticipantIds<'view>
+        = <T as ElementIncidences>::Incidences<'view>
+    where
+        T: 'view;
+
+    fn vertex_incidences(&self, vertex: VertexId<Self>) -> Self::ParticipantIds<'_> {
+        <Self as ElementIncidences>::element_incidences(self, vertex)
+    }
+}
+
+/// Capability for resolving the vertex carried by a participant record.
+///
+/// This is the hypergraph-facing name for [`IncidenceElement`]. It answers
+/// "which vertex does this participant refer to?" without exposing the
+/// underlying topology vocabulary.
+///
+/// # Performance
+///
+/// Expected `O(1)` unless the implementation documents otherwise.
+pub trait ParticipantVertex: IncidenceElement {
+    /// Returns the vertex referenced by `participant`.
+    ///
+    /// # Performance
+    ///
+    /// Expected `O(1)` unless the implementation documents otherwise.
+    fn participant_vertex(&self, participant: ParticipantId<Self>) -> VertexId<Self> {
+        self.incidence_element(participant)
+    }
+}
+
+/// Blanket implementation for hypergraph views that resolve incidence elements.
+///
+/// # Performance
+///
+/// `perf: unspecified`; performance is inherited from [`IncidenceElement`].
+impl<T> ParticipantVertex for T where T: IncidenceElement {}
+
+/// Capability for resolving the hyperedge that carries a participant record.
+///
+/// This is the hypergraph-facing name for [`IncidenceRelation`]. It answers
+/// "which hyperedge does this participant belong to?" without exposing the
+/// underlying topology vocabulary.
+///
+/// # Performance
+///
+/// Expected `O(1)` unless the implementation documents otherwise.
+pub trait ParticipantHyperedge: IncidenceRelation {
+    /// Returns the hyperedge carrying `participant`.
+    ///
+    /// # Performance
+    ///
+    /// Expected `O(1)` unless the implementation documents otherwise.
+    fn participant_hyperedge(&self, participant: ParticipantId<Self>) -> HyperedgeId<Self> {
+        self.incidence_relation(participant)
+    }
+}
+
+/// Blanket implementation for hypergraph views that resolve incidence relations.
+///
+/// # Performance
+///
+/// `perf: unspecified`; performance is inherited from [`IncidenceRelation`].
+impl<T> ParticipantHyperedge for T where T: IncidenceRelation {}
+
+/// Capability for resolving the role recorded for a participant.
+///
+/// This is the hypergraph-facing name for [`IncidenceRole`]. It answers
+/// "what role does this participant carry in its hyperedge?" without exposing
+/// the underlying topology vocabulary. Trait name `ParticipantRoleOf` avoids
+/// colliding with the existing [`ParticipantRole`] type alias.
+///
+/// # Performance
+///
+/// Expected `O(1)` unless the implementation documents otherwise.
+pub trait ParticipantRoleOf: IncidenceRole {
+    /// Returns the role recorded for `participant`.
+    ///
+    /// # Performance
+    ///
+    /// Expected `O(1)` unless the implementation documents otherwise.
+    fn participant_role_of(&self, participant: ParticipantId<Self>) -> ParticipantRole<Self> {
+        self.incidence_role(participant)
+    }
+}
+
+/// Blanket implementation for hypergraph views that resolve incidence roles.
+///
+/// # Performance
+///
+/// `perf: unspecified`; performance is inherited from [`IncidenceRole`].
+impl<T> ParticipantRoleOf for T where T: IncidenceRole {}
+
 /// Capability for traversing vertices participating in one hyperedge.
 ///
 /// This is the hypergraph-facing form of relation-to-element traversal.
@@ -303,7 +553,7 @@ impl<T> ContainsParticipant for T where T: ContainsIncidence {}
 /// Creating the iterator should be `O(1)` unless an implementation documents a
 /// weaker contract. Yielding `k` participants should be `O(k)` because the
 /// output itself has length `k`.
-pub trait HyperedgeParticipants: RelationIncidences + IncidenceElement {
+pub trait HyperedgeParticipants: HyperedgeIncidences + ParticipantVertex {
     /// Iterator over vertices participating in one hyperedge.
     ///
     /// # Performance
@@ -332,7 +582,7 @@ pub trait HyperedgeParticipants: RelationIncidences + IncidenceElement {
 /// Creating the iterator should be `O(1)` unless an implementation documents a
 /// weaker contract. Yielding `k` incident hyperedges should be `O(k)` because
 /// the output itself has length `k`.
-pub trait IncidentHyperedges: ElementIncidences + IncidenceRelation {
+pub trait IncidentHyperedges: VertexIncidences + ParticipantHyperedge {
     /// Iterator over hyperedges incident to one vertex.
     ///
     /// # Performance
@@ -436,10 +686,11 @@ pub trait DirectedHyperedgeParticipants: TopologyBase {
 
 /// Capability for expanding a directed hypergraph vertex to successor vertices.
 ///
-/// A successor vertex is a target-side participant reachable through a directed
-/// hyperedge where the input vertex participates on the source side. This is a
-/// vertex-to-vertex expansion capability, distinct from relation-level
-/// [`DirectedHyperedgeParticipants`] traversal.
+/// This is the hypergraph-facing name for [`ElementSuccessors`]. A successor
+/// vertex is a target-side participant reachable through a directed hyperedge
+/// where the input vertex participates on the source side. The associated
+/// iterator GAT is named `VertexSuccessors` to avoid colliding with the
+/// inherited `ElementSuccessors::Successors` GAT.
 ///
 /// Implementations define whether repeated connections through multiple
 /// hyperedges, or multiple participant records in one hyperedge, produce
@@ -451,14 +702,14 @@ pub trait DirectedHyperedgeParticipants: TopologyBase {
 /// Creating the iterator should be `O(1)` when backed by an index unless an
 /// implementation documents a weaker contract. Yielding `k` vertices should be
 /// `O(k)` and should not allocate unless the implementation documents otherwise.
-pub trait DirectedVertexSuccessors: TopologyBase {
+pub trait DirectedVertexSuccessors: ElementSuccessors {
     /// Iterator over successor vertices reachable from one source-side vertex.
     ///
     /// # Performance
     ///
     /// Advancing the iterator should be amortized `O(1)` unless an
     /// implementation documents otherwise.
-    type Successors<'view>: Iterator<Item = Self::ElementId>
+    type VertexSuccessors<'view>: Iterator<Item = VertexId<Self>>
     where
         Self: 'view;
 
@@ -468,15 +719,39 @@ pub trait DirectedVertexSuccessors: TopologyBase {
     ///
     /// Expected `O(1)` to create the iterator when backed by an index; yielding
     /// `k` vertices is expected `O(k)`.
-    fn successor_vertices(&self, vertex: Self::ElementId) -> Self::Successors<'_>;
+    fn successor_vertices(&self, vertex: VertexId<Self>) -> Self::VertexSuccessors<'_>;
+}
+
+/// Blanket implementation for hypergraph views with element-level successor traversal.
+///
+/// Any view that implements [`ElementSuccessors`] automatically exposes
+/// hypergraph-facing successor traversal under vertex vocabulary. The
+/// associated iterator type forwards to [`ElementSuccessors::Successors`].
+///
+/// # Performance
+///
+/// `perf: unspecified`; performance is inherited from [`ElementSuccessors`].
+impl<T> DirectedVertexSuccessors for T
+where
+    T: ElementSuccessors,
+{
+    type VertexSuccessors<'view>
+        = <T as ElementSuccessors>::Successors<'view>
+    where
+        T: 'view;
+
+    fn successor_vertices(&self, vertex: VertexId<Self>) -> Self::VertexSuccessors<'_> {
+        <Self as ElementSuccessors>::element_successors(self, vertex)
+    }
 }
 
 /// Capability for expanding a directed hypergraph vertex to predecessor vertices.
 ///
-/// A predecessor vertex is a source-side participant reachable through a directed
-/// hyperedge where the input vertex participates on the target side. This is a
-/// vertex-to-vertex expansion capability, distinct from relation-level
-/// [`DirectedHyperedgeParticipants`] traversal.
+/// This is the hypergraph-facing name for [`ElementPredecessors`]. A predecessor
+/// vertex is a source-side participant reachable through a directed hyperedge
+/// where the input vertex participates on the target side. The associated
+/// iterator GAT is named `VertexPredecessors` to avoid colliding with the
+/// inherited `ElementPredecessors::Predecessors` GAT.
 ///
 /// Implementations define whether repeated connections through multiple
 /// hyperedges, or multiple participant records in one hyperedge, produce
@@ -488,14 +763,14 @@ pub trait DirectedVertexSuccessors: TopologyBase {
 /// Creating the iterator should be `O(1)` when backed by an index unless an
 /// implementation documents a weaker contract. Yielding `k` vertices should be
 /// `O(k)` and should not allocate unless the implementation documents otherwise.
-pub trait DirectedVertexPredecessors: TopologyBase {
+pub trait DirectedVertexPredecessors: ElementPredecessors {
     /// Iterator over predecessor vertices reaching one target-side vertex.
     ///
     /// # Performance
     ///
     /// Advancing the iterator should be amortized `O(1)` unless an
     /// implementation documents otherwise.
-    type Predecessors<'view>: Iterator<Item = Self::ElementId>
+    type VertexPredecessors<'view>: Iterator<Item = VertexId<Self>>
     where
         Self: 'view;
 
@@ -505,7 +780,30 @@ pub trait DirectedVertexPredecessors: TopologyBase {
     ///
     /// Expected `O(1)` to create the iterator when backed by an index; yielding
     /// `k` vertices is expected `O(k)`.
-    fn predecessor_vertices(&self, vertex: Self::ElementId) -> Self::Predecessors<'_>;
+    fn predecessor_vertices(&self, vertex: VertexId<Self>) -> Self::VertexPredecessors<'_>;
+}
+
+/// Blanket implementation for hypergraph views with element-level predecessor traversal.
+///
+/// Any view that implements [`ElementPredecessors`] automatically exposes
+/// hypergraph-facing predecessor traversal under vertex vocabulary. The
+/// associated iterator type forwards to [`ElementPredecessors::Predecessors`].
+///
+/// # Performance
+///
+/// `perf: unspecified`; performance is inherited from [`ElementPredecessors`].
+impl<T> DirectedVertexPredecessors for T
+where
+    T: ElementPredecessors,
+{
+    type VertexPredecessors<'view>
+        = <T as ElementPredecessors>::Predecessors<'view>
+    where
+        T: 'view;
+
+    fn predecessor_vertices(&self, vertex: VertexId<Self>) -> Self::VertexPredecessors<'_> {
+        <Self as ElementPredecessors>::element_predecessors(self, vertex)
+    }
 }
 
 /// Convenience trait for hypergraph views with both traversal directions.

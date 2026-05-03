@@ -14,12 +14,10 @@ extern crate kani;
 use core::fmt;
 
 use oxgraph_graph::{
-    EdgeTargetGraph, GraphCounts, OutgoingEdgeCount, OutgoingGraph, OutgoingNeighborsGraph,
+    ContainsElement, ContainsRelation, EdgeTargetGraph, ElementIndex, ElementSuccessors,
+    GraphCounts, OutgoingEdgeCount, OutgoingGraph, RelationIndex, TopologyBase, TopologyCounts,
 };
 use oxgraph_snapshot::{SectionViewError, Snapshot};
-use oxgraph_topology::{
-    ContainsElement, ContainsRelation, ElementIndex, RelationIndex, TopologyBase, TopologyCounts,
-};
 use zerocopy::byteorder::{LE, U32};
 
 /// Section kind for a CSR offsets array stored in an `oxgraph-snapshot`.
@@ -426,16 +424,16 @@ where
     }
 }
 
-impl<Word> OutgoingNeighborsGraph for CsrGraph<'_, Word>
+impl<Word> ElementSuccessors for CsrGraph<'_, Word>
 where
     Word: CsrWord,
 {
-    type OutNeighbors<'view>
+    type Successors<'view>
         = CsrOutNeighbors<'view, Word>
     where
         Self: 'view;
 
-    fn outgoing_neighbors(&self, node: CsrNodeId) -> Self::OutNeighbors<'_> {
+    fn element_successors(&self, node: CsrNodeId) -> Self::Successors<'_> {
         let (start, end) = self.outgoing_range(node);
         CsrOutNeighbors {
             targets: self.targets[u32_to_usize_lossless(start)..u32_to_usize_lossless(end)].iter(),

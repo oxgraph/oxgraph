@@ -1,4 +1,9 @@
-//! Benchmarks for directed BFS over oxgraph-graph traits.
+//! Benchmarks for substrate-agnostic BFS over oxgraph-topology traits.
+//!
+//! Forward BFS is benchmarked over CSR graph fixtures (the historical
+//! baseline). Forward and reverse BFS are both benchmarked over BCSR
+//! hypergraph fixtures so any regression in either direction on the
+//! substrate-agnostic path is caught.
 
 use std::hint::black_box;
 
@@ -9,9 +14,20 @@ use criterion::{
 use oxgraph_algo::{
     BfsEpochScratch, BfsWorkspace, breadth_first_search, breadth_first_search_with_epoch_scratch,
     breadth_first_search_with_scratch, breadth_first_search_with_workspace,
+    reverse_breadth_first_search, reverse_breadth_first_search_with_scratch,
+    reverse_breadth_first_search_with_workspace,
 };
 use oxgraph_csr::{CsrGraph, CsrNodeId};
-use oxgraph_graph::NodeIndex;
+use oxgraph_hyper_bcsr::{
+    BcsrHypergraph, BcsrVertexId, SNAPSHOT_KIND_BCSR_HEAD_OFFSETS,
+    SNAPSHOT_KIND_BCSR_HEAD_PARTICIPANTS, SNAPSHOT_KIND_BCSR_TAIL_OFFSETS,
+    SNAPSHOT_KIND_BCSR_TAIL_PARTICIPANTS, SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_HYPEREDGES,
+    SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_OFFSETS, SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_HYPEREDGES,
+    SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_OFFSETS,
+};
+use oxgraph_snapshot::{Snapshot, SnapshotBuilder};
+use oxgraph_topology::ElementIndex;
+use zerocopy::byteorder::{LE, U32};
 
 /// Fixed out-degree used by the synthetic regular graph.
 const DEGREE: u32 = 4;
@@ -30,9 +46,9 @@ type CsrParts = (Vec<u32>, Vec<u32>);
 
 /// Scratch slices for clear-backed BFS lanes.
 struct ClearScratch<'scratch> {
-    /// Dense visited flags indexed by node index.
+    /// Dense visited flags indexed by element index.
     visited: &'scratch mut [u8],
-    /// Queue storage for discovered nodes.
+    /// Queue storage for discovered elements.
     queue: &'scratch mut [CsrNodeId],
 }
 
@@ -242,8 +258,8 @@ fn bench_workspace_lanes<'graph>(
     );
 }
 
-/// Benchmarks every BFS tier for one family of CSR fixtures.
-fn bench_fixture(
+/// Benchmarks every forward BFS tier for one family of CSR fixtures.
+fn bench_csr_fixture(
     c: &mut Criterion,
     group_name: &str,
     node_counts: &[u32],
@@ -256,12 +272,13 @@ fn bench_fixture(
             Ok(validated) => validated,
             Err(error) => panic!("benchmark CSR fixture was invalid: {error:?}"),
         };
-        let mut visited = vec![0; graph.node_bound()];
-        let mut scratch_queue = vec![CsrNodeId(0); graph.node_bound()];
-        let mut marks = vec![0; graph.node_bound()];
-        let mut epoch_queue = vec![CsrNodeId(0); graph.node_bound()];
+        let bound = graph.element_bound();
+        let mut visited = vec![0; bound];
+        let mut scratch_queue = vec![CsrNodeId(0); bound];
+        let mut marks = vec![0; bound];
+        let mut epoch_queue = vec![CsrNodeId(0); bound];
         let mut epoch_scratch = BfsEpochScratch::for_graph(&graph, &mut marks, &mut epoch_queue);
-        let mut workspace = BfsWorkspace::<CsrGraph<'_>>::with_node_bound(graph.node_bound());
+        let mut workspace = BfsWorkspace::<CsrGraph<'_>>::with_element_bound(bound);
 
         group.throughput(Throughput::Elements(u64::from(*node_count)));
         let mut clear_scratch = ClearScratch {
@@ -276,23 +293,23 @@ fn bench_fixture(
     group.finish();
 }
 
-/// Benchmarks directed BFS over validated CSR graph shapes.
-fn bench_bfs(c: &mut Criterion) {
-    bench_fixture(c, "graph_bfs_regular", NODE_COUNTS, build_regular_csr);
-    bench_fixture(c, "graph_bfs_chain", NODE_COUNTS, build_chain_csr);
-    bench_fixture(
+/// Benchmarks forward BFS over validated CSR graph shapes.
+fn bench_csr_bfs(c: &mut Criterion) {
+    bench_csr_fixture(c, "graph_bfs_regular", NODE_COUNTS, build_regular_csr);
+    bench_csr_fixture(c, "graph_bfs_chain", NODE_COUNTS, build_chain_csr);
+    bench_csr_fixture(
         c,
         "graph_bfs_wide_frontier",
         NODE_COUNTS,
         build_wide_frontier_csr,
     );
-    bench_fixture(
+    bench_csr_fixture(
         c,
         "graph_bfs_duplicate_heavy",
         NODE_COUNTS,
         build_duplicate_heavy_csr,
     );
-    bench_fixture(
+    bench_csr_fixture(
         c,
         "graph_bfs_sparse_reachable",
         SPARSE_NODE_COUNTS,
@@ -300,5 +317,367 @@ fn bench_bfs(c: &mut Criterion) {
     );
 }
 
-criterion_group!(benches, bench_bfs);
+// ============================================================================
+// BCSR (hypergraph) benchmarks — forward and reverse on the same substrate.
+//
+// Each CSR edge `(u, v)` is encoded as a single hyperedge with head `{u}` and
+// tail `{v}`. Vertex-major outgoing/incoming offsets and hyperedge ID lists are
+// derived from the same graph topology so a regular CSR shape produces a
+// structurally equivalent BCSR shape.
+// ============================================================================
+
+/// The eight BCSR section arrays derived from CSR-style adjacency.
+struct BcsrSections {
+    /// Hyperedge-major offsets into `head_participants`.
+    head_offsets: Vec<u32>,
+    /// Flat head-side vertex IDs per hyperedge.
+    head_participants: Vec<u32>,
+    /// Hyperedge-major offsets into `tail_participants`.
+    tail_offsets: Vec<u32>,
+    /// Flat tail-side vertex IDs per hyperedge.
+    tail_participants: Vec<u32>,
+    /// Vertex-major offsets into `vertex_outgoing_hyperedges`.
+    vertex_outgoing_offsets: Vec<u32>,
+    /// Flat hyperedge IDs whose head contains each vertex.
+    vertex_outgoing_hyperedges: Vec<u32>,
+    /// Vertex-major offsets into `vertex_incoming_hyperedges`.
+    vertex_incoming_offsets: Vec<u32>,
+    /// Flat hyperedge IDs whose tail contains each vertex.
+    vertex_incoming_hyperedges: Vec<u32>,
+}
+
+/// Builds the eight BCSR section arrays from CSR-style offsets and targets.
+/// One hyperedge per CSR edge: head `{u}`, tail `{v}` for edge `(u, v)`.
+fn csr_to_bcsr_sections(node_count: u32, offsets: &[u32], targets: &[u32]) -> BcsrSections {
+    let edge_count = targets.len();
+    let mut head_offsets = Vec::with_capacity(edge_count + 1);
+    let mut head_participants = Vec::with_capacity(edge_count);
+    let mut tail_offsets = Vec::with_capacity(edge_count + 1);
+    let mut tail_participants = Vec::with_capacity(edge_count);
+
+    head_offsets.push(0);
+    tail_offsets.push(0);
+    for node in 0..node_count {
+        let row_start = usize_from_u32(offsets[usize_from_u32(node)]);
+        let row_end = usize_from_u32(offsets[usize_from_u32(node) + 1]);
+        for target in &targets[row_start..row_end] {
+            head_participants.push(node);
+            head_offsets.push(usize_to_u32(head_participants.len()));
+            tail_participants.push(*target);
+            tail_offsets.push(usize_to_u32(tail_participants.len()));
+        }
+    }
+
+    // Outgoing per vertex: every hyperedge whose head is the vertex.
+    // Incoming per vertex: every hyperedge whose tail is the vertex.
+    let mut vertex_outgoing_offsets = vec![0u32; usize_from_u32(node_count) + 1];
+    let mut vertex_incoming_offsets = vec![0u32; usize_from_u32(node_count) + 1];
+
+    // Count.
+    for hyperedge in 0..edge_count {
+        let head = head_participants[hyperedge];
+        let tail = tail_participants[hyperedge];
+        vertex_outgoing_offsets[usize_from_u32(head) + 1] += 1;
+        vertex_incoming_offsets[usize_from_u32(tail) + 1] += 1;
+    }
+    for slot in 1..vertex_outgoing_offsets.len() {
+        vertex_outgoing_offsets[slot] += vertex_outgoing_offsets[slot - 1];
+    }
+    for slot in 1..vertex_incoming_offsets.len() {
+        vertex_incoming_offsets[slot] += vertex_incoming_offsets[slot - 1];
+    }
+
+    // Bucket-fill.
+    let mut vertex_outgoing_hyperedges = vec![0u32; edge_count];
+    let mut vertex_incoming_hyperedges = vec![0u32; edge_count];
+    let mut outgoing_cursor = vertex_outgoing_offsets.clone();
+    let mut incoming_cursor = vertex_incoming_offsets.clone();
+    for hyperedge in 0..edge_count {
+        let head = usize_from_u32(head_participants[hyperedge]);
+        let tail = usize_from_u32(tail_participants[hyperedge]);
+        let out_slot = usize_from_u32(outgoing_cursor[head]);
+        vertex_outgoing_hyperedges[out_slot] = usize_to_u32(hyperedge);
+        outgoing_cursor[head] += 1;
+        let in_slot = usize_from_u32(incoming_cursor[tail]);
+        vertex_incoming_hyperedges[in_slot] = usize_to_u32(hyperedge);
+        incoming_cursor[tail] += 1;
+    }
+
+    BcsrSections {
+        head_offsets,
+        head_participants,
+        tail_offsets,
+        tail_participants,
+        vertex_outgoing_offsets,
+        vertex_outgoing_hyperedges,
+        vertex_incoming_offsets,
+        vertex_incoming_hyperedges,
+    }
+}
+
+/// Encodes a sequence of `u32` words as a little-endian byte vector.
+fn words_to_bytes(words: &[u32]) -> Vec<u8> {
+    words.iter().flat_map(|word| word.to_le_bytes()).collect()
+}
+
+/// Builds a BCSR snapshot byte vector from CSR-shaped offsets and targets.
+fn bcsr_snapshot_bytes(node_count: u32, offsets: &[u32], targets: &[u32]) -> Vec<u8> {
+    let sections = csr_to_bcsr_sections(node_count, offsets, targets);
+
+    let mut builder = SnapshotBuilder::new();
+    let add = |builder: &mut SnapshotBuilder, kind: u32, words: &[u32]| {
+        if let Err(error) = builder.add_section(kind, 0, 2, words_to_bytes(words)) {
+            panic!("BCSR section {kind:#06x}: {error:?}");
+        }
+    };
+    add(
+        &mut builder,
+        SNAPSHOT_KIND_BCSR_HEAD_OFFSETS,
+        &sections.head_offsets,
+    );
+    add(
+        &mut builder,
+        SNAPSHOT_KIND_BCSR_HEAD_PARTICIPANTS,
+        &sections.head_participants,
+    );
+    add(
+        &mut builder,
+        SNAPSHOT_KIND_BCSR_TAIL_OFFSETS,
+        &sections.tail_offsets,
+    );
+    add(
+        &mut builder,
+        SNAPSHOT_KIND_BCSR_TAIL_PARTICIPANTS,
+        &sections.tail_participants,
+    );
+    add(
+        &mut builder,
+        SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_OFFSETS,
+        &sections.vertex_outgoing_offsets,
+    );
+    add(
+        &mut builder,
+        SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_HYPEREDGES,
+        &sections.vertex_outgoing_hyperedges,
+    );
+    add(
+        &mut builder,
+        SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_OFFSETS,
+        &sections.vertex_incoming_offsets,
+    );
+    add(
+        &mut builder,
+        SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_HYPEREDGES,
+        &sections.vertex_incoming_hyperedges,
+    );
+
+    builder.finish()
+}
+
+/// Counts reachable vertices via forward BCSR scratch BFS.
+fn bcsr_forward_scratch_count(
+    view: &BcsrHypergraph<'_, U32<LE>>,
+    visited: &mut [u8],
+    queue: &mut [BcsrVertexId],
+) -> usize {
+    match breadth_first_search_with_scratch(view, BcsrVertexId(0), visited, queue) {
+        Ok(traversal) => traversal.count(),
+        Err(error) => panic!("BCSR forward scratch BFS invalid: {error:?}"),
+    }
+}
+
+/// Counts reverse-reachable vertices via reverse BCSR scratch BFS.
+fn bcsr_reverse_scratch_count(
+    view: &BcsrHypergraph<'_, U32<LE>>,
+    start: BcsrVertexId,
+    visited: &mut [u8],
+    queue: &mut [BcsrVertexId],
+) -> usize {
+    match reverse_breadth_first_search_with_scratch(view, start, visited, queue) {
+        Ok(traversal) => traversal.count(),
+        Err(error) => panic!("BCSR reverse scratch BFS invalid: {error:?}"),
+    }
+}
+
+/// Counts reachable vertices via forward BCSR allocating indexed BFS.
+fn bcsr_forward_allocating_count(view: &BcsrHypergraph<'_, U32<LE>>) -> usize {
+    match breadth_first_search(view, BcsrVertexId(0)) {
+        Ok(traversal) => traversal.count(),
+        Err(error) => panic!("BCSR forward allocating BFS invalid: {error:?}"),
+    }
+}
+
+/// Counts reverse-reachable vertices via reverse BCSR allocating indexed BFS.
+fn bcsr_reverse_allocating_count(view: &BcsrHypergraph<'_, U32<LE>>, start: BcsrVertexId) -> usize {
+    match reverse_breadth_first_search(view, start) {
+        Ok(traversal) => traversal.count(),
+        Err(error) => panic!("BCSR reverse allocating BFS invalid: {error:?}"),
+    }
+}
+
+/// Counts reachable vertices via forward BCSR workspace BFS.
+fn bcsr_forward_workspace_count<'view>(
+    view: &BcsrHypergraph<'view, U32<LE>>,
+    workspace: &mut BfsWorkspace<BcsrHypergraph<'view, U32<LE>>>,
+) -> usize {
+    match breadth_first_search_with_workspace(view, BcsrVertexId(0), workspace) {
+        Ok(traversal) => traversal.count(),
+        Err(error) => panic!("BCSR forward workspace BFS invalid: {error:?}"),
+    }
+}
+
+/// Counts reverse-reachable vertices via reverse BCSR workspace BFS.
+fn bcsr_reverse_workspace_count<'view>(
+    view: &BcsrHypergraph<'view, U32<LE>>,
+    start: BcsrVertexId,
+    workspace: &mut BfsWorkspace<BcsrHypergraph<'view, U32<LE>>>,
+) -> usize {
+    match reverse_breadth_first_search_with_workspace(view, start, workspace) {
+        Ok(traversal) => traversal.count(),
+        Err(error) => panic!("BCSR reverse workspace BFS invalid: {error:?}"),
+    }
+}
+
+/// Mutable scratch and workspace handles owned across one BCSR bench step.
+struct BcsrBenchState<'state> {
+    /// Forward scratch byte-flag visited buffer.
+    forward_visited: &'state mut [u8],
+    /// Forward scratch queue buffer.
+    forward_queue: &'state mut [BcsrVertexId],
+    /// Reverse scratch byte-flag visited buffer.
+    reverse_visited: &'state mut [u8],
+    /// Reverse scratch queue buffer.
+    reverse_queue: &'state mut [BcsrVertexId],
+    /// Forward reusable workspace.
+    forward_workspace: &'state mut BfsWorkspace<BcsrHypergraph<'state, U32<LE>>>,
+    /// Reverse reusable workspace.
+    reverse_workspace: &'state mut BfsWorkspace<BcsrHypergraph<'state, U32<LE>>>,
+}
+
+/// Registers all six (3 storage tiers × 2 directions) BCSR BFS lanes for one
+/// fixture size.
+fn register_bcsr_lanes<'view>(
+    group: &mut BenchmarkGroup<'_, WallTime>,
+    node_count: u32,
+    view: &'view BcsrHypergraph<'view, U32<LE>>,
+    state: &mut BcsrBenchState<'view>,
+) {
+    // Reverse BFS starts from the last vertex so chain / sparse fixtures
+    // exercise the full reverse reachable set.
+    let reverse_start = BcsrVertexId(node_count.saturating_sub(1));
+
+    group.bench_with_input(
+        BenchmarkId::new("forward_scratch_clear_reused", node_count),
+        &node_count,
+        |b, _size| {
+            b.iter(|| {
+                black_box(bcsr_forward_scratch_count(
+                    view,
+                    state.forward_visited,
+                    state.forward_queue,
+                ))
+            });
+        },
+    );
+    group.bench_with_input(
+        BenchmarkId::new("reverse_scratch_clear_reused", node_count),
+        &node_count,
+        |b, _size| {
+            b.iter(|| {
+                black_box(bcsr_reverse_scratch_count(
+                    view,
+                    reverse_start,
+                    state.reverse_visited,
+                    state.reverse_queue,
+                ))
+            });
+        },
+    );
+    group.bench_with_input(
+        BenchmarkId::new("forward_indexed_alloc", node_count),
+        &node_count,
+        |b, _size| {
+            b.iter(|| black_box(bcsr_forward_allocating_count(view)));
+        },
+    );
+    group.bench_with_input(
+        BenchmarkId::new("reverse_indexed_alloc", node_count),
+        &node_count,
+        |b, _size| {
+            b.iter(|| black_box(bcsr_reverse_allocating_count(view, reverse_start)));
+        },
+    );
+    group.bench_with_input(
+        BenchmarkId::new("forward_workspace_epoch", node_count),
+        &node_count,
+        |b, _size| {
+            b.iter(|| black_box(bcsr_forward_workspace_count(view, state.forward_workspace)));
+        },
+    );
+    group.bench_with_input(
+        BenchmarkId::new("reverse_workspace_epoch", node_count),
+        &node_count,
+        |b, _size| {
+            b.iter(|| {
+                black_box(bcsr_reverse_workspace_count(
+                    view,
+                    reverse_start,
+                    state.reverse_workspace,
+                ))
+            });
+        },
+    );
+}
+
+/// Benchmarks forward and reverse BFS over a BCSR fixture family.
+fn bench_bcsr_fixture(
+    c: &mut Criterion,
+    group_name: &str,
+    node_counts: &[u32],
+    build: fn(u32) -> CsrParts,
+) {
+    let mut group = c.benchmark_group(group_name);
+    for node_count in node_counts {
+        let (offsets, targets) = build(*node_count);
+        let bytes = bcsr_snapshot_bytes(*node_count, &offsets, &targets);
+        let snapshot = match Snapshot::open(&bytes) {
+            Ok(opened) => opened,
+            Err(error) => panic!("BCSR benchmark snapshot invalid: {error:?}"),
+        };
+        let view = match BcsrHypergraph::<U32<LE>>::from_snapshot(&snapshot) {
+            Ok(view) => view,
+            Err(error) => panic!("BCSR benchmark adaptor invalid: {error:?}"),
+        };
+        let bound = view.element_bound();
+        let mut forward_visited = vec![0u8; bound];
+        let mut forward_queue = vec![BcsrVertexId(0); bound];
+        let mut reverse_visited = vec![0u8; bound];
+        let mut reverse_queue = vec![BcsrVertexId(0); bound];
+        let mut forward_workspace =
+            BfsWorkspace::<BcsrHypergraph<'_, U32<LE>>>::with_element_bound(bound);
+        let mut reverse_workspace =
+            BfsWorkspace::<BcsrHypergraph<'_, U32<LE>>>::with_element_bound(bound);
+
+        group.throughput(Throughput::Elements(u64::from(*node_count)));
+
+        let mut state = BcsrBenchState {
+            forward_visited: &mut forward_visited,
+            forward_queue: &mut forward_queue,
+            reverse_visited: &mut reverse_visited,
+            reverse_queue: &mut reverse_queue,
+            forward_workspace: &mut forward_workspace,
+            reverse_workspace: &mut reverse_workspace,
+        };
+        register_bcsr_lanes(&mut group, *node_count, &view, &mut state);
+    }
+    group.finish();
+}
+
+/// Benchmarks forward and reverse BFS over BCSR hypergraph shapes.
+fn bench_bcsr_bfs(c: &mut Criterion) {
+    bench_bcsr_fixture(c, "hyper_bfs_regular", NODE_COUNTS, build_regular_csr);
+    bench_bcsr_fixture(c, "hyper_bfs_chain", NODE_COUNTS, build_chain_csr);
+}
+
+criterion_group!(benches, bench_csr_bfs, bench_bcsr_bfs);
 criterion_main!(benches);

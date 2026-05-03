@@ -1,17 +1,18 @@
 //! Private BFS traversal core.
 //!
-//! Houses the [`BfsStep`] storage-policy trait, the unified [`Bfs`] iterator
-//! wrapper that drives any `BfsStep`, the validation-witness types
-//! ([`ValidatedStart`] and [`ValidatedScratch`]) every indexed entry-point must
-//! mint before construction, and the canonical [`SeededByteFlagFrontier`],
-//! [`SeededEpochFrontier`], [`SeededWorkspaceFrontier`], and
-//! [`SeededOwnedFrontier`] storage primitives.
+//! Houses the [`BfsStep`] storage-policy trait, the [`ExpansionDirection`]
+//! direction-policy trait, the unified [`Bfs`] iterator wrapper that drives
+//! any `BfsStep` along any direction, the validation-witness types
+//! ([`ValidatedStart`] and [`ValidatedScratch`]) every indexed entry-point
+//! must mint before construction, and the canonical
+//! [`SeededByteFlagFrontier`], [`SeededEpochFrontier`],
+//! [`SeededWorkspaceFrontier`], and [`SeededOwnedFrontier`] storage primitives.
 //!
 //! Each `Seeded*Frontier` is itself the indexed `BfsStep` — there are no
 //! per-variant wrapper states. The variant files in `bfs/` provide only the
 //! public iterator newtype, the `Iterator` delegation, and the
-//! `breadth_first_search_*` entry point that mints the witness, builds the
-//! seeded frontier, and wraps it in [`Bfs`].
+//! `breadth_first_search_*` and `reverse_breadth_first_search_*` entry points
+//! that mint the witness, build the seeded frontier, and wrap it in [`Bfs`].
 //!
 //! Invariant chain: `ValidatedStart` / `ValidatedScratch` is constructed only
 //! by validation; a `Seeded*Frontier` is constructed only by consuming the
@@ -21,6 +22,13 @@
 //! reached without traversal-time validation having succeeded. Witness fields
 //! are also private to this module so siblings under `bfs/` cannot fabricate
 //! one via struct-literal construction.
+//!
+//! Direction is encoded as a sealed [`ExpansionDirection`] policy. [`Forward`]
+//! requires the topology view to expose
+//! [`ElementSuccessors`](oxgraph_topology::ElementSuccessors) and walks
+//! outgoing connections; [`Reverse`] requires
+//! [`ElementPredecessors`](oxgraph_topology::ElementPredecessors) and walks
+//! incoming connections. Both directions reuse the same storage policies.
 
 #[cfg(feature = "alloc")]
 use alloc::vec;
@@ -28,16 +36,19 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::{iter::FusedIterator, marker::PhantomData};
 
-use oxgraph_graph::{ContainsNode, NodeId, NodeIndex, OutgoingNeighborsGraph};
+use oxgraph_topology::{
+    ContainsElement, ElementId, ElementIndex, ElementPredecessors, ElementSuccessors, TopologyBase,
+};
 
 use crate::bfs::BfsError;
 
-/// Sealing supertrait for [`BfsStep`].
+/// Sealing supertrait for [`BfsStep`] and [`ExpansionDirection`].
 ///
 /// Visible only inside `bfs/` (via `pub(super)` plus the private `mod core;`
 /// declaration), so external crates cannot `impl Sealed for ...` and therefore
-/// cannot implement [`BfsStep`]. Required because [`Bfs::new`] is
-/// `pub(super)`, meaning any outside `BfsStep` impl would be a dead-end API.
+/// cannot implement [`BfsStep`] or [`ExpansionDirection`]. Required because
+/// [`Bfs::new`] is `pub(super)`, meaning any outside impl would be a dead-end
+/// API.
 ///
 /// # Performance
 ///
@@ -46,15 +57,15 @@ pub(super) trait Sealed {}
 
 /// Storage-policy seam for breadth-first search.
 ///
-/// Implementors own the visited set and frontier. [`Bfs`] holds
-/// the graph reference and drives the implementor through one BFS yield per
+/// Implementors own the visited set and frontier. [`Bfs`] holds the topology
+/// reference and drives the implementor through one BFS yield per
 /// `Iterator::next` call.
 ///
-/// `try_visit_and_push` receives the graph as an explicit argument because
-/// indexed implementations need it to compute dense node indexes; generic
-/// implementations ignore it. Holding the graph in [`Bfs`] (not
-/// the state) lets `Iterator::next` borrow the graph and the state from
-/// disjoint fields of `self`, satisfying the borrow checker without copying.
+/// `try_visit_and_push` receives the topology view as an explicit argument
+/// because indexed implementations need it to compute dense element indexes;
+/// generic implementations ignore it. Holding the view in [`Bfs`] (not the
+/// state) lets `Iterator::next` borrow the view and the state from disjoint
+/// fields of `self`, satisfying the borrow checker without copying.
 ///
 /// This trait is sealed: only `bfs/` types implement it. The four indexed
 /// implementations are on the [`SeededByteFlagFrontier`],
@@ -70,20 +81,20 @@ pub(super) trait Sealed {}
 /// `BTreeSet` / `HashSet` fallbacks; see each impl's docs.
 pub(super) trait BfsStep<G>: Sealed
 where
-    G: OutgoingNeighborsGraph,
+    G: TopologyBase,
 {
-    /// Removes and returns the next frontier node, or `None` when the frontier
-    /// is empty.
+    /// Removes and returns the next frontier element, or `None` when the
+    /// frontier is empty.
     ///
     /// # Performance
     ///
     /// Amortized `O(1)` for every implementor in this crate. Idempotent on
     /// exhaustion: repeated calls after returning `None` continue to return
     /// `None` without advancing internal cursors.
-    fn pop(&mut self) -> Option<NodeId<G>>;
+    fn pop(&mut self) -> Option<ElementId<G>>;
 
     /// Marks `target` as visited if it was previously unvisited and pushes it
-    /// onto the frontier in that case. Idempotent on already-visited nodes.
+    /// onto the frontier in that case. Idempotent on already-visited elements.
     /// Implementations that need a dense index for `target` use `graph` to
     /// compute it; index-free implementations ignore `graph`.
     ///
@@ -92,41 +103,145 @@ where
     /// `O(1)` for indexed implementors (dense byte-flag or epoch-mark
     /// lookup); `O(log n)` for the `BTreeSet` fallback; expected `O(1)` for
     /// the `HashSet` fallback.
-    fn try_visit_and_push(&mut self, graph: &G, target: NodeId<G>);
+    fn try_visit_and_push(&mut self, graph: &G, target: ElementId<G>);
 }
 
-/// Directed breadth-first traversal iterator over any [`BfsStep`] storage policy.
+/// Direction-policy seam for breadth-first search.
 ///
-/// All BFS variants exposed by this crate are type aliases over
-/// `Bfs` instantiated with a particular state type. The single
+/// [`Forward`] expands an element through
+/// [`ElementSuccessors`](oxgraph_topology::ElementSuccessors); [`Reverse`]
+/// expands through
+/// [`ElementPredecessors`](oxgraph_topology::ElementPredecessors). The
+/// associated iterator type is the topology's own borrowed expansion
+/// iterator, so direction selection introduces no allocation and one
+/// monomorphized call per `Bfs::next` step.
+///
+/// This trait is sealed: only [`Forward`] and [`Reverse`] implement it.
+///
+/// # Performance
+///
+/// `expand` should be `O(1)` to create the iterator and `O(k)` to yield `k`
+/// elements, with no allocation; that contract follows directly from
+/// `ElementSuccessors` / `ElementPredecessors`.
+pub(super) trait ExpansionDirection<G>: Sealed
+where
+    G: TopologyBase,
+{
+    /// Iterator over elements reached from one input element along this
+    /// direction.
+    ///
+    /// # Performance
+    ///
+    /// Advancing the iterator should be amortized `O(1)`.
+    type Iter<'view>: Iterator<Item = ElementId<G>>
+    where
+        G: 'view;
+
+    /// Returns elements reachable from `element` along this direction.
+    ///
+    /// # Performance
+    ///
+    /// Expected `O(1)` to create the iterator; yielding `k` elements is
+    /// expected `O(k)`.
+    fn expand(graph: &G, element: ElementId<G>) -> Self::Iter<'_>;
+}
+
+/// Forward-direction expansion policy: walks outgoing connections from each
+/// element via [`ElementSuccessors`](oxgraph_topology::ElementSuccessors).
+///
+/// Used by [`breadth_first_search`](crate::breadth_first_search) and the
+/// other `breadth_first_search_*` entry points.
+///
+/// # Performance
+///
+/// Zero-sized; carries no runtime state. Monomorphizes to the topology's
+/// `element_successors` call site.
+pub(super) struct Forward;
+
+impl Sealed for Forward {}
+
+impl<G> ExpansionDirection<G> for Forward
+where
+    G: ElementSuccessors,
+{
+    type Iter<'view>
+        = <G as ElementSuccessors>::Successors<'view>
+    where
+        G: 'view;
+
+    fn expand(graph: &G, element: ElementId<G>) -> Self::Iter<'_> {
+        <G as ElementSuccessors>::element_successors(graph, element)
+    }
+}
+
+/// Reverse-direction expansion policy: walks incoming connections to each
+/// element via [`ElementPredecessors`](oxgraph_topology::ElementPredecessors).
+///
+/// Used by [`reverse_breadth_first_search`](crate::reverse_breadth_first_search)
+/// and the other `reverse_breadth_first_search_*` entry points.
+///
+/// # Performance
+///
+/// Zero-sized; carries no runtime state. Monomorphizes to the topology's
+/// `element_predecessors` call site.
+pub(super) struct Reverse;
+
+impl Sealed for Reverse {}
+
+impl<G> ExpansionDirection<G> for Reverse
+where
+    G: ElementPredecessors,
+{
+    type Iter<'view>
+        = <G as ElementPredecessors>::Predecessors<'view>
+    where
+        G: 'view;
+
+    fn expand(graph: &G, element: ElementId<G>) -> Self::Iter<'_> {
+        <G as ElementPredecessors>::element_predecessors(graph, element)
+    }
+}
+
+/// Breadth-first traversal iterator over any [`BfsStep`] storage policy along
+/// any [`ExpansionDirection`].
+///
+/// All BFS variants exposed by this crate are type aliases over `Bfs`
+/// instantiated with a particular state type and direction. The single
 /// [`Iterator`] impl below is therefore the only place the BFS loop body
 /// lives.
 ///
 /// # Performance
 ///
-/// Per-yield cost is `O(deg(node))` outgoing-neighbor inspections plus the
+/// Per-yield cost is `O(deg(element))` expansion-target inspections plus the
 /// `BfsStep` impl's amortized pop and visit-and-push cost. The wrapper itself
-/// adds no work beyond field projection.
-pub(super) struct Bfs<'graph, G, S>
+/// adds no work beyond field projection and one direct call into
+/// `D::expand`.
+pub(super) struct Bfs<'graph, G, S, D>
 where
-    G: OutgoingNeighborsGraph,
+    G: TopologyBase,
     S: BfsStep<G>,
+    D: ExpansionDirection<G>,
 {
-    /// Graph view being traversed.
+    /// Topology view being traversed.
     graph: &'graph G,
     /// Storage policy carrying visited set and frontier.
     state: S,
+    /// Zero-sized direction selector; monomorphizes to a single
+    /// `D::expand` call site per yield.
+    _direction: PhantomData<D>,
 }
 
-impl<'graph, G, S> Bfs<'graph, G, S>
+impl<'graph, G, S, D> Bfs<'graph, G, S, D>
 where
-    G: OutgoingNeighborsGraph,
+    G: TopologyBase,
     S: BfsStep<G>,
+    D: ExpansionDirection<G>,
 {
-    /// Wraps a graph view and a constructed [`BfsStep`] state.
+    /// Wraps a topology view and a constructed [`BfsStep`] state.
     ///
     /// `pub(super)` because callers always reach this constructor through a
-    /// variant-specific `breadth_first_search_*` entry point that has already
+    /// variant-specific `breadth_first_search_*` /
+    /// `reverse_breadth_first_search_*` entry point that has already
     /// validated inputs and built the state via the corresponding
     /// `Seeded*Frontier::new` (indexed) or directly (set-based fallbacks).
     ///
@@ -134,44 +249,50 @@ where
     ///
     /// `O(1)` field assignment.
     pub(super) const fn new(graph: &'graph G, state: S) -> Self {
-        Self { graph, state }
+        Self {
+            graph,
+            state,
+            _direction: PhantomData,
+        }
     }
 }
 
-impl<G, S> Iterator for Bfs<'_, G, S>
+impl<G, S, D> Iterator for Bfs<'_, G, S, D>
 where
-    G: OutgoingNeighborsGraph,
+    G: TopologyBase,
     S: BfsStep<G>,
+    D: ExpansionDirection<G>,
 {
-    type Item = NodeId<G>;
+    type Item = ElementId<G>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let node = self.state.pop()?;
-        for target in self.graph.outgoing_neighbors(node) {
+        let element = self.state.pop()?;
+        for target in D::expand(self.graph, element) {
             self.state.try_visit_and_push(self.graph, target);
         }
-        Some(node)
+        Some(element)
     }
 }
 
 // Sound for every `BfsStep` impl in this crate: each `pop` is idempotent on
 // exhaustion (queue cursors don't advance once empty), so once `next` returns
 // `None` it continues to return `None`.
-impl<G, S> FusedIterator for Bfs<'_, G, S>
+impl<G, S, D> FusedIterator for Bfs<'_, G, S, D>
 where
-    G: OutgoingNeighborsGraph,
+    G: TopologyBase,
     S: BfsStep<G>,
+    D: ExpansionDirection<G>,
 {
 }
 
-/// Witness that a `start` node is contained in a graph view and maps inside
-/// its `node_bound()`.
+/// Witness that a `start` element is contained in a topology view and maps
+/// inside its `element_bound()`.
 ///
 /// Constructed only via [`ValidatedStart::new`], which runs the validation
 /// body. Fields are private to this module, so siblings under `bfs/` cannot
 /// fabricate a witness via struct-literal construction. Branded with both the
-/// graph borrow lifetime and the graph type, so a witness minted for one
-/// `&'graph G` cannot be passed to a state instantiated for a different graph
+/// view borrow lifetime and the view type, so a witness minted for one
+/// `&'graph G` cannot be passed to a state instantiated for a different view
 /// or borrow.
 ///
 /// Used by allocating indexed entry-points (`indexed.rs`, `workspace.rs`)
@@ -181,15 +302,15 @@ where
 /// # Performance
 ///
 /// Holds two `usize` fields and a zero-sized brand. No runtime overhead
-/// versus the previous free `validate_indexed_start` helper.
+/// versus a free `validate_indexed_start` helper.
 #[cfg(feature = "alloc")]
 #[must_use = "a validation witness encodes a runtime check; consume it via Seeded*Frontier::new"]
 pub(super) struct ValidatedStart<'graph, G> {
-    /// Cached dense index of the validated start node.
+    /// Cached dense index of the validated start element.
     start_index: usize,
-    /// Cached `graph.node_bound()` observed during validation.
+    /// Cached `graph.element_bound()` observed during validation.
     bound: usize,
-    /// Brands the witness against the graph borrow lifetime and the graph
+    /// Brands the witness against the view borrow lifetime and the view
     /// type. `PhantomData<&'graph G>` covaries in `'graph`, which is what we
     /// want — the witness must not outlive the borrow it was minted against.
     _graph: PhantomData<&'graph G>,
@@ -198,27 +319,28 @@ pub(super) struct ValidatedStart<'graph, G> {
 #[cfg(feature = "alloc")]
 impl<'graph, G> ValidatedStart<'graph, G>
 where
-    G: ContainsNode + NodeIndex,
+    G: ContainsElement + ElementIndex,
 {
     /// Validates that `start` is contained in `graph` and maps inside the
-    /// dense node bound.
+    /// dense element bound.
     ///
     /// # Errors
     ///
-    /// Returns [`BfsError::StartNodeNotContained`] when
-    /// `graph.contains_node(start)` is false, or
-    /// [`BfsError::StartIndexOutOfBounds`] when `graph.node_index(start)` is
-    /// at or past `graph.node_bound()`.
+    /// Returns [`BfsError::StartElementNotContained`] when
+    /// `graph.contains_element(start)` is false, or
+    /// [`BfsError::StartIndexOutOfBounds`] when `graph.element_index(start)`
+    /// is at or past `graph.element_bound()`.
     ///
     /// # Performance
     ///
-    /// `O(1)` plus the cost of `graph.contains_node` and `graph.node_index`.
-    pub(super) fn new(graph: &'graph G, start: NodeId<G>) -> Result<Self, BfsError> {
-        let bound = graph.node_bound();
-        if !graph.contains_node(start) {
-            return Err(BfsError::StartNodeNotContained);
+    /// `O(1)` plus the cost of `graph.contains_element` and
+    /// `graph.element_index`.
+    pub(super) fn new(graph: &'graph G, start: ElementId<G>) -> Result<Self, BfsError> {
+        let bound = graph.element_bound();
+        if !graph.contains_element(start) {
+            return Err(BfsError::StartElementNotContained);
         }
-        let start_index = graph.node_index(start);
+        let start_index = graph.element_index(start);
         if start_index >= bound {
             return Err(BfsError::StartIndexOutOfBounds {
                 index: start_index,
@@ -232,7 +354,7 @@ where
         })
     }
 
-    /// Returns the cached `graph.node_bound()` observed during validation.
+    /// Returns the cached `graph.element_bound()` observed during validation.
     ///
     /// Borrowing accessor used by `workspace.rs` to size the workspace
     /// before consuming the witness via [`SeededWorkspaceFrontier::new`].
@@ -260,58 +382,60 @@ where
     }
 }
 
-/// Witness that caller-provided scratch is at least `graph.node_bound()` and
-/// that `start` is contained in the graph and maps inside the bound.
+/// Witness that caller-provided scratch is at least `graph.element_bound()`
+/// and that `start` is contained in the view and maps inside the bound.
 ///
 /// Constructed only via [`ValidatedScratch::new`], which runs the validation
-/// body. Fields are private to this module. Branded with both the graph
-/// borrow lifetime and the graph type, so a witness minted for one
-/// `&'graph G` cannot be passed to a state instantiated for a different
-/// graph or borrow.
+/// body. Fields are private to this module. Branded with both the view
+/// borrow lifetime and the view type, so a witness minted for one
+/// `&'graph G` cannot be passed to a state instantiated for a different view
+/// or borrow.
 ///
 /// Used by no-allocation indexed entry-points (`scratch.rs`, `epoch.rs`)
-/// that consume caller-provided slices and need both start-node validation
+/// that consume caller-provided slices and need both start-element validation
 /// and scratch-capacity validation in a single pass.
 ///
 /// # Performance
 ///
 /// Holds two `usize` fields and a zero-sized brand. Calls
-/// `graph.node_bound()` exactly once and inlines the start-node checks
-/// using the cached bound; no second graph query is required.
+/// `graph.element_bound()` exactly once and inlines the start-element checks
+/// using the cached bound; no second view query is required.
 #[must_use = "a validation witness encodes a runtime check; consume it via Seeded*Frontier::new"]
 pub(super) struct ValidatedScratch<'graph, G> {
-    /// Cached dense index of the validated start node.
+    /// Cached dense index of the validated start element.
     start_index: usize,
-    /// Cached `graph.node_bound()` observed during validation.
+    /// Cached `graph.element_bound()` observed during validation.
     bound: usize,
-    /// Brands the witness against the graph borrow lifetime and the graph
+    /// Brands the witness against the view borrow lifetime and the view
     /// type.
     _graph: PhantomData<&'graph G>,
 }
 
 impl<'graph, G> ValidatedScratch<'graph, G>
 where
-    G: ContainsNode + NodeIndex,
+    G: ContainsElement + ElementIndex,
 {
     /// Validates that the caller-provided scratch slices fit
-    /// `graph.node_bound()` and that `start` lives inside the bound.
+    /// `graph.element_bound()` and that `start` lives inside the bound.
     ///
     /// # Errors
     ///
     /// Returns the first matching variant of [`BfsError`] in this order:
     /// [`BfsError::VisitedTooSmall`], [`BfsError::QueueTooSmall`],
-    /// [`BfsError::StartNodeNotContained`], [`BfsError::StartIndexOutOfBounds`].
+    /// [`BfsError::StartElementNotContained`],
+    /// [`BfsError::StartIndexOutOfBounds`].
     ///
     /// # Performance
     ///
-    /// `O(1)` plus the cost of `graph.contains_node` and `graph.node_index`.
+    /// `O(1)` plus the cost of `graph.contains_element` and
+    /// `graph.element_index`.
     pub(super) fn new(
         graph: &'graph G,
-        start: NodeId<G>,
+        start: ElementId<G>,
         visited_len: usize,
         queue_len: usize,
     ) -> Result<Self, BfsError> {
-        let bound = graph.node_bound();
+        let bound = graph.element_bound();
         if visited_len < bound {
             return Err(BfsError::VisitedTooSmall {
                 needed: bound,
@@ -324,10 +448,10 @@ where
                 actual: queue_len,
             });
         }
-        if !graph.contains_node(start) {
-            return Err(BfsError::StartNodeNotContained);
+        if !graph.contains_element(start) {
+            return Err(BfsError::StartElementNotContained);
         }
-        let start_index = graph.node_index(start);
+        let start_index = graph.element_index(start);
         if start_index >= bound {
             return Err(BfsError::StartIndexOutOfBounds {
                 index: start_index,
@@ -370,12 +494,12 @@ where
 #[must_use = "iterators are lazy and do nothing unless consumed"]
 pub(super) struct SeededByteFlagFrontier<'scratch, G>
 where
-    G: NodeIndex,
+    G: ElementIndex,
 {
-    /// Dense visited flags indexed by `NodeIndex::node_index`.
+    /// Dense visited flags indexed by `ElementIndex::element_index`.
     visited: &'scratch mut [u8],
-    /// Queue storage for discovered nodes.
-    queue: &'scratch mut [NodeId<G>],
+    /// Queue storage for discovered elements.
+    queue: &'scratch mut [ElementId<G>],
     /// Next queue slot to yield.
     head: usize,
     /// One-past-last initialized queue slot.
@@ -384,7 +508,7 @@ where
 
 impl<'scratch, G> SeededByteFlagFrontier<'scratch, G>
 where
-    G: ContainsNode + NodeIndex,
+    G: ContainsElement + ElementIndex,
 {
     /// Clears `visited[..bound]`, marks the validated start index, seats
     /// `start` at `queue[0]`, and primes head/tail cursors.
@@ -398,8 +522,8 @@ where
     /// no heap allocation.
     pub(super) fn new(
         visited: &'scratch mut [u8],
-        queue: &'scratch mut [NodeId<G>],
-        start: NodeId<G>,
+        queue: &'scratch mut [ElementId<G>],
+        start: ElementId<G>,
         witness: ValidatedScratch<'_, G>,
     ) -> Self {
         let (start_index, bound) = witness.into_parts();
@@ -415,23 +539,23 @@ where
     }
 }
 
-impl<G> Sealed for SeededByteFlagFrontier<'_, G> where G: NodeIndex {}
+impl<G> Sealed for SeededByteFlagFrontier<'_, G> where G: ElementIndex {}
 
 impl<G> BfsStep<G> for SeededByteFlagFrontier<'_, G>
 where
-    G: ContainsNode + OutgoingNeighborsGraph + NodeIndex,
+    G: ContainsElement + ElementIndex,
 {
-    fn pop(&mut self) -> Option<NodeId<G>> {
+    fn pop(&mut self) -> Option<ElementId<G>> {
         if self.head == self.tail {
             return None;
         }
-        let node = self.queue[self.head];
+        let element = self.queue[self.head];
         self.head += 1;
-        Some(node)
+        Some(element)
     }
 
-    fn try_visit_and_push(&mut self, graph: &G, target: NodeId<G>) {
-        let target_index = graph.node_index(target);
+    fn try_visit_and_push(&mut self, graph: &G, target: ElementId<G>) {
+        let target_index = graph.element_index(target);
         let visited_len = self.visited.len();
         let Some(slot) = self.visited.get_mut(target_index) else {
             neighbor_oob(target_index, visited_len)
@@ -462,12 +586,12 @@ where
 #[must_use = "iterators are lazy and do nothing unless consumed"]
 pub(super) struct SeededEpochFrontier<'borrow, G>
 where
-    G: NodeIndex,
+    G: ElementIndex,
 {
-    /// Dense visited epoch marks indexed by `NodeIndex::node_index`.
+    /// Dense visited epoch marks indexed by `ElementIndex::element_index`.
     marks: &'borrow mut [u32],
-    /// Queue storage for discovered nodes.
-    queue: &'borrow mut [NodeId<G>],
+    /// Queue storage for discovered elements.
+    queue: &'borrow mut [ElementId<G>],
     /// Traversal epoch treated as visited.
     epoch: u32,
     /// Next queue slot to yield.
@@ -478,7 +602,7 @@ where
 
 impl<'borrow, G> SeededEpochFrontier<'borrow, G>
 where
-    G: ContainsNode + NodeIndex,
+    G: ContainsElement + ElementIndex,
 {
     /// Marks the validated start index with `epoch`, seats `start` at
     /// `queue[0]`, and primes head/tail cursors.
@@ -490,9 +614,9 @@ where
     /// `O(1)`. No heap allocation.
     pub(super) fn new(
         marks: &'borrow mut [u32],
-        queue: &'borrow mut [NodeId<G>],
+        queue: &'borrow mut [ElementId<G>],
         epoch: u32,
-        start: NodeId<G>,
+        start: ElementId<G>,
         witness: ValidatedScratch<'_, G>,
     ) -> Self {
         let (start_index, _bound) = witness.into_parts();
@@ -508,23 +632,23 @@ where
     }
 }
 
-impl<G> Sealed for SeededEpochFrontier<'_, G> where G: NodeIndex {}
+impl<G> Sealed for SeededEpochFrontier<'_, G> where G: ElementIndex {}
 
 impl<G> BfsStep<G> for SeededEpochFrontier<'_, G>
 where
-    G: ContainsNode + OutgoingNeighborsGraph + NodeIndex,
+    G: ContainsElement + ElementIndex,
 {
-    fn pop(&mut self) -> Option<NodeId<G>> {
+    fn pop(&mut self) -> Option<ElementId<G>> {
         if self.head == self.tail {
             return None;
         }
-        let node = self.queue[self.head];
+        let element = self.queue[self.head];
         self.head += 1;
-        Some(node)
+        Some(element)
     }
 
-    fn try_visit_and_push(&mut self, graph: &G, target: NodeId<G>) {
-        let target_index = graph.node_index(target);
+    fn try_visit_and_push(&mut self, graph: &G, target: ElementId<G>) {
+        let target_index = graph.element_index(target);
         let marks_len = self.marks.len();
         let Some(mark) = self.marks.get_mut(target_index) else {
             neighbor_oob(target_index, marks_len)
@@ -541,7 +665,7 @@ where
 /// indexed BFS, seeded against a validated start at a fresh traversal epoch.
 /// Implements [`BfsStep`] directly.
 ///
-/// The wrapping `BfsWorkspace` is responsible for `ensure_node_bound` and
+/// The wrapping `BfsWorkspace` is responsible for `ensure_element_bound` and
 /// `advance_epoch` before this constructor is called; this layer merely
 /// consumes the resulting borrows and primes the frontier.
 ///
@@ -553,12 +677,12 @@ where
 #[must_use = "iterators are lazy and do nothing unless consumed"]
 pub(super) struct SeededWorkspaceFrontier<'workspace, G>
 where
-    G: NodeIndex,
+    G: ElementIndex,
 {
-    /// Dense visited epoch marks indexed by `NodeIndex::node_index`.
+    /// Dense visited epoch marks indexed by `ElementIndex::element_index`.
     marks: &'workspace mut [u32],
-    /// Queue storage for discovered nodes.
-    queue: &'workspace mut Vec<NodeId<G>>,
+    /// Queue storage for discovered elements.
+    queue: &'workspace mut Vec<ElementId<G>>,
     /// Traversal epoch treated as visited.
     epoch: u32,
     /// Next queue slot to yield.
@@ -568,7 +692,7 @@ where
 #[cfg(feature = "alloc")]
 impl<'workspace, G> SeededWorkspaceFrontier<'workspace, G>
 where
-    G: ContainsNode + NodeIndex,
+    G: ContainsElement + ElementIndex,
 {
     /// Clears the workspace queue, marks the validated start index with
     /// `epoch`, pushes `start`, and primes the head cursor.
@@ -580,9 +704,9 @@ where
     /// `O(1)` plus the queue's clear cost (which does not deallocate).
     pub(super) fn new(
         marks: &'workspace mut [u32],
-        queue: &'workspace mut Vec<NodeId<G>>,
+        queue: &'workspace mut Vec<ElementId<G>>,
         epoch: u32,
-        start: NodeId<G>,
+        start: ElementId<G>,
         witness: ValidatedStart<'_, G>,
     ) -> Self {
         let (start_index, _bound) = witness.into_parts();
@@ -599,21 +723,21 @@ where
 }
 
 #[cfg(feature = "alloc")]
-impl<G> Sealed for SeededWorkspaceFrontier<'_, G> where G: NodeIndex {}
+impl<G> Sealed for SeededWorkspaceFrontier<'_, G> where G: ElementIndex {}
 
 #[cfg(feature = "alloc")]
 impl<G> BfsStep<G> for SeededWorkspaceFrontier<'_, G>
 where
-    G: ContainsNode + OutgoingNeighborsGraph + NodeIndex,
+    G: ContainsElement + ElementIndex,
 {
-    fn pop(&mut self) -> Option<NodeId<G>> {
-        let node = self.queue.get(self.head).copied()?;
+    fn pop(&mut self) -> Option<ElementId<G>> {
+        let element = self.queue.get(self.head).copied()?;
         self.head += 1;
-        Some(node)
+        Some(element)
     }
 
-    fn try_visit_and_push(&mut self, graph: &G, target: NodeId<G>) {
-        let target_index = graph.node_index(target);
+    fn try_visit_and_push(&mut self, graph: &G, target: ElementId<G>) {
+        let target_index = graph.element_index(target);
         let marks_len = self.marks.len();
         let Some(mark) = self.marks.get_mut(target_index) else {
             neighbor_oob(target_index, marks_len)
@@ -639,12 +763,12 @@ where
 #[must_use = "iterators are lazy and do nothing unless consumed"]
 pub(super) struct SeededOwnedFrontier<G>
 where
-    G: NodeIndex,
+    G: ElementIndex,
 {
-    /// Dense visited flags indexed by `NodeIndex::node_index`.
+    /// Dense visited flags indexed by `ElementIndex::element_index`.
     visited: Vec<u8>,
-    /// Nodes discovered in yield order.
-    queue: Vec<NodeId<G>>,
+    /// Elements discovered in yield order.
+    queue: Vec<ElementId<G>>,
     /// Next queue slot to yield.
     head: usize,
 }
@@ -652,7 +776,7 @@ where
 #[cfg(feature = "alloc")]
 impl<G> SeededOwnedFrontier<G>
 where
-    G: ContainsNode + NodeIndex,
+    G: ContainsElement + ElementIndex,
 {
     /// Allocates `vec![0; bound]` for visited, primes `vec![start]` for the
     /// queue, and marks the validated start index.
@@ -662,7 +786,7 @@ where
     /// # Performance
     ///
     /// Allocates `O(b)` visited storage and frontier capacity.
-    pub(super) fn new(start: NodeId<G>, witness: ValidatedStart<'_, G>) -> Self {
+    pub(super) fn new(start: ElementId<G>, witness: ValidatedStart<'_, G>) -> Self {
         let (start_index, bound) = witness.into_parts();
         let mut queue = Vec::with_capacity(bound);
         queue.push(start);
@@ -677,21 +801,21 @@ where
 }
 
 #[cfg(feature = "alloc")]
-impl<G> Sealed for SeededOwnedFrontier<G> where G: NodeIndex {}
+impl<G> Sealed for SeededOwnedFrontier<G> where G: ElementIndex {}
 
 #[cfg(feature = "alloc")]
 impl<G> BfsStep<G> for SeededOwnedFrontier<G>
 where
-    G: ContainsNode + OutgoingNeighborsGraph + NodeIndex,
+    G: ContainsElement + ElementIndex,
 {
-    fn pop(&mut self) -> Option<NodeId<G>> {
-        let node = self.queue.get(self.head).copied()?;
+    fn pop(&mut self) -> Option<ElementId<G>> {
+        let element = self.queue.get(self.head).copied()?;
         self.head += 1;
-        Some(node)
+        Some(element)
     }
 
-    fn try_visit_and_push(&mut self, graph: &G, target: NodeId<G>) {
-        let target_index = graph.node_index(target);
+    fn try_visit_and_push(&mut self, graph: &G, target: ElementId<G>) {
+        let target_index = graph.element_index(target);
         let visited_len = self.visited.len();
         let Some(slot) = self.visited.get_mut(target_index) else {
             neighbor_oob(target_index, visited_len)
@@ -703,14 +827,15 @@ where
     }
 }
 
-/// Reports an out-of-bound neighbor index discovered during traversal.
+/// Reports an out-of-bound expansion-target index discovered during traversal.
 ///
-/// Indicates the graph view violated its
-/// [`OutgoingNeighborsGraph`](oxgraph_graph::OutgoingNeighborsGraph) contract
-/// — a neighbor's dense index was at or past the `node_bound()` cached at
-/// validation time. Panics with [`BfsError::NeighborIndexOutOfBounds`]'s
-/// `Display` message so the failure reads consistently with all other BFS
-/// validation errors.
+/// Indicates the topology view violated its
+/// [`ElementSuccessors`](oxgraph_topology::ElementSuccessors) or
+/// [`ElementPredecessors`](oxgraph_topology::ElementPredecessors) contract —
+/// an expanded element's dense index was at or past the `element_bound()`
+/// cached at validation time. Panics with
+/// [`BfsError::NeighborIndexOutOfBounds`]'s `Display` message so the failure
+/// reads consistently with all other BFS validation errors.
 ///
 /// Returns `!`, so callers can use it inline as the `else` arm of a
 /// `let Some(_) = ... else { ... };` over a slice `get_mut`.

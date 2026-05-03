@@ -418,10 +418,12 @@ version = "0.0.0"
 dependencies = [
  "criterion",
  "oxgraph-csr",
- "oxgraph-graph",
+ "oxgraph-hyper",
+ "oxgraph-hyper-bcsr",
  "oxgraph-snapshot",
  "oxgraph-topology",
  "proptest",
+ "zerocopy",
 ]
 
 [[package]]
@@ -432,7 +434,6 @@ dependencies = [
  "oxgraph-algo",
  "oxgraph-graph",
  "oxgraph-snapshot",
- "oxgraph-topology",
  "proptest",
  "zerocopy",
 ]
@@ -451,6 +452,17 @@ version = "0.0.0"
 dependencies = [
  "oxgraph-topology",
  "proptest",
+]
+
+[[package]]
+name = "oxgraph-hyper-bcsr"
+version = "0.0.0"
+dependencies = [
+ "criterion",
+ "oxgraph-hyper",
+ "oxgraph-snapshot",
+ "proptest",
+ "zerocopy",
 ]
 
 [[package]]

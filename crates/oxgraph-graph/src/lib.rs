@@ -13,9 +13,11 @@
 #[cfg(kani)]
 extern crate kani;
 
-use oxgraph_topology::{
-    ContainsElement, ContainsIncidence, ContainsRelation, ElementIndex, IncidenceBase,
-    IncidenceIndex, RelationIndex, TopologyBase, TopologyCounts,
+pub use oxgraph_topology::{
+    ContainsElement, ContainsIncidence, ContainsRelation, ElementIncidenceCount, ElementIncidences,
+    ElementIndex, ElementPredecessors, ElementSuccessors, IncidenceBase, IncidenceCounts,
+    IncidenceElement, IncidenceIndex, IncidenceRelation, IncidenceRole, RelationIncidenceCount,
+    RelationIncidences, RelationIndex, TopologyBase, TopologyCounts, TopologyId,
 };
 
 /// Graph-facing alias for a topology element ID.
@@ -63,6 +65,24 @@ pub type EndpointId<G> = <G as IncidenceBase>::IncidenceId;
 /// `perf: unspecified`; performance is inherited from the underlying
 /// [`IncidenceBase::Role`] type.
 pub type EndpointRole<G> = <G as IncidenceBase>::Role;
+
+/// Base capability for graph views over topology storage.
+///
+/// This is the graph-facing name for [`TopologyBase`]. It bundles the associated
+/// `ElementId` and `RelationId` types under graph vocabulary so generic code can
+/// require a graph base contract without naming topology traits directly.
+///
+/// # Performance
+///
+/// `perf: unspecified`; this trait carries only associated types.
+pub trait GraphBase: TopologyBase {}
+
+/// Blanket implementation for any view that implements [`TopologyBase`].
+///
+/// # Performance
+///
+/// `perf: unspecified`; performance is inherited from [`TopologyBase`].
+impl<T> GraphBase for T where T: TopologyBase {}
 
 /// Count capability for a graph view.
 ///
@@ -430,21 +450,20 @@ pub trait IncomingGraph: TopologyBase {
 
 /// Capability for traversing directly reachable outgoing neighbor nodes.
 ///
-/// This capability answers `node -> successor nodes` without requiring callers
-/// to materialize outgoing edge IDs and resolve each edge target. It is separate
-/// from [`OutgoingGraph`] so algorithms can require a backend-native direct
-/// adjacency path when that distinction matters for performance.
+/// This is the graph-facing name for [`ElementSuccessors`]. It answers
+/// `node -> successor nodes` without requiring callers to materialize
+/// outgoing edge IDs and resolve each edge target.
 ///
 /// Implementations define whether parallel edges produce repeated neighbor
-/// nodes. Implementations that preserve graph edge order and multiplicity should
-/// document that behavior.
+/// nodes. Implementations that preserve graph edge order and multiplicity
+/// should document that behavior.
 ///
 /// # Performance
 ///
 /// Creating the iterator should be `O(1)` unless an implementation documents a
 /// weaker contract. Yielding `k` neighbors should be `O(k)` and should not
 /// allocate unless the implementation documents otherwise.
-pub trait OutgoingNeighborsGraph: TopologyBase {
+pub trait OutgoingNeighborsGraph: ElementSuccessors {
     /// Iterator over nodes directly reachable from one source node.
     ///
     /// # Performance
@@ -464,23 +483,45 @@ pub trait OutgoingNeighborsGraph: TopologyBase {
     fn outgoing_neighbors(&self, node: Self::ElementId) -> Self::OutNeighbors<'_>;
 }
 
+/// Blanket implementation for graph views with element-level successor traversal.
+///
+/// Any view that implements [`ElementSuccessors`] automatically exposes
+/// graph-facing outgoing-neighbor traversal under node vocabulary. The
+/// associated iterator type forwards to [`ElementSuccessors::Successors`].
+///
+/// # Performance
+///
+/// `perf: unspecified`; performance is inherited from [`ElementSuccessors`].
+impl<T> OutgoingNeighborsGraph for T
+where
+    T: ElementSuccessors,
+{
+    type OutNeighbors<'view>
+        = <T as ElementSuccessors>::Successors<'view>
+    where
+        T: 'view;
+
+    fn outgoing_neighbors(&self, node: Self::ElementId) -> Self::OutNeighbors<'_> {
+        <Self as ElementSuccessors>::element_successors(self, node)
+    }
+}
+
 /// Capability for traversing directly preceding incoming neighbor nodes.
 ///
-/// This capability answers `node -> predecessor nodes` without requiring callers
-/// to materialize incoming edge IDs and resolve each edge source. It is separate
-/// from [`IncomingGraph`] so algorithms can require a backend-native direct
-/// reverse-adjacency path when that distinction matters for performance.
+/// This is the graph-facing name for [`ElementPredecessors`]. It answers
+/// `node -> predecessor nodes` without requiring callers to materialize
+/// incoming edge IDs and resolve each edge source.
 ///
 /// Implementations define whether parallel edges produce repeated predecessor
-/// nodes. Implementations that preserve graph edge order and multiplicity should
-/// document that behavior.
+/// nodes. Implementations that preserve graph edge order and multiplicity
+/// should document that behavior.
 ///
 /// # Performance
 ///
 /// Creating the iterator should be `O(1)` unless an implementation documents a
 /// weaker contract. Yielding `k` neighbors should be `O(k)` and should not
 /// allocate unless the implementation documents otherwise.
-pub trait IncomingNeighborsGraph: TopologyBase {
+pub trait IncomingNeighborsGraph: ElementPredecessors {
     /// Iterator over nodes that have incoming edges to one target node.
     ///
     /// # Performance
@@ -498,6 +539,29 @@ pub trait IncomingNeighborsGraph: TopologyBase {
     /// Expected `O(1)` to create the iterator; yielding `k` neighbors is
     /// expected `O(k)`.
     fn incoming_neighbors(&self, node: Self::ElementId) -> Self::InNeighbors<'_>;
+}
+
+/// Blanket implementation for graph views with element-level predecessor traversal.
+///
+/// Any view that implements [`ElementPredecessors`] automatically exposes
+/// graph-facing incoming-neighbor traversal under node vocabulary. The
+/// associated iterator type forwards to [`ElementPredecessors::Predecessors`].
+///
+/// # Performance
+///
+/// `perf: unspecified`; performance is inherited from [`ElementPredecessors`].
+impl<T> IncomingNeighborsGraph for T
+where
+    T: ElementPredecessors,
+{
+    type InNeighbors<'view>
+        = <T as ElementPredecessors>::Predecessors<'view>
+    where
+        T: 'view;
+
+    fn incoming_neighbors(&self, node: Self::ElementId) -> Self::InNeighbors<'_> {
+        <Self as ElementPredecessors>::element_predecessors(self, node)
+    }
 }
 
 /// Exact outgoing-edge count capability.

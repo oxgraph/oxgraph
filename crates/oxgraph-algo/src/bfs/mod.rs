@@ -1,16 +1,24 @@
-//! Directed breadth-first traversal implementations.
+//! Breadth-first traversal implementations (forward and reverse).
 //!
 //! This module exposes the BFS tier model:
 //!
 //! - strict `no_std` callers use scratch-backed indexed traversal;
 //! - `alloc` callers can use owned indexed storage or a reusable workspace;
-//! - `alloc` callers without dense node indexes can use a `BTreeSet` fallback;
+//! - `alloc` callers without dense element indexes can use a `BTreeSet` fallback;
 //! - `std` callers can use a `HashSet` generic traversal for expected `O(n + m)` membership checks.
 //!
+//! Every variant ships as a forward `breadth_first_search_*` and a reverse
+//! `reverse_breadth_first_search_*` entry point. Forward variants bind on
+//! [`ElementSuccessors`](oxgraph_topology::ElementSuccessors); reverse
+//! variants bind on
+//! [`ElementPredecessors`](oxgraph_topology::ElementPredecessors). Both
+//! directions reuse the same storage policies, so reusable scratch and
+//! workspace types serve either traversal direction.
+//!
 //! Each variant is exposed as an opaque iterator type (e.g.
-//! [`BreadthFirstSearchScratch`]) constructed through a variant-specific
-//! `breadth_first_search_*` entry point. The internal storage policy is shared
-//! across variants but is not part of the public API.
+//! [`BreadthFirstSearchScratch`] / [`ReverseBreadthFirstSearchScratch`])
+//! constructed through a variant-specific entry point. The internal storage
+//! policy is shared across variants but is not part of the public API.
 
 mod core;
 mod epoch;
@@ -27,17 +35,31 @@ mod indexed;
 mod workspace;
 
 pub use epoch::{
-    BfsEpochScratch, BreadthFirstSearchEpochScratch, breadth_first_search_with_epoch_scratch,
+    BfsEpochScratch, BreadthFirstSearchEpochScratch, ReverseBreadthFirstSearchEpochScratch,
+    breadth_first_search_with_epoch_scratch, reverse_breadth_first_search_with_epoch_scratch,
 };
 pub use error::BfsError;
 #[cfg(feature = "alloc")]
-pub use generic_btree::{GenericBreadthFirstSearch, breadth_first_search_generic};
+pub use generic_btree::{
+    GenericBreadthFirstSearch, GenericReverseBreadthFirstSearch, breadth_first_search_generic,
+    reverse_breadth_first_search_generic,
+};
 #[cfg(feature = "std")]
-pub use generic_hash::{HashBreadthFirstSearch, breadth_first_search_generic_hash};
+pub use generic_hash::{
+    HashBreadthFirstSearch, HashReverseBreadthFirstSearch, breadth_first_search_generic_hash,
+    reverse_breadth_first_search_generic_hash,
+};
 #[cfg(feature = "alloc")]
-pub use indexed::{BreadthFirstSearch, breadth_first_search};
-pub use scratch::{BreadthFirstSearchScratch, breadth_first_search_with_scratch};
+pub use indexed::{
+    BreadthFirstSearch, ReverseBreadthFirstSearch, breadth_first_search,
+    reverse_breadth_first_search,
+};
+pub use scratch::{
+    BreadthFirstSearchScratch, ReverseBreadthFirstSearchScratch, breadth_first_search_with_scratch,
+    reverse_breadth_first_search_with_scratch,
+};
 #[cfg(feature = "alloc")]
 pub use workspace::{
-    BfsWorkspace, BreadthFirstSearchWorkspace, breadth_first_search_with_workspace,
+    BfsWorkspace, BreadthFirstSearchWorkspace, ReverseBreadthFirstSearchWorkspace,
+    breadth_first_search_with_workspace, reverse_breadth_first_search_with_workspace,
 };

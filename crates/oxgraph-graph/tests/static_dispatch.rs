@@ -1,14 +1,12 @@
 //! Tests that `oxgraph-graph` traits support static-dispatch graph consumers.
 
 use oxgraph_graph::{
-    ContainsEdge, ContainsEndpoint, ContainsNode, DirectedGraph, EdgeEndpointGraph, EdgeIndex,
-    EdgeSourceGraph, EdgeTargetGraph, EndpointIndex, ForwardGraph, GraphCounts, IncomingEdgeCount,
-    IncomingGraph, IncomingNeighborsGraph, NodeId as GraphNodeId, NodeIndex, OutgoingEdgeCount,
-    OutgoingGraph, OutgoingNeighborsGraph, ReverseGraph,
-};
-use oxgraph_topology::{
-    ContainsElement, ContainsIncidence, ContainsRelation, ElementIndex, IncidenceBase,
-    IncidenceIndex, RelationIndex, TopologyBase, TopologyCounts,
+    ContainsEdge, ContainsElement, ContainsEndpoint, ContainsIncidence, ContainsNode,
+    ContainsRelation, DirectedGraph, EdgeEndpointGraph, EdgeIndex, EdgeSourceGraph,
+    EdgeTargetGraph, ElementIndex, ElementPredecessors, ElementSuccessors, EndpointIndex,
+    ForwardGraph, GraphCounts, IncidenceBase, IncidenceIndex, IncomingEdgeCount, IncomingGraph,
+    IncomingNeighborsGraph, NodeId as GraphNodeId, NodeIndex, OutgoingEdgeCount, OutgoingGraph,
+    OutgoingNeighborsGraph, RelationIndex, ReverseGraph, TopologyBase, TopologyCounts,
 };
 use proptest::prelude::*;
 
@@ -133,24 +131,24 @@ impl IncomingGraph for FixtureGraph {
     }
 }
 
-impl OutgoingNeighborsGraph for FixtureGraph {
-    type OutNeighbors<'view>
+impl ElementSuccessors for FixtureGraph {
+    type Successors<'view>
         = core::iter::Copied<core::slice::Iter<'view, NodeId>>
     where
         Self: 'view;
 
-    fn outgoing_neighbors(&self, node: NodeId) -> Self::OutNeighbors<'_> {
+    fn element_successors(&self, node: NodeId) -> Self::Successors<'_> {
         self.outgoing_neighbors[node.0].iter().copied()
     }
 }
 
-impl IncomingNeighborsGraph for FixtureGraph {
-    type InNeighbors<'view>
+impl ElementPredecessors for FixtureGraph {
+    type Predecessors<'view>
         = core::iter::Copied<core::slice::Iter<'view, NodeId>>
     where
         Self: 'view;
 
-    fn incoming_neighbors(&self, node: NodeId) -> Self::InNeighbors<'_> {
+    fn element_predecessors(&self, node: NodeId) -> Self::Predecessors<'_> {
         self.incoming_neighbors[node.0].iter().copied()
     }
 }
