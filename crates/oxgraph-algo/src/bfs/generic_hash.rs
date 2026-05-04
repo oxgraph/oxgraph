@@ -2,65 +2,23 @@
 //! (forward and reverse).
 
 use core::iter::FusedIterator;
-use std::collections::{HashSet, VecDeque};
+use std::collections::HashSet;
 
-use oxgraph_topology::{ElementId, ElementPredecessors, ElementSuccessors, TopologyBase};
+use oxgraph_topology::{ElementId, ElementPredecessors, ElementSuccessors, TopologyId};
 
-use crate::bfs::core::{Bfs, BfsStep, Forward, Reverse, Sealed};
+use crate::bfs::core::{Bfs, Forward, GenericState, Reverse, VisitedSet};
 
-/// Owned `HashSet`-backed visited set and `VecDeque` frontier for
-/// arbitrary-ID BFS. Direction-agnostic: the same state drives both forward
-/// and reverse traversals.
-///
-/// # Performance
-///
-/// Construction is expected `O(1)` for the initial visited-set insertion and
-/// uses `O(1)` queue storage before traversal begins.
-#[derive(Clone, Debug)]
-struct GenericHashState<G>
+impl<T> VisitedSet<T> for HashSet<T>
 where
-    G: TopologyBase,
+    T: TopologyId,
 {
-    /// Elements discovered but not yet yielded.
-    queue: VecDeque<ElementId<G>>,
-    /// Elements already discovered.
-    visited: HashSet<ElementId<G>>,
-}
-
-impl<G> GenericHashState<G>
-where
-    G: TopologyBase,
-{
-    /// Seeds the frontier and visited set with `start`.
-    ///
-    /// # Performance
-    ///
-    /// Expected `O(1)` for the initial visited-set insertion.
-    fn new(start: ElementId<G>) -> Self {
-        let mut queue = VecDeque::new();
-        queue.push_back(start);
-        let mut visited = HashSet::new();
-        visited.insert(start);
-        Self { queue, visited }
+    fn insert(&mut self, value: T) -> bool {
+        Self::insert(self, value)
     }
 }
 
-impl<G> Sealed for GenericHashState<G> where G: TopologyBase {}
-
-impl<G> BfsStep<G> for GenericHashState<G>
-where
-    G: TopologyBase,
-{
-    fn pop(&mut self) -> Option<ElementId<G>> {
-        self.queue.pop_front()
-    }
-
-    fn try_visit_and_push(&mut self, _graph: &G, target: ElementId<G>) {
-        if self.visited.insert(target) {
-            self.queue.push_back(target);
-        }
-    }
-}
+/// `HashSet`-backed driver state for the generic BFS variants.
+type HashBfs<'graph, G, D> = Bfs<'graph, G, GenericState<G, HashSet<ElementId<G>>>, D>;
 
 /// Forward BFS iterator for arbitrary element ID spaces using a `HashSet`.
 ///
@@ -77,7 +35,7 @@ where
     G: ElementSuccessors,
 {
     /// Underlying generic BFS driver carrying the state policy.
-    inner: Bfs<'graph, G, GenericHashState<G>, Forward>,
+    inner: HashBfs<'graph, G, Forward>,
 }
 
 impl<G> Iterator for HashBreadthFirstSearch<'_, G>
@@ -116,7 +74,7 @@ where
     G: ElementSuccessors,
 {
     HashBreadthFirstSearch {
-        inner: Bfs::new(graph, GenericHashState::new(start)),
+        inner: Bfs::new(graph, GenericState::new(start)),
     }
 }
 
@@ -137,7 +95,7 @@ where
 {
     /// Underlying generic BFS driver carrying the state policy and reverse
     /// direction selector.
-    inner: Bfs<'graph, G, GenericHashState<G>, Reverse>,
+    inner: HashBfs<'graph, G, Reverse>,
 }
 
 impl<G> Iterator for HashReverseBreadthFirstSearch<'_, G>
@@ -174,6 +132,6 @@ where
     G: ElementPredecessors,
 {
     HashReverseBreadthFirstSearch {
-        inner: Bfs::new(graph, GenericHashState::new(start)),
+        inner: Bfs::new(graph, GenericState::new(start)),
     }
 }

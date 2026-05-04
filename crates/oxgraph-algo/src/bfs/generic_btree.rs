@@ -1,65 +1,23 @@
 //! Allocating arbitrary-ID BFS using a `BTreeSet` visited set (forward and reverse).
 
-use alloc::collections::{BTreeSet, VecDeque};
+use alloc::collections::BTreeSet;
 use core::iter::FusedIterator;
 
-use oxgraph_topology::{ElementId, ElementPredecessors, ElementSuccessors, TopologyBase};
+use oxgraph_topology::{ElementId, ElementPredecessors, ElementSuccessors, TopologyId};
 
-use crate::bfs::core::{Bfs, BfsStep, Forward, Reverse, Sealed};
+use crate::bfs::core::{Bfs, Forward, GenericState, Reverse, VisitedSet};
 
-/// Owned `BTreeSet`-backed visited set and `VecDeque` frontier for
-/// arbitrary-ID BFS. Direction-agnostic: the same state drives both forward
-/// and reverse traversals.
-///
-/// # Performance
-///
-/// Construction is `O(log 1)` for the initial visited-set insertion and uses
-/// `O(1)` queue storage before traversal begins.
-#[derive(Clone, Debug)]
-struct GenericBTreeState<G>
+impl<T> VisitedSet<T> for BTreeSet<T>
 where
-    G: TopologyBase,
+    T: TopologyId,
 {
-    /// Elements discovered but not yet yielded.
-    queue: VecDeque<ElementId<G>>,
-    /// Elements already discovered.
-    visited: BTreeSet<ElementId<G>>,
-}
-
-impl<G> GenericBTreeState<G>
-where
-    G: TopologyBase,
-{
-    /// Seeds the frontier and visited set with `start`.
-    ///
-    /// # Performance
-    ///
-    /// `O(log 1)` for the initial visited-set insertion.
-    fn new(start: ElementId<G>) -> Self {
-        let mut queue = VecDeque::new();
-        queue.push_back(start);
-        let mut visited = BTreeSet::new();
-        visited.insert(start);
-        Self { queue, visited }
+    fn insert(&mut self, value: T) -> bool {
+        Self::insert(self, value)
     }
 }
 
-impl<G> Sealed for GenericBTreeState<G> where G: TopologyBase {}
-
-impl<G> BfsStep<G> for GenericBTreeState<G>
-where
-    G: TopologyBase,
-{
-    fn pop(&mut self) -> Option<ElementId<G>> {
-        self.queue.pop_front()
-    }
-
-    fn try_visit_and_push(&mut self, _graph: &G, target: ElementId<G>) {
-        if self.visited.insert(target) {
-            self.queue.push_back(target);
-        }
-    }
-}
+/// `BTreeSet`-backed driver state for the generic BFS variants.
+type BTreeBfs<'graph, G, D> = Bfs<'graph, G, GenericState<G, BTreeSet<ElementId<G>>>, D>;
 
 /// Forward BFS iterator for arbitrary element ID spaces using a `BTreeSet`.
 ///
@@ -76,7 +34,7 @@ where
     G: ElementSuccessors,
 {
     /// Underlying generic BFS driver carrying the state policy.
-    inner: Bfs<'graph, G, GenericBTreeState<G>, Forward>,
+    inner: BTreeBfs<'graph, G, Forward>,
 }
 
 impl<G> Iterator for GenericBreadthFirstSearch<'_, G>
@@ -116,7 +74,7 @@ where
     G: ElementSuccessors,
 {
     GenericBreadthFirstSearch {
-        inner: Bfs::new(graph, GenericBTreeState::new(start)),
+        inner: Bfs::new(graph, GenericState::new(start)),
     }
 }
 
@@ -137,7 +95,7 @@ where
 {
     /// Underlying generic BFS driver carrying the state policy and reverse
     /// direction selector.
-    inner: Bfs<'graph, G, GenericBTreeState<G>, Reverse>,
+    inner: BTreeBfs<'graph, G, Reverse>,
 }
 
 impl<G> Iterator for GenericReverseBreadthFirstSearch<'_, G>
@@ -174,6 +132,6 @@ where
     G: ElementPredecessors,
 {
     GenericReverseBreadthFirstSearch {
-        inner: Bfs::new(graph, GenericBTreeState::new(start)),
+        inner: Bfs::new(graph, GenericState::new(start)),
     }
 }

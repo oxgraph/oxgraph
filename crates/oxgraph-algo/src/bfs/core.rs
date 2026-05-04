@@ -31,9 +31,7 @@
 //! incoming connections. Both directions reuse the same storage policies.
 
 #[cfg(feature = "alloc")]
-use alloc::vec;
-#[cfg(feature = "alloc")]
-use alloc::vec::Vec;
+use alloc::{collections::VecDeque, vec, vec::Vec};
 use core::{iter::FusedIterator, marker::PhantomData};
 
 use oxgraph_topology::{
@@ -823,6 +821,97 @@ where
         if *slot == 0 {
             *slot = 1;
             self.queue.push(target);
+        }
+    }
+}
+
+/// Visited-set policy for the set-based BFS fallbacks.
+///
+/// Implementors own the visited container; [`GenericState`] supplies the
+/// `VecDeque` frontier so the two set-based variants in `generic_btree.rs`
+/// and `generic_hash.rs` share one [`BfsStep`] body.
+///
+/// # Performance
+///
+/// `insert` cost is implementor-defined: `O(log n)` for `BTreeSet`, expected
+/// `O(1)` for `HashSet`.
+#[cfg(feature = "alloc")]
+pub(super) trait VisitedSet<T>: Default {
+    /// Inserts `value`; returns `true` when the element was newly added,
+    /// `false` when already present.
+    ///
+    /// # Performance
+    ///
+    /// Implementor-defined; see the trait-level docs.
+    fn insert(&mut self, value: T) -> bool;
+}
+
+/// Owned `VecDeque` frontier paired with a generic visited set for
+/// arbitrary-ID BFS. Direction-agnostic: drives both forward and reverse
+/// traversals.
+///
+/// The two set-based fallbacks (`BTreeSet` in `generic_btree.rs`, `HashSet`
+/// in `generic_hash.rs`) share this state through the [`VisitedSet`] policy.
+///
+/// # Performance
+///
+/// `pop` is amortized `O(1)`; `try_visit_and_push` is the visited set's
+/// `insert` cost.
+#[cfg(feature = "alloc")]
+#[must_use = "iterators are lazy and do nothing unless consumed"]
+pub(super) struct GenericState<G, V>
+where
+    G: TopologyBase,
+    V: VisitedSet<ElementId<G>>,
+{
+    /// Frontier: elements discovered but not yet yielded.
+    queue: VecDeque<ElementId<G>>,
+    /// Already-discovered elements.
+    visited: V,
+}
+
+#[cfg(feature = "alloc")]
+impl<G, V> GenericState<G, V>
+where
+    G: TopologyBase,
+    V: VisitedSet<ElementId<G>>,
+{
+    /// Seeds the frontier and visited set with `start`.
+    ///
+    /// # Performance
+    ///
+    /// One visited-set insertion plus one `VecDeque::push_back`. See the
+    /// concrete [`VisitedSet`] impl for the insertion cost.
+    pub(super) fn new(start: ElementId<G>) -> Self {
+        let mut queue = VecDeque::new();
+        queue.push_back(start);
+        let mut visited = V::default();
+        visited.insert(start);
+        Self { queue, visited }
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl<G, V> Sealed for GenericState<G, V>
+where
+    G: TopologyBase,
+    V: VisitedSet<ElementId<G>>,
+{
+}
+
+#[cfg(feature = "alloc")]
+impl<G, V> BfsStep<G> for GenericState<G, V>
+where
+    G: TopologyBase,
+    V: VisitedSet<ElementId<G>>,
+{
+    fn pop(&mut self) -> Option<ElementId<G>> {
+        self.queue.pop_front()
+    }
+
+    fn try_visit_and_push(&mut self, _graph: &G, target: ElementId<G>) {
+        if self.visited.insert(target) {
+            self.queue.push_back(target);
         }
     }
 }
