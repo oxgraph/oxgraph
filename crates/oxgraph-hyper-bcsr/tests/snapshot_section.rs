@@ -181,9 +181,9 @@ fn rejects_validation_failure_through_snapshot() -> Result<(), FixtureError> {
     let bytes = build_snapshot(&fixture);
     let snapshot = Snapshot::open(&bytes)?;
     let result = BcsrHypergraph::from_snapshot(&snapshot);
-    let Err(BcsrSnapshotError::Validation(BcsrError::VertexOutOfRange { vertex: 99, .. })) = result
+    let Err(BcsrSnapshotError::Bcsr(BcsrError::VertexOutOfRange { vertex: 99, .. })) = result
     else {
-        panic!("expected Validation(VertexOutOfRange), got {result:?}");
+        panic!("expected Bcsr(VertexOutOfRange), got {result:?}");
     };
     Ok(())
 }

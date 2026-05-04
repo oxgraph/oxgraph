@@ -403,8 +403,8 @@ pub enum BcsrSnapshotError {
         /// Length of the offsets section.
         offsets_len: usize,
     },
-    /// Bipartite-CSR validation failed on the borrowed sections.
-    Validation(BcsrError),
+    /// Bipartite-CSR layout-shape error surfaced through the borrowed sections.
+    Bcsr(BcsrError),
 }
 
 impl fmt::Display for BcsrSnapshotError {
@@ -426,7 +426,7 @@ impl fmt::Display for BcsrSnapshotError {
                 formatter,
                 "derived count from {section} length {offsets_len} does not fit u32"
             ),
-            Self::Validation(error) => {
+            Self::Bcsr(error) => {
                 write!(formatter, "bipartite-CSR validation failed: {error}")
             }
         }
@@ -437,6 +437,6 @@ impl core::error::Error for BcsrSnapshotError {}
 
 impl From<BcsrError> for BcsrSnapshotError {
     fn from(error: BcsrError) -> Self {
-        Self::Validation(error)
+        Self::Bcsr(error)
     }
 }
