@@ -63,3 +63,5 @@ parents:
 children:
 - shape: 8
   role: component
+amendment_log:
+- 1

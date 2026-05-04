@@ -344,6 +344,14 @@ fn vertex_bucket<'view, Word: BcsrWord>(
 /// and `offsets[hyperedge_count] = total`. The search returns the unique
 /// index `h` such that `offsets[h] <= target < offsets[h + 1]`.
 ///
+/// # Panics
+///
+/// Panics via `unreachable!()` only if the resulting bucket index does not
+/// fit in `u32`. Validation enforces `offsets.len() <= u32::MAX + 1` (so the
+/// final index fits `u32`), and the binary search's invariant `low < high`
+/// keeps `low` strictly below the final index, so the conversion is always
+/// in range.
+///
 /// # Performance
 ///
 /// This function is `O(log hyperedge_count)`.

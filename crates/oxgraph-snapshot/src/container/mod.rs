@@ -24,7 +24,7 @@ pub use self::builder::SnapshotBuilder;
 pub use self::{
     error::{PlanError, SectionViewError, SnapshotError},
     plan::{PendingSection, SnapshotPlan},
-    reader::{SectionIter, Snapshot},
+    reader::{HeaderOnlySnapshot, SectionIter, Snapshot},
     section::Section,
     validate::ValidationLevel,
 };
@@ -109,6 +109,13 @@ pub(in crate::container) const HEADER_SIZE_U32: u32 = 32;
 
 /// Converts a checked `u64` into `usize`, asserting in debug mode that the
 /// value already fits because validation enforced an earlier bound.
+///
+/// # Panics
+///
+/// Panics via `unreachable!()` only on a target where `usize` is narrower
+/// than `u64` AND the caller has supplied a value that was not first vetted
+/// by the snapshot's `Layout` validation pass (which surfaces the failure
+/// as [`SnapshotError::UsizeOverflow`] before any `_validated` call).
 ///
 /// # Performance
 ///

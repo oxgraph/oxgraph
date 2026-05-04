@@ -1,0 +1,14 @@
+id: 3
+name: CSR kani proof harness
+description: 'Adds the first kani proof harness for oxgraph-csr. Three proofs: validate_total_n3_m4 (validation must return Ok or typed CsrError, never panic, including for non-deterministic offsets-slice lengths in [0, 4]); validated_traversal_in_bounds_n2_m2 (a successfully validated CsrGraph keeps element_successors slice indexing within targets bounds); validated_final_offset_matches_targets_len_n3 (validation accepts only inputs where offsets[node_count] == targets.len(), the load-bearing precondition for the bounds proof). Each defends a stated invariant on CsrGraph::validate. Also adds a # Panics doc to u32_to_usize_lossless documenting why the unreachable!() branch is dead on supported targets.'
+targets:
+  shape_ids:
+  - 5
+status: proposed
+version_impact: patch
+intent:
+  kind: amendment
+  summary: New crates/oxgraph-csr/src/proofs.rs adds totality, layout-implies-bounds, and final-offset proofs
+  source: ai
+initiated_by:
+  type: human

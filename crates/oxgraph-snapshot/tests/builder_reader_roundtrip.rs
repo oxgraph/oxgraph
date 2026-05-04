@@ -40,7 +40,10 @@ proptest! {
                 Err(error) => panic!("builder rejected validated section: {error:?}"),
             }
         }
-        let bytes = builder.finish();
+        let bytes = match builder.finish() {
+            Ok(value) => value,
+            Err(error) => panic!("builder finish failed on validated input: {error:?}"),
+        };
         let snapshot = match Snapshot::open(&bytes) {
             Ok(value) => value,
             Err(error) => panic!("snapshot did not open: {error:?}"),

@@ -1,0 +1,14 @@
+id: 4
+name: BCSR kani proofs at H=2 V=2
+description: 'Adds two kani proofs in crates/oxgraph-hyper-bcsr/src/proofs.rs. validated_traversal_in_bounds_h2_v2 certifies that any view returned by BcsrHypergraph::open at default Layout validation keeps every public traversal entry point (hyperedge_participants, source_participants, target_participants, incident_hyperedges, element_successors, element_predecessors) inside its validated participant slices for two hyperedges and two vertices. strict_implies_count_symmetry_h2_v2 certifies that under BcsrValidation::Strict, the total participant count summed across all hyperedges equals the total incidence count summed across all vertices — the load-bearing projection of multiset equality used by BFS in both directions. H=V=2 chosen so the totals are non-trivially split across multiple buckets, ruling out per-bucket accounting bugs that an H=V=1 smoke proof would miss. Also adds # Panics docs to u32_to_usize_validated and find_owning_hyperedge documenting why the unreachable!() branches are dead on supported targets.'
+targets:
+  shape_ids:
+  - 6
+status: proposed
+version_impact: patch
+intent:
+  kind: amendment
+  summary: Adds validated_traversal_in_bounds_h2_v2 and strict_implies_count_symmetry_h2_v2 proofs at non-degenerate H=V=2 scale
+  source: ai
+initiated_by:
+  type: human

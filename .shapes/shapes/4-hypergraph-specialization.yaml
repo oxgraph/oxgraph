@@ -50,3 +50,5 @@ realization:
 parents:
 - id: 1
   role: component
+amendment_log:
+- 6

@@ -4,6 +4,16 @@
 //! baseline). Forward and reverse BFS are both benchmarked over BCSR
 //! hypergraph fixtures so any regression in either direction on the
 //! substrate-agnostic path is caught.
+//!
+//! Defends two perf contracts (the corresponding doc claims live next to each tier):
+//! - All BFS tiers (`breadth_first_search`, `*_with_scratch`, `*_with_epoch_scratch`,
+//!   `*_with_workspace`) traverse `O(n + m)` for `n` reachable nodes and `m` traversed edges. Bench
+//!   fixtures are size-controlled so `n + m` is known per case and `Throughput::Elements` reports
+//!   edges/sec; a sub-linear curve flags an algorithmic regression rather than a constant-factor
+//!   change.
+//! - The four allocation tiers (allocating, scratch-backed, epoch-marked, reusable workspace) are
+//!   benched on the same fixture so the relative ordering — workspace ≈ epoch < scratch <
+//!   allocating — stays stable. A swap in the ordering signals a setup-cost regression in one tier.
 
 use std::hint::black_box;
 
@@ -471,7 +481,10 @@ fn bcsr_snapshot_bytes(node_count: u32, offsets: &[u32], targets: &[u32]) -> Vec
         &sections.vertex_incoming_hyperedges,
     );
 
-    builder.finish()
+    match builder.finish() {
+        Ok(bytes) => bytes,
+        Err(error) => panic!("bench builder finish: {error:?}"),
+    }
 }
 
 /// Counts reachable vertices via forward BCSR scratch BFS.

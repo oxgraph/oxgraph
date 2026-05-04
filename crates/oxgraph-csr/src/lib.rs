@@ -11,6 +11,9 @@
 #[cfg(kani)]
 extern crate kani;
 
+#[cfg(kani)]
+mod proofs;
+
 use core::fmt;
 
 use oxgraph_graph::{
@@ -681,6 +684,14 @@ fn u32_to_usize(value: u32) -> Result<usize, CsrError> {
 }
 
 /// Converts a previously validated `u32` to `usize`.
+///
+/// # Panics
+///
+/// Panics via `unreachable!()` only on a target where `usize` is narrower
+/// than `u32` AND the caller has supplied a value that was not first vetted
+/// by [`u32_to_usize`]. All in-tree callers vet through [`CsrGraph::validate`]
+/// (which fails open-time with [`CsrError::UsizeOverflow`] before any
+/// `_lossless` call), so on supported targets this branch is dead.
 ///
 /// # Performance
 ///

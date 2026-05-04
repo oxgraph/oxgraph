@@ -91,3 +91,153 @@ fn u32_to_usize_safe_on_target_platforms() {
     let value: u32 = kani::any();
     let _converted = usize::try_from(value).expect("u32 fits usize on 32-bit-or-wider targets");
 }
+
+/// **Layout-implies-bounds**: a `BcsrHypergraph` returned from
+/// [`BcsrHypergraph::open`] (default `Layout` validation) must keep every
+/// public traversal call within the validated participant slices.
+///
+/// Proven for two hyperedges and two vertices with up to two participants
+/// per hyperedge per side, across every public traversal entry point:
+/// `hyperedge_participants`, `source_participants`, `target_participants`,
+/// `incident_hyperedges`, `element_successors`, and `element_predecessors`.
+/// If any traversal slice-accessed an out-of-range index, kani would catch
+/// the panic.
+#[kani::proof]
+#[kani::unwind(8)]
+fn validated_traversal_in_bounds_h2_v2() {
+    use oxgraph_hyper::{
+        DirectedHyperedgeParticipants, ElementPredecessors, ElementSuccessors,
+        HyperedgeParticipants, IncidentHyperedges,
+    };
+
+    use crate::{BcsrHyperedgeId, BcsrVertexId};
+
+    let head_offsets: [u32; 3] = kani::any();
+    let tail_offsets: [u32; 3] = kani::any();
+    let head_participants: [u32; 2] = kani::any();
+    let tail_participants: [u32; 2] = kani::any();
+    let vertex_outgoing_offsets: [u32; 3] = kani::any();
+    let vertex_outgoing_hyperedges: [u32; 2] = kani::any();
+    let vertex_incoming_offsets: [u32; 3] = kani::any();
+    let vertex_incoming_hyperedges: [u32; 2] = kani::any();
+    let sections = BcsrSections {
+        head_offsets: &head_offsets,
+        head_participants: &head_participants,
+        tail_offsets: &tail_offsets,
+        tail_participants: &tail_participants,
+        vertex_outgoing_offsets: &vertex_outgoing_offsets,
+        vertex_outgoing_hyperedges: &vertex_outgoing_hyperedges,
+        vertex_incoming_offsets: &vertex_incoming_offsets,
+        vertex_incoming_hyperedges: &vertex_incoming_hyperedges,
+    };
+
+    let view = match BcsrHypergraph::open(sections) {
+        Ok(value) => value,
+        Err(_) => return,
+    };
+
+    // Hyperedge-side: walk participants for every hyperedge.
+    for h in 0..2u32 {
+        let hid = BcsrHyperedgeId(h);
+        let mut count = 0u32;
+        for _ in view.hyperedge_participants(hid) {
+            count = count.wrapping_add(1);
+        }
+        let _ = count;
+        let mut count = 0u32;
+        for _ in view.source_participants(hid) {
+            count = count.wrapping_add(1);
+        }
+        let _ = count;
+        let mut count = 0u32;
+        for _ in view.target_participants(hid) {
+            count = count.wrapping_add(1);
+        }
+        let _ = count;
+    }
+
+    // Vertex-side: walk incident hyperedges and successor/predecessor vertices.
+    for v in 0..2u32 {
+        let vid = BcsrVertexId(v);
+        let mut count = 0u32;
+        for _ in view.incident_hyperedges(vid) {
+            count = count.wrapping_add(1);
+        }
+        let _ = count;
+        let mut count = 0u32;
+        for _ in view.element_successors(vid) {
+            count = count.wrapping_add(1);
+        }
+        let _ = count;
+        let mut count = 0u32;
+        for _ in view.element_predecessors(vid) {
+            count = count.wrapping_add(1);
+        }
+        let _ = count;
+    }
+}
+
+/// **Strict-implies-count-symmetry**: a view accepted at
+/// [`BcsrValidation::Strict`] must report equal totals when participant
+/// counts are summed across all hyperedges from the hyperedge side and
+/// across all vertices from the vertex side.
+///
+/// At Strict, validation enforces that the multiset of `(vertex, hyperedge)`
+/// pairs reachable via head/tail participants equals the multiset reachable
+/// via vertex-outgoing / vertex-incoming hyperedges. This proof certifies
+/// the projection on totals — the load-bearing consequence used by BFS and
+/// any other algorithm that traverses both directions. With `H = V = 2`,
+/// the totals are non-trivially split across multiple buckets, so the proof
+/// rules out per-bucket accounting bugs that an `H = V = 1` smoke proof
+/// would miss.
+#[kani::proof]
+#[kani::unwind(8)]
+fn strict_implies_count_symmetry_h2_v2() {
+    use oxgraph_hyper::{HyperedgeParticipants, IncidentHyperedges};
+
+    use crate::{BcsrHyperedgeId, BcsrVertexId};
+
+    let head_offsets: [u32; 3] = kani::any();
+    let tail_offsets: [u32; 3] = kani::any();
+    let head_participants: [u32; 2] = kani::any();
+    let tail_participants: [u32; 2] = kani::any();
+    let vertex_outgoing_offsets: [u32; 3] = kani::any();
+    let vertex_outgoing_hyperedges: [u32; 2] = kani::any();
+    let vertex_incoming_offsets: [u32; 3] = kani::any();
+    let vertex_incoming_hyperedges: [u32; 2] = kani::any();
+    let sections = BcsrSections {
+        head_offsets: &head_offsets,
+        head_participants: &head_participants,
+        tail_offsets: &tail_offsets,
+        tail_participants: &tail_participants,
+        vertex_outgoing_offsets: &vertex_outgoing_offsets,
+        vertex_outgoing_hyperedges: &vertex_outgoing_hyperedges,
+        vertex_incoming_offsets: &vertex_incoming_offsets,
+        vertex_incoming_hyperedges: &vertex_incoming_hyperedges,
+    };
+
+    let view = match BcsrHypergraph::open_with(sections, BcsrValidation::Strict) {
+        Ok(value) => value,
+        Err(_) => return,
+    };
+
+    // Total participants counted across all hyperedges (heads + tails).
+    let mut hyperedge_side_total = 0u32;
+    for h in 0..2u32 {
+        for _ in view.hyperedge_participants(BcsrHyperedgeId(h)) {
+            hyperedge_side_total = hyperedge_side_total.wrapping_add(1);
+        }
+    }
+
+    // Total incidences counted across all vertices (incoming + outgoing).
+    let mut vertex_side_total = 0u32;
+    for v in 0..2u32 {
+        for _ in view.incident_hyperedges(BcsrVertexId(v)) {
+            vertex_side_total = vertex_side_total.wrapping_add(1);
+        }
+    }
+
+    // Strict accepted ⇒ head/tail multisets equal outgoing/incoming
+    // multisets ⇒ totals agree across the two directions.
+    assert_eq!(hyperedge_side_total, vertex_side_total);
+}

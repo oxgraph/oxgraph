@@ -1,5 +1,12 @@
 //! Benches for opening a CSR view from an `oxgraph-snapshot` and running
 //! BFS over the borrowed sections.
+//!
+//! Defends one perf contract:
+//! - Snapshot open + [`CsrGraph::from_snapshot`](oxgraph_csr::CsrGraph::from_snapshot) + forward
+//!   BFS is `O(n + m)` for the ring fixture (each `n`-node ring carries `n` edges, so `n + m =
+//!   2n`). Benched at multiple node counts so the bytes-to-traversal pipeline cost tracks linearly;
+//!   a regression in any sub-step (snapshot validation, CSR validation, or BFS) shows up as a
+//!   sub-linear curve.
 
 use std::hint::black_box;
 
@@ -33,7 +40,10 @@ fn ring_snapshot_bytes(node_count: u32) -> Vec<u8> {
         Ok(_) => {}
         Err(error) => panic!("bench targets: {error:?}"),
     }
-    builder.finish()
+    match builder.finish() {
+        Ok(bytes) => bytes,
+        Err(error) => panic!("bench builder finish: {error:?}"),
+    }
 }
 
 /// Benchmarks `Snapshot::open` + `CsrGraph::from_snapshot` together

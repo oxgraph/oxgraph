@@ -509,6 +509,14 @@ fn u32_to_usize(value: u32) -> Result<usize, BcsrError> {
 /// Converts a previously validated `u32` to `usize`. Used inside the view's
 /// hot trait paths where validation guarantees the conversion succeeds.
 ///
+/// # Panics
+///
+/// Panics via `unreachable!()` only on a target where `usize` is narrower
+/// than `u32` AND the caller has bypassed [`u32_to_usize`]. All in-tree
+/// callers run after [`validate_sections`](super::validation::validate_sections),
+/// which surfaces the failure as [`BcsrError::UsizeOverflow`] before any
+/// `_validated` call, so on supported targets this branch is dead.
+///
 /// # Performance
 ///
 /// This function is `O(1)`.

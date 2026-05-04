@@ -1,0 +1,14 @@
+id: 6
+name: DirectedHypergraph capability bundle trait
+description: 'Adds a public marker trait DirectedHypergraph in crates/oxgraph-hyper/src/lib.rs that bundles the four traits needed for generic directed-hypergraph code: Hypergraph (hyperedge-side traversal), DirectedHyperedgeParticipants (source/target separation), DirectedVertexSuccessors and DirectedVertexPredecessors (bidirectional vertex-to-vertex). Includes a blanket impl so any view satisfying the four component traits is automatically a DirectedHypergraph. Currently no in-tree consumer uses the bundle (the new BCSR kani proofs import the four traits individually); the trait is provided so generic algorithm authors can write a single bound rather than the four-trait conjunction.'
+targets:
+  shape_ids:
+  - 4
+status: proposed
+version_impact: minor
+intent:
+  kind: amendment
+  summary: 'Adds DirectedHypergraph: Hypergraph + DirectedHyperedgeParticipants + DirectedVertexSuccessors + DirectedVertexPredecessors with blanket impl'
+  source: ai
+initiated_by:
+  type: human

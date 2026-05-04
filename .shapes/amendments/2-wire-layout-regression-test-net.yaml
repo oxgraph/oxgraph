@@ -1,0 +1,14 @@
+id: 2
+name: Wire-layout regression test net
+description: Adds crates/oxgraph-snapshot/tests/wire_layout.rs which asserts FORMAT_MAGIC == OXGTOPO\\0, HEADER_SIZE == 32, SECTION_ENTRY_SIZE == 32, FORMAT_MAJOR == 1, FORMAT_MINOR == 0, and that the encoded byte length follows HEADER_SIZE + N * SECTION_ENTRY_SIZE + sum(payloads) for unpadded sections. The internal RawHeader/RawSectionEntry types remain crate-private; their per-field layout is defended by zerocopy derives. This test exercises the public surface so any size or magic regression is caught before reaching wire-format consumers.
+targets:
+  shape_ids:
+  - 8
+status: proposed
+version_impact: patch
+intent:
+  kind: amendment
+  summary: New tests/wire_layout.rs pins HEADER_SIZE / SECTION_ENTRY_SIZE / FORMAT_MAGIC / format versions via public-API roundtrips
+  source: ai
+initiated_by:
+  type: human

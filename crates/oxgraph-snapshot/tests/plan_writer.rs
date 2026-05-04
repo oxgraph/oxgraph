@@ -2,7 +2,8 @@
 //! buffer using [`SnapshotPlan`].
 
 use oxgraph_snapshot::{
-    PendingSection, PlanError, Snapshot, SnapshotError, SnapshotPlan, ValidationLevel,
+    FORMAT_MAJOR, FORMAT_MINOR, HeaderOnlySnapshot, PendingSection, PlanError, Snapshot,
+    SnapshotError, SnapshotPlan,
 };
 
 #[test]
@@ -94,7 +95,7 @@ fn rejects_duplicate_kind_at_plan_construction() {
 }
 
 #[test]
-fn header_only_validation_skips_section_table() -> Result<(), SnapshotError> {
+fn header_only_open_skips_section_table() -> Result<(), SnapshotError> {
     let payload = [0u8; 4];
     let sections = [PendingSection {
         kind: 1,
@@ -111,7 +112,8 @@ fn header_only_validation_skips_section_table() -> Result<(), SnapshotError> {
         Ok(value) => value,
         Err(error) => panic!("write_into failed: {error:?}"),
     };
-    let snapshot = Snapshot::open_with(&buffer[..written], ValidationLevel::Header)?;
-    assert_eq!(snapshot.section_count(), 0);
+    let header_only = HeaderOnlySnapshot::open(&buffer[..written])?;
+    assert_eq!(header_only.format_major(), FORMAT_MAJOR);
+    assert_eq!(header_only.format_minor(), FORMAT_MINOR);
     Ok(())
 }

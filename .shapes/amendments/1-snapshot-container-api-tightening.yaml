@@ -1,0 +1,14 @@
+id: 1
+name: Snapshot container API tightening
+description: 'Replaces three unreachable!() calls in SnapshotBuilder::finish with a real Result return that surfaces PlanError::PayloadOverflow, the only failure that can reach finish after add_section* invariants are enforced. Splits header-only inspection out into a distinct HeaderOnlySnapshot type (with bytes()/format_major()/format_minor() but no section table), removing the misleading ValidationLevel::Header variant that used to leave a Snapshot reporting section_count() == 0 over an unvalidated table. Also adds a # Panics doc to u64_to_usize_validated documenting why the unreachable!() branch is dead on supported targets. Public API change: ValidationLevel now has only SectionTable and Layout; HeaderOnlySnapshot is a new public type. Rust API only — wire format unchanged.'
+targets:
+  shape_ids:
+  - 7
+status: proposed
+version_impact: major
+intent:
+  kind: amendment
+  summary: finish() → Result<Vec<u8>, PlanError>; HeaderOnlySnapshot typestate replaces ValidationLevel::Header
+  source: ai
+initiated_by:
+  type: human

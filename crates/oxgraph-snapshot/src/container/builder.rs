@@ -31,14 +31,16 @@ struct OwnedSection {
 /// Owning snapshot builder that produces a `Vec<u8>` on finish.
 ///
 /// The builder rejects duplicate kinds, alignment overflows, and section
-/// count overflows at insertion time so [`SnapshotBuilder::finish`] cannot
-/// fail.
+/// count overflows at `add_section*` time, so the only failure that can
+/// reach [`SnapshotBuilder::finish`] is [`PlanError::PayloadOverflow`] —
+/// when the cumulative encoded length would overflow `u64` or `usize`.
 ///
 /// # Performance
 ///
 /// `add_section*` methods are `O(s)` for the in-progress section count.
 /// [`finish`](Self::finish) is `O(s + total payload bytes)`.
 #[derive(Clone, Debug, Default)]
+#[must_use]
 pub struct SnapshotBuilder {
     /// Owned, in-order sections.
     sections: Vec<OwnedSection>,
@@ -50,7 +52,6 @@ impl SnapshotBuilder {
     /// # Performance
     ///
     /// This function is `O(1)`.
-    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -146,11 +147,22 @@ impl SnapshotBuilder {
 
     /// Encodes the pending sections into an owned snapshot byte vector.
     ///
+    /// The builder enforces per-insert invariants
+    /// ([`PlanError::AlignmentTooLarge`], [`PlanError::TooManySections`],
+    /// [`PlanError::DuplicateKind`]) on `add_section*`, so this method
+    /// only fails when the cumulative payload arithmetic overflows
+    /// (`u64`/`usize`), surfaced as [`PlanError::PayloadOverflow`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PlanError::PayloadOverflow`] when the total encoded length
+    /// would overflow `u64` or `usize`. All other [`PlanError`] variants
+    /// are caught at `add_section*` time and cannot reach this method.
+    ///
     /// # Performance
     ///
     /// This method is `O(s + total payload bytes)`.
-    #[must_use]
-    pub fn finish(self) -> Vec<u8> {
+    pub fn finish(self) -> Result<Vec<u8>, PlanError> {
         let pending: Vec<PendingSection<'_>> = self
             .sections
             .iter()
@@ -162,18 +174,10 @@ impl SnapshotBuilder {
             })
             .collect();
 
-        let plan = match SnapshotPlan::new(&pending) {
-            Ok(value) => value,
-            Err(_error) => unreachable!("builder enforced plan invariants on insert"),
-        };
-        let needed = match plan.encoded_len() {
-            Ok(value) => value,
-            Err(_error) => unreachable!("builder enforced plan invariants on insert"),
-        };
+        let plan = SnapshotPlan::new(&pending)?;
+        let needed = plan.encoded_len()?;
         let mut out = vec![0u8; needed];
-        match plan.write_into(&mut out) {
-            Ok(_written) => out,
-            Err(_error) => unreachable!("buffer is sized exactly to encoded_len"),
-        }
+        plan.write_into(&mut out)?;
+        Ok(out)
     }
 }

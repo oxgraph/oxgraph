@@ -748,7 +748,10 @@ fn valid_snapshot_bytes() -> Vec<u8> {
     ) {
         panic!("targets section: {error:?}");
     }
-    builder.finish()
+    match builder.finish() {
+        Ok(bytes) => bytes,
+        Err(error) => panic!("test builder finish: {error:?}"),
+    }
 }
 
 // ============================================================================
@@ -868,7 +871,10 @@ fn bcsr_snapshot_bytes() -> Vec<u8> {
         vertex_incoming_hyperedges,
     );
 
-    builder.finish()
+    match builder.finish() {
+        Ok(bytes) => bytes,
+        Err(error) => panic!("test builder finish: {error:?}"),
+    }
 }
 
 /// Opens a BCSR hypergraph from bytes produced by [`bcsr_snapshot_bytes`].
@@ -1079,4 +1085,133 @@ proptest! {
             seen[index] = true;
         }
     }
+
+    /// BFS distances are non-decreasing in visit order (layer monotonicity).
+    ///
+    /// If the BFS yields nodes in order `[v_0, v_1, ..., v_k]`, then for every
+    /// adjacent pair the distance from the source is non-decreasing:
+    /// `dist(v_i) <= dist(v_{i+1})`. Distances are computed by a reference
+    /// BFS that uses the same forward expansion (`element_successors`) as the
+    /// algorithms under test.
+    #[test]
+    fn bfs_visit_order_is_layer_monotone(
+        degrees in proptest::collection::vec(0u32..4, 1..16),
+        target_seed in proptest::collection::vec(0u32..64, 0..64),
+    ) {
+        let (offsets, targets, node_count) = build_csr_arrays(&degrees, &target_seed);
+        let graph = match CsrGraph::validate(node_count, &offsets, &targets) {
+            Ok(value) => value,
+            Err(error) => return Err(TestCaseError::fail(format!("valid CSR rejected: {error:?}"))),
+        };
+        let order = match scratch_order(&graph, CsrNodeId(0)) {
+            Ok(value) => value,
+            Err(error) => return Err(TestCaseError::fail(format!("scratch BFS failed: {error:?}"))),
+        };
+        let distances = reference_bfs_distances(&graph, CsrNodeId(0));
+        for window in order.windows(2) {
+            let prev_index = graph.element_index(window[0]);
+            let next_index = graph.element_index(window[1]);
+            let prev_dist = distances[prev_index];
+            let next_dist = distances[next_index];
+            prop_assert!(
+                prev_dist <= next_dist,
+                "layer monotonicity violated: dist({:?})={} > dist({:?})={}",
+                window[0], prev_dist, window[1], next_dist,
+            );
+        }
+    }
+
+    /// BFS visits exactly the reachability set, no more and no fewer.
+    ///
+    /// The set of nodes BFS yields equals the set of nodes reachable from
+    /// the source under forward expansion. A reference BFS that computes
+    /// the reachability set independently is used as ground truth.
+    #[test]
+    fn bfs_visits_exactly_the_reachable_set(
+        degrees in proptest::collection::vec(0u32..4, 1..16),
+        target_seed in proptest::collection::vec(0u32..64, 0..64),
+    ) {
+        let (offsets, targets, node_count) = build_csr_arrays(&degrees, &target_seed);
+        let graph = match CsrGraph::validate(node_count, &offsets, &targets) {
+            Ok(value) => value,
+            Err(error) => return Err(TestCaseError::fail(format!("valid CSR rejected: {error:?}"))),
+        };
+        let order = match scratch_order(&graph, CsrNodeId(0)) {
+            Ok(value) => value,
+            Err(error) => return Err(TestCaseError::fail(format!("scratch BFS failed: {error:?}"))),
+        };
+        let reachable = reference_reachable_set(&graph, CsrNodeId(0));
+        let visited: std::collections::BTreeSet<usize> =
+            order.iter().map(|node| graph.element_index(*node)).collect();
+        prop_assert_eq!(visited, reachable);
+    }
+}
+
+/// Builds CSR offset and target arrays from generated degree and target seeds,
+/// mirroring the construction used by the variant-equivalence proptest above.
+/// Returns `(offsets, targets, node_count)`. The caller owns the storage and
+/// can pass it through `CsrGraph::validate` whose result borrows from it.
+fn build_csr_arrays(degrees: &[u32], target_seed: &[u32]) -> (Vec<u32>, Vec<u32>, u32) {
+    let node_count = u32::try_from(degrees.len()).unwrap_or(0);
+    let mut offsets = Vec::with_capacity(degrees.len() + 1);
+    offsets.push(0);
+    let mut total = 0u32;
+    for degree in degrees {
+        total += *degree;
+        offsets.push(total);
+    }
+    let edge_count = usize::try_from(total).unwrap_or(0);
+    let mut targets = Vec::with_capacity(edge_count);
+    for index in 0..edge_count {
+        let seed = target_seed.get(index).copied().unwrap_or(0);
+        targets.push(seed % node_count.max(1));
+    }
+    (offsets, targets, node_count)
+}
+
+/// Reference BFS that records distance from `source` for each reachable node,
+/// using the same forward expansion (`element_successors`) as the algorithms
+/// under test. Unreachable nodes are recorded as `usize::MAX` so callers can
+/// detect them.
+fn reference_bfs_distances<G>(graph: &G, source: ElementId<G>) -> Vec<usize>
+where
+    G: TopologyBase + ElementIndex + ElementSuccessors,
+    ElementId<G>: Copy,
+{
+    let mut distances = vec![usize::MAX; graph.element_bound()];
+    let mut queue = std::collections::VecDeque::new();
+    distances[graph.element_index(source)] = 0;
+    queue.push_back(source);
+    while let Some(node) = queue.pop_front() {
+        let dist_here = distances[graph.element_index(node)];
+        for next in graph.element_successors(node) {
+            let next_index = graph.element_index(next);
+            if distances[next_index] == usize::MAX {
+                distances[next_index] = dist_here + 1;
+                queue.push_back(next);
+            }
+        }
+    }
+    distances
+}
+
+/// Reference reachability set computed by a parent-free flood-fill using the
+/// same forward expansion as the algorithms under test.
+fn reference_reachable_set<G>(graph: &G, source: ElementId<G>) -> std::collections::BTreeSet<usize>
+where
+    G: TopologyBase + ElementIndex + ElementSuccessors,
+    ElementId<G>: Copy,
+{
+    let mut reached = std::collections::BTreeSet::new();
+    let mut stack = vec![source];
+    reached.insert(graph.element_index(source));
+    while let Some(node) = stack.pop() {
+        for next in graph.element_successors(node) {
+            let next_index = graph.element_index(next);
+            if reached.insert(next_index) {
+                stack.push(next);
+            }
+        }
+    }
+    reached
 }

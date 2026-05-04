@@ -1,10 +1,15 @@
 //! Criterion benches for the topology-agnostic snapshot container.
 //!
-//! Defends three perf contracts:
-//! - `Snapshot::open` validation cost is `O(s)` per section (with the per-pair duplicate-kind check
-//!   measured separately by section count).
-//! - `Snapshot::section` linear scan cost is `O(s)` per lookup.
-//! - `SnapshotBuilder::finish` is `O(s + total payload bytes)`.
+//! Defends three perf contracts (the corresponding doc claims live next to each item):
+//! - `Snapshot::open` at `ValidationLevel::Layout` is `O(s^2)` in the section count, dominated by
+//!   the duplicate-kind walk (see [`Snapshot::open_with`](oxgraph_snapshot::Snapshot::open_with)
+//!   doc). The bench parameterises across `s ∈ {1, 16, 256, 1024 = MAX_SECTION_COUNT}` and uses
+//!   `Throughput::Elements(s)` so a contract regression shows up as a sub-linear elements/sec curve
+//!   rather than a hidden constant-factor blowup.
+//! - `Snapshot::section` linear scan cost is `O(s)` per lookup; benched at the worst case (last
+//!   kind, forcing the full table walk).
+//! - `SnapshotBuilder::finish` is `O(s + total payload bytes)`; benched with payload size held
+//!   constant so the bytes-per-second number tracks the linear-in-bytes term directly.
 
 use std::hint::black_box;
 
@@ -26,7 +31,10 @@ fn build_snapshot(count: u32, bytes_per_section: usize) -> Vec<u8> {
             Err(error) => panic!("bench builder: {error:?}"),
         }
     }
-    builder.finish()
+    match builder.finish() {
+        Ok(bytes) => bytes,
+        Err(error) => panic!("bench builder finish: {error:?}"),
+    }
 }
 
 /// Benchmarks `Snapshot::open` across a range of section counts to

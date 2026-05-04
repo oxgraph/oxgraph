@@ -1,0 +1,14 @@
+id: 5
+name: BFS proptest expansion
+description: 'Adds two proptests to crates/oxgraph-algo/tests/bfs.rs. bfs_visit_order_is_layer_monotone: for any valid CsrGraph fixture, the BFS visit order yields nodes whose distances from the source are non-decreasing in adjacent positions (dist(v_i) <= dist(v_{i+1})), with distances computed by an in-test reference BFS that uses the same forward expansion. bfs_visits_exactly_the_reachable_set: the set of nodes BFS yields equals the reachability set computed by a parent-free flood-fill reference. Together these defend two correctness properties of the substrate-agnostic BFS that are not derivable from the existing variant-equivalence proptest. Adds three test-only helpers (build_csr_arrays, reference_bfs_distances, reference_reachable_set).'
+targets:
+  shape_ids:
+  - 10
+status: proposed
+version_impact: patch
+intent:
+  kind: amendment
+  summary: Adds layer-monotonicity and exact-reachability proptests over CsrGraph fixtures
+  source: ai
+initiated_by:
+  type: human

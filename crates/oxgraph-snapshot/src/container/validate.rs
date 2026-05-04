@@ -7,11 +7,14 @@ use super::{
 
 /// Validation depth applied at snapshot open time.
 ///
-/// Validation responsibilities are layered:
-/// - [`Header`](Self::Header) checks magic, format major and minor, header size, and header
-///   reserved bytes only.
-/// - [`SectionTable`](Self::SectionTable) additionally parses the section table and per-entry
-///   self-consistency (alignment bound, reserved bytes zero, flags zero).
+/// Validation responsibilities are layered. Header-only validation is not a
+/// member of this enum; callers wanting it should use
+/// [`HeaderOnlySnapshot::open`](crate::HeaderOnlySnapshot::open) instead, so
+/// the type system distinguishes a section-bearing handle from one whose
+/// section table has not been validated.
+///
+/// - [`SectionTable`](Self::SectionTable) parses the section table and per-entry self-consistency
+///   (alignment bound, reserved bytes zero, flags zero).
 /// - [`Layout`](Self::Layout) is the default; it adds payload bounds, monotonic-offset enforcement,
 ///   and duplicate-kind detection.
 ///
@@ -25,8 +28,6 @@ use super::{
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ValidationLevel {
-    /// Validate header fields only.
-    Header,
     /// Validate header and section table self-consistency.
     SectionTable,
     /// Validate header, section table, and full payload layout.
@@ -52,10 +53,6 @@ pub(in crate::container) fn validate_section_table(
     entries: &[RawSectionEntry],
     level: ValidationLevel,
 ) -> Result<(), SnapshotError> {
-    if matches!(level, ValidationLevel::Header) {
-        return Ok(());
-    }
-
     for entry in entries {
         let kind = entry.kind.get();
         if entry.reserved_checksum != [0; 4] {

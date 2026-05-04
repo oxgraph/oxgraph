@@ -18,7 +18,10 @@ fn baseline_snapshot() -> Vec<u8> {
     let mut builder = SnapshotBuilder::new();
     add(&mut builder, 1, 0, 2, b"abcd");
     add(&mut builder, 2, 0, 0, b"xyz");
-    builder.finish()
+    match builder.finish() {
+        Ok(bytes) => bytes,
+        Err(error) => panic!("builder finish: {error:?}"),
+    }
 }
 
 /// Overwrites a little-endian `u32` at `offset` in `bytes`.

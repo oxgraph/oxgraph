@@ -110,7 +110,10 @@ fn build_snapshot(fixture: &Fixture) -> Vec<u8> {
             panic!("section 0x{kind:04x}: {error:?}");
         }
     }
-    builder.finish()
+    match builder.finish() {
+        Ok(bytes) => bytes,
+        Err(error) => panic!("builder finish: {error:?}"),
+    }
 }
 
 #[test]
@@ -163,7 +166,10 @@ fn rejects_missing_head_offsets_section() -> Result<(), FixtureError> {
             panic!("section 0x{kind:04x}: {error:?}");
         }
     }
-    let bytes = builder.finish();
+    let bytes = match builder.finish() {
+        Ok(value) => value,
+        Err(error) => panic!("builder finish: {error:?}"),
+    };
     let snapshot = Snapshot::open(&bytes)?;
     let result = BcsrHypergraph::from_snapshot(&snapshot);
     let Err(BcsrSnapshotError::MissingSection { section, kind }) = result else {

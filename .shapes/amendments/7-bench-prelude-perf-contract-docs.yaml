@@ -1,0 +1,14 @@
+id: 7
+name: Bench-prelude perf-contract docs
+description: Adds Defends-N-perf-contracts module-level docs to crates/oxgraph-algo/benches/bfs.rs, oxgraph-csr/benches/{csr,snapshot}.rs, oxgraph-hyper-bcsr/benches/{bcsr,snapshot}.rs, and oxgraph-snapshot/benches/container.rs. Each prelude names the public item being defended, restates its O(...) contract, and explains how the bench's fixture sizes and Throughput::Elements unit map to it so a contract regression shows up as a sub-linear elements/sec curve rather than a hidden constant-factor blowup. csr_validate's Throughput::Elements is set to (n + m) (= n + n*DEGREE) so the doc claim and the Criterion measurement agree.
+targets:
+  shape_ids:
+  - 15
+status: proposed
+version_impact: patch
+intent:
+  kind: amendment
+  summary: Six bench files now state which perf contract each bench defends and how the parameterisation maps to it
+  source: ai
+initiated_by:
+  type: human

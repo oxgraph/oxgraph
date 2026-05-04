@@ -59,7 +59,10 @@ fn main() -> Result<(), DemoError> {
     if let Err(error) = builder.add_section(SNAPSHOT_KIND_CSR_TARGETS, 0, 2, targets_bytes) {
         panic!("targets section: {error:?}");
     }
-    let bytes = builder.finish();
+    let bytes = match builder.finish() {
+        Ok(value) => value,
+        Err(error) => panic!("builder finish: {error:?}"),
+    };
     println!("encoded snapshot: {} bytes", bytes.len());
 
     let snapshot = Snapshot::open(&bytes)?;

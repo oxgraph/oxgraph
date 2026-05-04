@@ -1,8 +1,20 @@
 //! Benchmarks for bipartite-CSR validation and traversal.
 //!
 //! Each benchmark builds a deterministic regular bipartite hypergraph in
-//! which every hyperedge has the same head and tail size. Sizes are scale
-//! smoke tests, not final performance contracts.
+//! which every hyperedge has the same head and tail size.
+//!
+//! Defends three perf contracts (the corresponding doc claims live next to each item):
+//! - [`BcsrHypergraph::open`](oxgraph_hyper_bcsr::BcsrHypergraph::open) at default
+//!   [`BcsrValidation::Layout`] is `O(P)` for `P` total participants — benched at `V ∈ {1k, 16k,
+//!   256k}` with `FAN = 4`, so `P = 2 * V * FAN = 8V`, using `Throughput::Elements(P)`.
+//! - `open_with(BcsrValidation::Strict)` adds the cross-direction multiset check at `O(P log d)`
+//!   for max degree `d`; benched on the same fixture so the slowdown vs. Layout tracks the multiset
+//!   cost directly.
+//! - Hyperedge-side and vertex-side traversal entry points
+//!   ([`DirectedHyperedgeParticipants::source_participants`](oxgraph_hyper::DirectedHyperedgeParticipants::source_participants),
+//!   [`IncidentHyperedges::incident_hyperedges`](oxgraph_hyper::IncidentHyperedges::incident_hyperedges),
+//!   [`DirectedVertexSuccessors::successor_vertices`](oxgraph_hyper::DirectedVertexSuccessors::successor_vertices))
+//!   are each `O(k)` per call for `k` yielded items; total work per iteration is `O(P)`.
 
 use std::hint::black_box;
 
@@ -89,21 +101,26 @@ fn build_regular_hypergraph(vertex_count: u32) -> RegularSlices {
 }
 
 /// Fills `slices` with the hyperedge-major head and tail sections.
+///
+/// Each bucket is sorted before being pushed so the modular wrap at
+/// `h >= vertex_count - FAN` (head) and `h >= vertex_count - 2 * FAN`
+/// (tail) does not break the strictly-ascending invariant Layout
+/// validation enforces inside a hyperedge bucket.
 fn push_hyperedge_major(vertex_count: u32, slices: &mut RegularSlices) {
     slices.head_offsets.push(0);
     slices.tail_offsets.push(0);
     let mut head_total = 0_u32;
     let mut tail_total = 0_u32;
     for h in 0..vertex_count {
-        for i in 0..FAN {
-            slices.head_participants.push((h + i) % vertex_count);
-        }
+        let mut bucket: Vec<u32> = (0..FAN).map(|i| (h + i) % vertex_count).collect();
+        bucket.sort_unstable();
+        slices.head_participants.extend_from_slice(&bucket);
         head_total += FAN;
         slices.head_offsets.push(head_total);
 
-        for j in 0..FAN {
-            slices.tail_participants.push((h + FAN + j) % vertex_count);
-        }
+        let mut bucket: Vec<u32> = (0..FAN).map(|j| (h + FAN + j) % vertex_count).collect();
+        bucket.sort_unstable();
+        slices.tail_participants.extend_from_slice(&bucket);
         tail_total += FAN;
         slices.tail_offsets.push(tail_total);
     }

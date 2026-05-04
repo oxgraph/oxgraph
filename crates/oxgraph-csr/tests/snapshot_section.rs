@@ -58,7 +58,10 @@ fn build_csr_snapshot(offsets: &[u32], targets: &[u32]) -> Vec<u8> {
     {
         panic!("targets section: {error:?}");
     }
-    builder.finish()
+    match builder.finish() {
+        Ok(bytes) => bytes,
+        Err(error) => panic!("builder finish: {error:?}"),
+    }
 }
 
 #[test]
@@ -106,7 +109,10 @@ fn rejects_missing_offsets_section() -> Result<(), SnapshotError> {
     {
         panic!("targets-only: {error:?}");
     }
-    let bytes = builder.finish();
+    let bytes = match builder.finish() {
+        Ok(value) => value,
+        Err(error) => panic!("builder finish: {error:?}"),
+    };
     let snapshot = Snapshot::open(&bytes)?;
     match CsrGraph::from_snapshot(&snapshot) {
         Err(CsrSnapshotError::MissingOffsets) => Ok(()),

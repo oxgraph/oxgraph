@@ -826,3 +826,35 @@ pub trait Hypergraph: HyperedgeParticipants + IncidentHyperedges {}
 ///
 /// `perf: unspecified`; performance is inherited from the component traits.
 impl<T> Hypergraph for T where T: HyperedgeParticipants + IncidentHyperedges {}
+
+/// Convenience trait for directed hypergraph views with both traversal directions.
+///
+/// This trait has no methods of its own. It names the common capability bundle
+/// for generic directed-hypergraph code that needs hyperedge-side traversal
+/// ([`Hypergraph`]), source/target participant separation
+/// ([`DirectedHyperedgeParticipants`]), and bidirectional vertex-to-vertex
+/// traversal ([`DirectedVertexSuccessors`] + [`DirectedVertexPredecessors`]).
+///
+/// # Performance
+///
+/// `perf: unspecified`; performance is inherited from the component traits.
+pub trait DirectedHypergraph:
+    Hypergraph + DirectedHyperedgeParticipants + DirectedVertexSuccessors + DirectedVertexPredecessors
+{
+}
+
+/// Blanket implementation for complete directed hypergraph views.
+///
+/// Any view that satisfies the four component traits automatically implements
+/// [`DirectedHypergraph`].
+///
+/// # Performance
+///
+/// `perf: unspecified`; performance is inherited from the component traits.
+impl<T> DirectedHypergraph for T where
+    T: Hypergraph
+        + DirectedHyperedgeParticipants
+        + DirectedVertexSuccessors
+        + DirectedVertexPredecessors
+{
+}

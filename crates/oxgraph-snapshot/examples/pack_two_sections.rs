@@ -20,7 +20,10 @@ fn main() -> Result<(), SnapshotError> {
     if let Err(error) = builder.add_section(0x0101, 0, 0, bytes_payload) {
         panic!("byte section: {error:?}");
     }
-    let snapshot_bytes = builder.finish();
+    let snapshot_bytes = match builder.finish() {
+        Ok(value) => value,
+        Err(error) => panic!("builder finish: {error:?}"),
+    };
     println!("encoded snapshot: {} bytes", snapshot_bytes.len());
 
     let snapshot = Snapshot::open(&snapshot_bytes)?;

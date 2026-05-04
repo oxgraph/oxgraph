@@ -1,4 +1,13 @@
 //! Benchmarks for CSR validation and outgoing traversal.
+//!
+//! Defends two perf contracts (the corresponding doc claims live next to each item):
+//! - [`CsrGraph::validate`](oxgraph_csr::CsrGraph::validate) is `O(n + m)` for `n` nodes and `m`
+//!   edges — benched at `n ∈ {10k, 100k, 1M}` with fixed degree (so `m = 8 * n`) using
+//!   `Throughput::Elements(n + m)` so a contract regression shows up as a sub-linear elements/sec
+//!   curve rather than a hidden constant-factor blowup.
+//! - Outgoing traversal via `OutgoingGraph::outgoing_edges` + `EdgeTargetGraph::target` is `O(k)`
+//!   per source for `k` outgoing edges — benched on the same regular fixture; total work per bench
+//!   iteration is `O(n * k) = O(m)`.
 
 use std::hint::black_box;
 
@@ -55,7 +64,11 @@ fn bench_validate(c: &mut Criterion) {
     let mut group = c.benchmark_group("csr_validate");
     for node_count in NODE_COUNTS {
         let (offsets, targets) = build_regular_csr(*node_count, DEGREE);
-        group.throughput(Throughput::Elements(u64::from(*node_count)));
+        // Throughput unit is `n + m` (nodes + edges) so the elements/sec
+        // curve tracks the stated `O(n + m)` validation contract directly.
+        group.throughput(Throughput::Elements(
+            u64::from(*node_count) + u64::from(*node_count) * u64::from(DEGREE),
+        ));
         group.bench_with_input(
             BenchmarkId::from_parameter(node_count),
             node_count,

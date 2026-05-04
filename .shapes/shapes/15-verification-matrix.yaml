@@ -73,3 +73,6 @@ realization:
         metadata:
           summary: Criterion bench for BFS storage tiers over CSR-backed graph shapes.
     role: primary
+
+amendment_log:
+  - 7

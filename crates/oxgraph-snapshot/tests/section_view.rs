@@ -16,7 +16,10 @@ fn try_as_slice_succeeds_when_aligned() -> Result<(), SnapshotError> {
     if let Err(error) = builder.add_section_typed(1, 0, &payload) {
         panic!("typed section: {error:?}");
     }
-    let bytes = builder.finish();
+    let bytes = match builder.finish() {
+        Ok(value) => value,
+        Err(error) => panic!("builder finish: {error:?}"),
+    };
 
     let snapshot = Snapshot::open(&bytes)?;
     let Some(section) = snapshot.section(1) else {
@@ -82,7 +85,10 @@ fn try_as_slice_rejects_misaligned_length() -> Result<(), SnapshotError> {
     if let Err(error) = builder.add_section(1, 0, 0, payload.to_vec()) {
         panic!("byte section: {error:?}");
     }
-    let bytes = builder.finish();
+    let bytes = match builder.finish() {
+        Ok(value) => value,
+        Err(error) => panic!("builder finish: {error:?}"),
+    };
 
     let snapshot = Snapshot::open(&bytes)?;
     let Some(section) = snapshot.section(1) else {

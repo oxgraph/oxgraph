@@ -93,7 +93,10 @@ fn main() -> Result<(), DemoError> {
             panic!("section 0x{kind:04x}: {error:?}");
         }
     }
-    let bytes = builder.finish();
+    let bytes = match builder.finish() {
+        Ok(value) => value,
+        Err(error) => panic!("builder finish: {error:?}"),
+    };
     println!("encoded snapshot: {} bytes", bytes.len());
 
     let snapshot = Snapshot::open(&bytes)?;

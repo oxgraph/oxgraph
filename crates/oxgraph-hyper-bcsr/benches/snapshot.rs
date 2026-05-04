@@ -3,6 +3,12 @@
 //! Builds an in-memory snapshot from the same regular bipartite-CSR fixture
 //! used by `benches/bcsr.rs`, then measures `Snapshot::open` +
 //! `BcsrHypergraph::from_snapshot` + traversal as one combined cost.
+//!
+//! Defends one perf contract:
+//! - Snapshot open + `BcsrHypergraph::from_snapshot` + vertex-successor traversal is `O(P)` for `P`
+//!   total participants on the regular fixture (with `FAN` fixed and `V` swept, `P = 2 * V * FAN`).
+//!   A regression in any sub-step (snapshot validation, BCSR validation, or traversal) shows up as
+//!   a sub-linear curve under `Throughput::Elements(P)`.
 
 use std::hint::black_box;
 
@@ -79,14 +85,18 @@ fn build_section_words(vertex_count: u32) -> SectionWords {
     let mut head_total = 0_u32;
     let mut tail_total = 0_u32;
     for h in 0..vertex_count {
-        for i in 0..FAN {
-            words.head_participants.push((h + i) % vertex_count);
-        }
+        // Sort each bucket so the modular wrap at high `h` does not break the
+        // strictly-ascending invariant Layout validation enforces inside a
+        // hyperedge bucket.
+        let mut bucket: Vec<u32> = (0..FAN).map(|i| (h + i) % vertex_count).collect();
+        bucket.sort_unstable();
+        words.head_participants.extend_from_slice(&bucket);
         head_total += FAN;
         words.head_offsets.push(head_total);
-        for j in 0..FAN {
-            words.tail_participants.push((h + FAN + j) % vertex_count);
-        }
+
+        let mut bucket: Vec<u32> = (0..FAN).map(|j| (h + FAN + j) % vertex_count).collect();
+        bucket.sort_unstable();
+        words.tail_participants.extend_from_slice(&bucket);
         tail_total += FAN;
         words.tail_offsets.push(tail_total);
     }
@@ -153,7 +163,10 @@ fn encode_snapshot(words: &SectionWords) -> Vec<u8> {
             panic!("section 0x{kind:04x}: {error:?}");
         }
     }
-    builder.finish()
+    match builder.finish() {
+        Ok(bytes) => bytes,
+        Err(error) => panic!("bench builder finish: {error:?}"),
+    }
 }
 
 /// Walks every vertex's successor expansion and returns a checksum.

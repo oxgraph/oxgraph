@@ -22,7 +22,10 @@ fn build_once(sections: &[(u32, u32, u8, Vec<u8>)]) -> Vec<u8> {
             Err(error) => panic!("builder rejected validated section: {error:?}"),
         }
     }
-    builder.finish()
+    match builder.finish() {
+        Ok(bytes) => bytes,
+        Err(error) => panic!("builder finish failed on validated input: {error:?}"),
+    }
 }
 
 proptest! {
