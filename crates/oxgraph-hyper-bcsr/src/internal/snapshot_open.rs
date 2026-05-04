@@ -57,7 +57,7 @@ impl<'view> BcsrHypergraph<'view, U32<LE>> {
         level: BcsrValidation,
     ) -> Result<Self, BcsrSnapshotError> {
         let sections = load_sections(snapshot)?;
-        Self::open_with(sections, level).map_err(BcsrSnapshotError::Validation)
+        Ok(Self::open_with(sections, level)?)
     }
 }
 

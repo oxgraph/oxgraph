@@ -434,3 +434,9 @@ impl fmt::Display for BcsrSnapshotError {
 }
 
 impl core::error::Error for BcsrSnapshotError {}
+
+impl From<BcsrError> for BcsrSnapshotError {
+    fn from(error: BcsrError) -> Self {
+        Self::Validation(error)
+    }
+}

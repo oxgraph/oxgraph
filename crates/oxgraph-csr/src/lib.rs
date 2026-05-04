@@ -319,7 +319,7 @@ impl<'view> CsrGraph<'view, U32<LE>> {
             }
         })?;
 
-        Self::validate(node_count, offsets, targets).map_err(CsrSnapshotError::Csr)
+        Ok(Self::validate(node_count, offsets, targets)?)
     }
 }
 
@@ -664,6 +664,12 @@ impl fmt::Display for CsrSnapshotError {
 }
 
 impl core::error::Error for CsrSnapshotError {}
+
+impl From<CsrError> for CsrSnapshotError {
+    fn from(error: CsrError) -> Self {
+        Self::Csr(error)
+    }
+}
 
 /// Converts a `u32` to `usize` and reports overflow on narrow targets.
 ///
