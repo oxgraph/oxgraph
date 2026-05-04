@@ -66,8 +66,7 @@ pub use crate::{
     internal::{
         BcsrChainedHyperedges, BcsrChainedParticipants, BcsrChainedRelationIncidences,
         BcsrElementIncidences, BcsrHyperedgeSlice, BcsrHypergraph, BcsrParticipantSlice,
-        BcsrPredecessorVertices, BcsrRelationIncidencesSide, BcsrSuccessorVertices, BcsrValidation,
-        BcsrVertexSlice,
+        BcsrPredecessorVertices, BcsrSuccessorVertices, BcsrValidation, BcsrVertexSlice,
     },
     role::BcsrRole,
     sections::BcsrSections,

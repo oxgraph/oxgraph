@@ -155,22 +155,6 @@ impl BcsrParticipantSlice {
     }
 }
 
-/// Side of the bipartite incidence space a participant slice walks.
-///
-/// Used internally to discriminate head and tail iterators when both yield
-/// `BcsrParticipantId`.
-///
-/// # Performance
-///
-/// `perf: unspecified`; this is a metadata enum.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum BcsrRelationIncidencesSide {
-    /// Head incidences, IDs in `[0, P_head)`.
-    Head,
-    /// Tail incidences, IDs in `[P_head, P_head + P_tail)`.
-    Tail,
-}
-
 impl Iterator for BcsrParticipantSlice {
     type Item = BcsrParticipantId;
 

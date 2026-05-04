@@ -14,7 +14,7 @@ pub use self::{
     iter::{
         BcsrChainedHyperedges, BcsrChainedParticipants, BcsrChainedRelationIncidences,
         BcsrElementIncidences, BcsrHyperedgeSlice, BcsrParticipantSlice, BcsrPredecessorVertices,
-        BcsrRelationIncidencesSide, BcsrSuccessorVertices, BcsrVertexSlice,
+        BcsrSuccessorVertices, BcsrVertexSlice,
     },
     validation::BcsrValidation,
     view::BcsrHypergraph,
