@@ -21,7 +21,7 @@ use oxgraph_algo::{
 #[cfg(feature = "std")]
 use oxgraph_algo::{breadth_first_search_generic_hash, reverse_breadth_first_search_generic_hash};
 use oxgraph_csr::{
-    CsrError, CsrGraph, CsrNodeId, CsrSnapshotError, SNAPSHOT_KIND_CSR_OFFSETS,
+    CsrError, CsrGraph, CsrNodeId, CsrSnapshotError, CsrSnapshotGraph, SNAPSHOT_KIND_CSR_OFFSETS,
     SNAPSHOT_KIND_CSR_TARGETS,
 };
 use oxgraph_hyper_bcsr::{
@@ -44,7 +44,7 @@ enum SnapshotFixtureError {
     /// Snapshot validation failed.
     Snapshot(SnapshotError),
     /// CSR snapshot adaptor failed.
-    Adaptor(CsrSnapshotError),
+    Adaptor(CsrSnapshotError<u32>),
     /// BFS construction failed.
     Bfs(BfsError),
 }
@@ -55,8 +55,8 @@ impl From<SnapshotError> for SnapshotFixtureError {
     }
 }
 
-impl From<CsrSnapshotError> for SnapshotFixtureError {
-    fn from(error: CsrSnapshotError) -> Self {
+impl From<CsrSnapshotError<u32>> for SnapshotFixtureError {
+    fn from(error: CsrSnapshotError<u32>) -> Self {
         Self::Adaptor(error)
     }
 }
@@ -653,7 +653,7 @@ fn workspace_shares_between_forward_and_reverse() {
 }
 
 #[test]
-fn bfs_runs_over_csr_graph() -> Result<(), CsrError> {
+fn bfs_runs_over_csr_graph() -> Result<(), CsrError<u32>> {
     static OFFSETS: &[u32] = &[0, 2, 3, 4, 4];
     static TARGETS: &[u32] = &[1, 2, 3, 3];
 
@@ -673,7 +673,7 @@ fn bfs_runs_over_csr_graph() -> Result<(), CsrError> {
 
 #[cfg(feature = "alloc")]
 #[test]
-fn allocating_bfs_runs_over_csr_graph() -> Result<(), CsrError> {
+fn allocating_bfs_runs_over_csr_graph() -> Result<(), CsrError<u32>> {
     static OFFSETS: &[u32] = &[0, 2, 3, 4, 4];
     static TARGETS: &[u32] = &[1, 2, 3, 3];
 
@@ -693,7 +693,7 @@ fn allocating_bfs_runs_over_csr_graph() -> Result<(), CsrError> {
 
 #[cfg(feature = "std")]
 #[test]
-fn hash_bfs_runs_over_csr_graph() -> Result<(), CsrError> {
+fn hash_bfs_runs_over_csr_graph() -> Result<(), CsrError<u32>> {
     static OFFSETS: &[u32] = &[0, 2, 3, 4, 4];
     static TARGETS: &[u32] = &[1, 2, 3, 3];
 
@@ -718,9 +718,9 @@ fn default_bfs_runs_over_snapshot_sections() {
 }
 
 /// Runs scratch-backed BFS on a CSR graph opened from snapshot fixture bytes.
-fn snapshot_csr_order(bytes: &[u8]) -> Result<Vec<CsrNodeId>, SnapshotFixtureError> {
+fn snapshot_csr_order(bytes: &[u8]) -> Result<Vec<CsrNodeId<u32>>, SnapshotFixtureError> {
     let snapshot = Snapshot::open(bytes)?;
-    let graph = CsrGraph::from_snapshot(&snapshot)?;
+    let graph = CsrSnapshotGraph::<u32>::from_snapshot(&snapshot)?;
     scratch_order(&graph, CsrNodeId(0)).map_err(SnapshotFixtureError::Bfs)
 }
 

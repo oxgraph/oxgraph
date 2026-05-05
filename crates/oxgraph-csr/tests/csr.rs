@@ -6,10 +6,10 @@ use oxgraph_graph::{
     OutgoingNeighborsGraph, RelationIndex,
 };
 use proptest::prelude::*;
-use zerocopy::byteorder::{LE, U32};
+use zerocopy::byteorder::{LE, U16, U32, U64, Usize};
 
 /// Returns a valid graph shaped like `0 -> {1, 2}`, `1 -> {2}`, `2 -> {3}`.
-fn fixture() -> Result<CsrGraph<'static>, CsrError> {
+fn fixture() -> Result<CsrGraph<'static, u32, u32>, CsrError<u32>> {
     static OFFSETS: &[u32] = &[0, 2, 3, 4, 4];
     static TARGETS: &[u32] = &[1, 2, 2, 3];
 
@@ -17,7 +17,7 @@ fn fixture() -> Result<CsrGraph<'static>, CsrError> {
 }
 
 #[test]
-fn valid_csr_traverses_outgoing_edges() -> Result<(), CsrError> {
+fn valid_csr_traverses_outgoing_edges() -> Result<(), CsrError<u32>> {
     let graph = fixture()?;
 
     assert_eq!(graph.node_count(), 4);
@@ -33,7 +33,7 @@ fn valid_csr_traverses_outgoing_edges() -> Result<(), CsrError> {
 }
 
 #[test]
-fn valid_csr_traverses_outgoing_neighbors_directly() -> Result<(), CsrError> {
+fn valid_csr_traverses_outgoing_neighbors_directly() -> Result<(), CsrError<u32>> {
     let graph = fixture()?;
 
     assert_eq!(
@@ -49,7 +49,7 @@ fn valid_csr_traverses_outgoing_neighbors_directly() -> Result<(), CsrError> {
 }
 
 #[test]
-fn csr_exposes_dense_element_and_relation_indexes() -> Result<(), CsrError> {
+fn csr_exposes_dense_element_and_relation_indexes() -> Result<(), CsrError<u32>> {
     let graph = fixture()?;
 
     assert_eq!(graph.element_bound(), graph.node_count());
@@ -61,7 +61,7 @@ fn csr_exposes_dense_element_and_relation_indexes() -> Result<(), CsrError> {
 }
 
 #[test]
-fn csr_reports_node_and_edge_containment() -> Result<(), CsrError> {
+fn csr_reports_node_and_edge_containment() -> Result<(), CsrError<u32>> {
     let graph = fixture()?;
 
     assert!(graph.contains_node(CsrNodeId(3)));
@@ -75,7 +75,7 @@ fn csr_reports_node_and_edge_containment() -> Result<(), CsrError> {
 }
 
 #[test]
-fn empty_csr_graph_is_valid() -> Result<(), CsrError> {
+fn empty_csr_graph_is_valid() -> Result<(), CsrError<u32>> {
     static OFFSETS: &[u32] = &[0];
     static TARGETS: &[u32] = &[];
 
@@ -90,7 +90,7 @@ fn empty_csr_graph_is_valid() -> Result<(), CsrError> {
 }
 
 #[test]
-fn csr_supports_isolated_nodes_self_loops_and_parallel_edges() -> Result<(), CsrError> {
+fn csr_supports_isolated_nodes_self_loops_and_parallel_edges() -> Result<(), CsrError<u32>> {
     static OFFSETS: &[u32] = &[0, 3, 3, 4];
     static TARGETS: &[u32] = &[0, 1, 1, 2];
 
@@ -109,7 +109,7 @@ fn csr_supports_isolated_nodes_self_loops_and_parallel_edges() -> Result<(), Csr
 }
 
 #[test]
-fn outgoing_iterator_reports_exact_remaining_length() -> Result<(), CsrError> {
+fn outgoing_iterator_reports_exact_remaining_length() -> Result<(), CsrError<u32>> {
     let graph = fixture()?;
     let mut edges = graph.outgoing_edges(CsrNodeId(0));
 
@@ -124,7 +124,7 @@ fn outgoing_iterator_reports_exact_remaining_length() -> Result<(), CsrError> {
 }
 
 #[test]
-fn outgoing_neighbor_iterator_reports_exact_remaining_length() -> Result<(), CsrError> {
+fn outgoing_neighbor_iterator_reports_exact_remaining_length() -> Result<(), CsrError<u32>> {
     let graph = fixture()?;
     let mut neighbors = graph.outgoing_neighbors(CsrNodeId(0));
 
@@ -139,7 +139,70 @@ fn outgoing_neighbor_iterator_reports_exact_remaining_length() -> Result<(), Csr
 }
 
 #[test]
-fn validates_zero_copy_little_endian_words() -> Result<(), CsrError> {
+fn validates_u16_index_graph() -> Result<(), CsrError<u16>> {
+    static OFFSETS: &[u16] = &[0, 2, 2];
+    static TARGETS: &[u16] = &[1, 0];
+
+    let graph = CsrGraph::validate(2u16, OFFSETS, TARGETS)?;
+
+    assert_eq!(graph.node_count(), 2);
+    assert_eq!(
+        graph.outgoing_edges(CsrNodeId(0u16)).collect::<Vec<_>>(),
+        [CsrEdgeId(0u16), CsrEdgeId(1u16)]
+    );
+    assert_eq!(graph.target(CsrEdgeId(0u16)), CsrNodeId(1u16));
+
+    Ok(())
+}
+
+#[test]
+fn validates_u64_index_graph() -> Result<(), CsrError<u64>> {
+    static OFFSETS: &[u64] = &[0, 1, 1];
+    static TARGETS: &[u64] = &[1];
+
+    let graph = CsrGraph::validate(2u64, OFFSETS, TARGETS)?;
+
+    assert_eq!(graph.node_count(), 2);
+    assert_eq!(graph.out_degree(CsrNodeId(0u64)), 1);
+    assert_eq!(graph.target(CsrEdgeId(0u64)), CsrNodeId(1u64));
+
+    Ok(())
+}
+
+#[test]
+fn validates_usize_index_graph() -> Result<(), CsrError<usize>> {
+    static OFFSETS: &[usize] = &[0, 1, 1];
+    static TARGETS: &[usize] = &[1];
+
+    let graph = CsrGraph::validate(2usize, OFFSETS, TARGETS)?;
+
+    assert_eq!(graph.node_count(), 2);
+    assert_eq!(graph.out_degree(CsrNodeId(0usize)), 1);
+    assert_eq!(graph.target(CsrEdgeId(0usize)), CsrNodeId(1usize));
+
+    Ok(())
+}
+
+#[test]
+fn validates_zero_copy_little_endian_u16_words() -> Result<(), CsrError<u16>> {
+    static OFFSETS: &[U16<LE>] = &[U16::new(0), U16::new(1), U16::new(1)];
+    static TARGETS: &[U16<LE>] = &[U16::new(1)];
+
+    let graph = CsrGraph::validate(2u16, OFFSETS, TARGETS)?;
+
+    assert_eq!(graph.target(CsrEdgeId(0u16)), CsrNodeId(1u16));
+    assert_eq!(
+        graph
+            .outgoing_neighbors(CsrNodeId(0u16))
+            .collect::<Vec<_>>(),
+        [CsrNodeId(1u16)]
+    );
+
+    Ok(())
+}
+
+#[test]
+fn validates_zero_copy_little_endian_u32_words() -> Result<(), CsrError<u32>> {
     static OFFSETS: &[U32<LE>] = &[U32::new(0), U32::new(1), U32::new(1)];
     static TARGETS: &[U32<LE>] = &[U32::new(1)];
 
@@ -149,6 +212,42 @@ fn validates_zero_copy_little_endian_words() -> Result<(), CsrError> {
     assert_eq!(
         graph.outgoing_neighbors(CsrNodeId(0)).collect::<Vec<_>>(),
         [CsrNodeId(1)]
+    );
+
+    Ok(())
+}
+
+#[test]
+fn validates_zero_copy_little_endian_u64_words() -> Result<(), CsrError<u64>> {
+    static OFFSETS: &[U64<LE>] = &[U64::new(0), U64::new(1), U64::new(1)];
+    static TARGETS: &[U64<LE>] = &[U64::new(1)];
+
+    let graph = CsrGraph::validate(2u64, OFFSETS, TARGETS)?;
+
+    assert_eq!(graph.target(CsrEdgeId(0u64)), CsrNodeId(1u64));
+    assert_eq!(
+        graph
+            .outgoing_neighbors(CsrNodeId(0u64))
+            .collect::<Vec<_>>(),
+        [CsrNodeId(1u64)]
+    );
+
+    Ok(())
+}
+
+#[test]
+fn validates_zero_copy_little_endian_usize_words() -> Result<(), CsrError<usize>> {
+    static OFFSETS: &[Usize<LE>] = &[Usize::new(0), Usize::new(1), Usize::new(1)];
+    static TARGETS: &[Usize<LE>] = &[Usize::new(1)];
+
+    let graph = CsrGraph::validate(2usize, OFFSETS, TARGETS)?;
+
+    assert_eq!(graph.target(CsrEdgeId(0usize)), CsrNodeId(1usize));
+    assert_eq!(
+        graph
+            .outgoing_neighbors(CsrNodeId(0usize))
+            .collect::<Vec<_>>(),
+        [CsrNodeId(1usize)]
     );
 
     Ok(())

@@ -8,7 +8,8 @@
 
 use oxgraph_algo::breadth_first_search;
 use oxgraph_csr::{
-    CsrGraph, CsrNodeId, CsrSnapshotError, SNAPSHOT_KIND_CSR_OFFSETS, SNAPSHOT_KIND_CSR_TARGETS,
+    CsrNodeId, CsrSnapshotError, CsrSnapshotGraph, SNAPSHOT_KIND_CSR_OFFSETS,
+    SNAPSHOT_KIND_CSR_TARGETS,
 };
 use oxgraph_graph::GraphCounts;
 use oxgraph_snapshot::{Snapshot, SnapshotBuilder, SnapshotError};
@@ -19,7 +20,7 @@ enum DemoError {
     /// Snapshot opening failed.
     Snapshot(SnapshotError),
     /// CSR adaptor failed.
-    Adaptor(CsrSnapshotError),
+    Adaptor(CsrSnapshotError<u32>),
 }
 
 impl From<SnapshotError> for DemoError {
@@ -28,8 +29,8 @@ impl From<SnapshotError> for DemoError {
     }
 }
 
-impl From<CsrSnapshotError> for DemoError {
-    fn from(error: CsrSnapshotError) -> Self {
+impl From<CsrSnapshotError<u32>> for DemoError {
+    fn from(error: CsrSnapshotError<u32>) -> Self {
         Self::Adaptor(error)
     }
 }
@@ -66,7 +67,7 @@ fn main() -> Result<(), DemoError> {
     println!("encoded snapshot: {} bytes", bytes.len());
 
     let snapshot = Snapshot::open(&bytes)?;
-    let graph = CsrGraph::from_snapshot(&snapshot)?;
+    let graph = CsrSnapshotGraph::<u32>::from_snapshot(&snapshot)?;
     println!(
         "graph: {} nodes, {} edges",
         graph.node_count(),

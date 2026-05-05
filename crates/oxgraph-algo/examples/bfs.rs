@@ -9,13 +9,13 @@ use oxgraph_csr::{CsrError, CsrGraph, CsrNodeId};
 #[derive(Debug)]
 enum ExampleError {
     /// CSR validation failed.
-    Csr(CsrError),
+    Csr(CsrError<u32>),
     /// BFS scratch validation failed.
     Bfs(BfsError),
 }
 
-impl From<CsrError> for ExampleError {
-    fn from(error: CsrError) -> Self {
+impl From<CsrError<u32>> for ExampleError {
+    fn from(error: CsrError<u32>) -> Self {
         Self::Csr(error)
     }
 }

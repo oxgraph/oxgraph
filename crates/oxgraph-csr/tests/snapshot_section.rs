@@ -2,7 +2,7 @@
 
 use oxgraph_algo::breadth_first_search;
 use oxgraph_csr::{
-    CsrError, CsrGraph, CsrNodeId, CsrSnapshotError, SNAPSHOT_KIND_CSR_OFFSETS,
+    CsrEdgeId, CsrError, CsrNodeId, CsrSnapshotError, CsrSnapshotGraph, SNAPSHOT_KIND_CSR_OFFSETS,
     SNAPSHOT_KIND_CSR_TARGETS,
 };
 use oxgraph_graph::{EdgeTargetGraph, GraphCounts, OutgoingGraph};
@@ -14,7 +14,7 @@ enum FixtureError {
     /// Snapshot container validation failed.
     Snapshot(SnapshotError),
     /// CSR snapshot adaptor failed.
-    Adaptor(CsrSnapshotError),
+    Adaptor(CsrSnapshotError<u32>),
 }
 
 impl From<SnapshotError> for FixtureError {
@@ -23,8 +23,8 @@ impl From<SnapshotError> for FixtureError {
     }
 }
 
-impl From<CsrSnapshotError> for FixtureError {
-    fn from(error: CsrSnapshotError) -> Self {
+impl From<CsrSnapshotError<u32>> for FixtureError {
+    fn from(error: CsrSnapshotError<u32>) -> Self {
         Self::Adaptor(error)
     }
 }
@@ -45,17 +45,28 @@ fn words_to_bytes(words: &[u32]) -> Vec<u8> {
     words.iter().flat_map(|word| word.to_le_bytes()).collect()
 }
 
-/// Builds a snapshot containing CSR offsets + targets sections.
-fn build_csr_snapshot(offsets: &[u32], targets: &[u32]) -> Vec<u8> {
+/// Encodes `[u16]` words as a little-endian byte vector.
+fn u16_words_to_bytes(words: &[u16]) -> Vec<u8> {
+    words.iter().flat_map(|word| word.to_le_bytes()).collect()
+}
+
+/// Encodes `[u64]` words as a little-endian byte vector.
+fn u64_words_to_bytes(words: &[u64]) -> Vec<u8> {
+    words.iter().flat_map(|word| word.to_le_bytes()).collect()
+}
+
+/// Encodes `[usize]` words as a little-endian byte vector.
+fn usize_words_to_bytes(words: &[usize]) -> Vec<u8> {
+    words.iter().flat_map(|word| word.to_le_bytes()).collect()
+}
+
+/// Builds a snapshot containing encoded CSR offsets + targets sections.
+fn build_csr_snapshot_from_bytes(offsets_bytes: Vec<u8>, targets_bytes: Vec<u8>) -> Vec<u8> {
     let mut builder = SnapshotBuilder::new();
-    if let Err(error) =
-        builder.add_section(SNAPSHOT_KIND_CSR_OFFSETS, 0, 2, words_to_bytes(offsets))
-    {
+    if let Err(error) = builder.add_section(SNAPSHOT_KIND_CSR_OFFSETS, 0, 0, offsets_bytes) {
         panic!("offsets section: {error:?}");
     }
-    if let Err(error) =
-        builder.add_section(SNAPSHOT_KIND_CSR_TARGETS, 0, 2, words_to_bytes(targets))
-    {
+    if let Err(error) = builder.add_section(SNAPSHOT_KIND_CSR_TARGETS, 0, 0, targets_bytes) {
         panic!("targets section: {error:?}");
     }
     match builder.finish() {
@@ -64,11 +75,16 @@ fn build_csr_snapshot(offsets: &[u32], targets: &[u32]) -> Vec<u8> {
     }
 }
 
+/// Builds a snapshot containing u32 CSR offsets + targets sections.
+fn build_csr_snapshot(offsets: &[u32], targets: &[u32]) -> Vec<u8> {
+    build_csr_snapshot_from_bytes(words_to_bytes(offsets), words_to_bytes(targets))
+}
+
 #[test]
 fn opens_valid_snapshot_as_csr_graph() -> Result<(), FixtureError> {
     let bytes = build_csr_snapshot(&[0, 2, 3, 4, 4], &[1, 2, 2, 3]);
     let snapshot = Snapshot::open(&bytes)?;
-    let graph = CsrGraph::from_snapshot(&snapshot)?;
+    let graph = CsrSnapshotGraph::<u32>::from_snapshot(&snapshot)?;
 
     assert_eq!(graph.node_count(), 4);
     assert_eq!(graph.edge_count(), 4);
@@ -84,12 +100,66 @@ fn opens_valid_snapshot_as_csr_graph() -> Result<(), FixtureError> {
 }
 
 #[test]
+fn opens_u16_snapshot_as_csr_graph() -> Result<(), CsrSnapshotError<u16>> {
+    let bytes =
+        build_csr_snapshot_from_bytes(u16_words_to_bytes(&[0, 2, 2]), u16_words_to_bytes(&[1, 0]));
+    let snapshot = match Snapshot::open(&bytes) {
+        Ok(value) => value,
+        Err(error) => panic!("snapshot open failed: {error:?}"),
+    };
+    let graph = CsrSnapshotGraph::<u16>::from_snapshot(&snapshot)?;
+
+    assert_eq!(graph.node_count(), 2);
+    assert_eq!(
+        graph
+            .outgoing_edges(CsrNodeId(0u16))
+            .map(|edge| graph.target(edge))
+            .collect::<Vec<_>>(),
+        [CsrNodeId(1u16), CsrNodeId(0u16)]
+    );
+
+    Ok(())
+}
+
+#[test]
+fn opens_u64_snapshot_as_csr_graph() -> Result<(), CsrSnapshotError<u64>> {
+    let bytes =
+        build_csr_snapshot_from_bytes(u64_words_to_bytes(&[0, 1, 1]), u64_words_to_bytes(&[1]));
+    let snapshot = match Snapshot::open(&bytes) {
+        Ok(value) => value,
+        Err(error) => panic!("snapshot open failed: {error:?}"),
+    };
+    let graph = CsrSnapshotGraph::<u64>::from_snapshot(&snapshot)?;
+
+    assert_eq!(graph.node_count(), 2);
+    assert_eq!(graph.target(CsrEdgeId(0u64)), CsrNodeId(1u64));
+
+    Ok(())
+}
+
+#[test]
+fn opens_usize_snapshot_as_csr_graph() -> Result<(), CsrSnapshotError<usize>> {
+    let bytes =
+        build_csr_snapshot_from_bytes(usize_words_to_bytes(&[0, 1, 1]), usize_words_to_bytes(&[1]));
+    let snapshot = match Snapshot::open(&bytes) {
+        Ok(value) => value,
+        Err(error) => panic!("snapshot open failed: {error:?}"),
+    };
+    let graph = CsrSnapshotGraph::<usize>::from_snapshot(&snapshot)?;
+
+    assert_eq!(graph.node_count(), 2);
+    assert_eq!(graph.target(CsrEdgeId(0usize)), CsrNodeId(1usize));
+
+    Ok(())
+}
+
+#[test]
 fn bfs_runs_over_snapshot_csr_graph() -> Result<(), FixtureError> {
     let bytes = build_csr_snapshot(&[0, 2, 3, 4, 4], &[1, 2, 2, 3]);
     let snapshot = Snapshot::open(&bytes)?;
-    let graph = CsrGraph::from_snapshot(&snapshot)?;
+    let graph = CsrSnapshotGraph::<u32>::from_snapshot(&snapshot)?;
 
-    let order: Vec<CsrNodeId> = match breadth_first_search(&graph, CsrNodeId(0)) {
+    let order: Vec<CsrNodeId<u32>> = match breadth_first_search(&graph, CsrNodeId(0)) {
         Ok(walk) => walk.collect(),
         Err(error) => panic!("bfs failed: {error:?}"),
     };
@@ -114,7 +184,7 @@ fn rejects_missing_offsets_section() -> Result<(), SnapshotError> {
         Err(error) => panic!("builder finish: {error:?}"),
     };
     let snapshot = Snapshot::open(&bytes)?;
-    match CsrGraph::from_snapshot(&snapshot) {
+    match CsrSnapshotGraph::<u32>::from_snapshot(&snapshot) {
         Err(CsrSnapshotError::MissingOffsets) => Ok(()),
         other => panic!("expected MissingOffsets, got {other:?}"),
     }
@@ -124,7 +194,7 @@ fn rejects_missing_offsets_section() -> Result<(), SnapshotError> {
 fn rejects_empty_offsets_section() -> Result<(), SnapshotError> {
     let bytes = build_csr_snapshot(&[], &[]);
     let snapshot = Snapshot::open(&bytes)?;
-    match CsrGraph::from_snapshot(&snapshot) {
+    match CsrSnapshotGraph::<u32>::from_snapshot(&snapshot) {
         Err(CsrSnapshotError::OffsetsEmpty) => Ok(()),
         other => panic!("expected OffsetsEmpty, got {other:?}"),
     }
@@ -134,7 +204,7 @@ fn rejects_empty_offsets_section() -> Result<(), SnapshotError> {
 fn rejects_target_out_of_range() -> Result<(), SnapshotError> {
     let bytes = build_csr_snapshot(&[0, 1], &[42]);
     let snapshot = Snapshot::open(&bytes)?;
-    match CsrGraph::from_snapshot(&snapshot) {
+    match CsrSnapshotGraph::<u32>::from_snapshot(&snapshot) {
         Err(CsrSnapshotError::Csr(CsrError::TargetOutOfRange { target: 42, .. })) => Ok(()),
         other => panic!("expected Csr(TargetOutOfRange), got {other:?}"),
     }
@@ -144,7 +214,7 @@ fn rejects_target_out_of_range() -> Result<(), SnapshotError> {
 fn rejects_non_monotonic_offsets() -> Result<(), SnapshotError> {
     let bytes = build_csr_snapshot(&[0, 3, 1, 1], &[0, 1, 2]);
     let snapshot = Snapshot::open(&bytes)?;
-    match CsrGraph::from_snapshot(&snapshot) {
+    match CsrSnapshotGraph::<u32>::from_snapshot(&snapshot) {
         Err(CsrSnapshotError::Csr(CsrError::NonMonotonicOffset { .. })) => Ok(()),
         other => panic!("expected Csr(NonMonotonicOffset), got {other:?}"),
     }
