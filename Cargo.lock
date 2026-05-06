@@ -671,6 +671,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxgraph-graph-build"
+version = "0.0.0"
+dependencies = [
+ "arrow-array",
+ "arrow-schema",
+ "criterion",
+ "oxgraph-csr",
+ "oxgraph-graph",
+ "oxgraph-property",
+ "oxgraph-snapshot",
+ "proptest",
+ "zerocopy",
+]
+
+[[package]]
 name = "oxgraph-hyper"
 version = "0.0.0"
 dependencies = [
