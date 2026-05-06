@@ -3,8 +3,9 @@
 //! [`BcsrHypergraph`]: crate::BcsrHypergraph
 
 use oxgraph_hyper::{
-    ContainsElement, ContainsIncidence, ContainsRelation, DirectedHyperedgeParticipants,
-    ElementIncidenceCount, ElementIncidences, ElementIndex, ElementPredecessors, ElementSuccessors,
+    ContainsElement, ContainsIncidence, ContainsRelation, DirectedHyperedgeIncidences,
+    DirectedHyperedgeParticipants, DirectedVertexHyperedges, ElementIncidenceCount,
+    ElementIncidences, ElementIndex, ElementPredecessors, ElementSuccessors,
     HyperedgeParticipantCount, HyperedgeParticipants, HypergraphCounts, IncidenceBase,
     IncidenceCounts, IncidenceElement, IncidenceIndex, IncidenceRelation, IncidenceRole,
     IncidentHyperedgeCount, IncidentHyperedges, RelationIncidenceCount, RelationIncidences,
@@ -279,6 +280,68 @@ impl<Word: BcsrWord> DirectedHyperedgeParticipants for BcsrHypergraph<'_, Word> 
         let h_index = u32_to_usize_validated(hyperedge.0);
         let tail = vertex_bucket(sections.tail_offsets, sections.tail_participants, h_index);
         BcsrVertexSlice::new(tail)
+    }
+}
+
+impl<Word: BcsrWord> DirectedHyperedgeIncidences for BcsrHypergraph<'_, Word> {
+    type SourceIncidences<'view>
+        = BcsrParticipantSlice
+    where
+        Self: 'view;
+
+    type TargetIncidences<'view>
+        = BcsrParticipantSlice
+    where
+        Self: 'view;
+
+    fn source_incidences(&self, hyperedge: BcsrHyperedgeId) -> Self::SourceIncidences<'_> {
+        let sections = self.sections();
+        let h_index = u32_to_usize_validated(hyperedge.0);
+        let head_start = sections.head_offsets[h_index].get();
+        let head_end = sections.head_offsets[h_index + 1].get();
+        BcsrParticipantSlice::new(head_start, head_end, 0)
+    }
+
+    fn target_incidences(&self, hyperedge: BcsrHyperedgeId) -> Self::TargetIncidences<'_> {
+        let sections = self.sections();
+        let h_index = u32_to_usize_validated(hyperedge.0);
+        let tail_start = sections.tail_offsets[h_index].get();
+        let tail_end = sections.tail_offsets[h_index + 1].get();
+        BcsrParticipantSlice::new(tail_start, tail_end, self.counts().p_outgoing)
+    }
+}
+
+impl<Word: BcsrWord> DirectedVertexHyperedges for BcsrHypergraph<'_, Word> {
+    type OutgoingHyperedges<'view>
+        = BcsrHyperedgeSlice<'view, Word>
+    where
+        Self: 'view;
+
+    type IncomingHyperedges<'view>
+        = BcsrHyperedgeSlice<'view, Word>
+    where
+        Self: 'view;
+
+    fn outgoing_hyperedges(&self, vertex: BcsrVertexId) -> Self::OutgoingHyperedges<'_> {
+        let sections = self.sections();
+        let v_index = u32_to_usize_validated(vertex.0);
+        let outgoing = vertex_bucket(
+            sections.vertex_outgoing_offsets,
+            sections.vertex_outgoing_hyperedges,
+            v_index,
+        );
+        BcsrHyperedgeSlice::new(outgoing)
+    }
+
+    fn incoming_hyperedges(&self, vertex: BcsrVertexId) -> Self::IncomingHyperedges<'_> {
+        let sections = self.sections();
+        let v_index = u32_to_usize_validated(vertex.0);
+        let incoming = vertex_bucket(
+            sections.vertex_incoming_offsets,
+            sections.vertex_incoming_hyperedges,
+            v_index,
+        );
+        BcsrHyperedgeSlice::new(incoming)
     }
 }
 

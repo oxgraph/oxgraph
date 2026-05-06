@@ -14,10 +14,13 @@
 extern crate kani;
 
 pub use oxgraph_topology::{
+    CanonicalElementIdentity, CanonicalIncidenceIdentity, CanonicalRelationIdentity,
     ContainsElement, ContainsIncidence, ContainsRelation, ElementIncidenceCount, ElementIncidences,
-    ElementIndex, ElementPredecessors, ElementSuccessors, IncidenceBase, IncidenceCounts,
-    IncidenceElement, IncidenceIndex, IncidenceRelation, IncidenceRole, RelationIncidenceCount,
-    RelationIncidences, RelationIndex, TopologyBase, TopologyCounts, TopologyId,
+    ElementIndex, ElementPredecessors, ElementSuccessors, ElementWeight, IncidenceBase,
+    IncidenceCounts, IncidenceElement, IncidenceIndex, IncidenceRelation, IncidenceRole,
+    IncidenceWeight, LocalElementIdentity, LocalIncidenceIdentity, LocalRelationIdentity,
+    RelationIncidenceCount, RelationIncidences, RelationIndex, RelationWeight, TopologyBase,
+    TopologyCounts, TopologyId,
 };
 
 /// Hypergraph-facing alias for a topology element ID.
@@ -684,6 +687,103 @@ pub trait DirectedHyperedgeParticipants: TopologyBase {
     fn target_participants(&self, hyperedge: Self::RelationId) -> Self::TargetParticipants<'_>;
 }
 
+/// Capability for traversing directed participant incidence IDs.
+///
+/// This is the incidence-ID counterpart to [`DirectedHyperedgeParticipants`].
+/// Algorithms that need incidence weights bind on this trait so they can choose
+/// target participants by incidence ID without adding weighted expansion traits
+/// to topology.
+///
+/// # Performance
+///
+/// Creating either iterator should be `O(1)` unless an implementation documents
+/// a weaker contract. Yielding `k` incidences should be `O(k)`.
+pub trait DirectedHyperedgeIncidences: IncidenceBase {
+    /// Iterator over source-side participant incidence IDs.
+    ///
+    /// # Performance
+    ///
+    /// Advancing the iterator should be amortized `O(1)` unless an
+    /// implementation documents otherwise.
+    type SourceIncidences<'view>: Iterator<Item = Self::IncidenceId>
+    where
+        Self: 'view;
+
+    /// Iterator over target-side participant incidence IDs.
+    ///
+    /// # Performance
+    ///
+    /// Advancing the iterator should be amortized `O(1)` unless an
+    /// implementation documents otherwise.
+    type TargetIncidences<'view>: Iterator<Item = Self::IncidenceId>
+    where
+        Self: 'view;
+
+    /// Returns source-side participant incidence IDs for `hyperedge`.
+    ///
+    /// # Performance
+    ///
+    /// Expected `O(1)` to create the iterator; yielding `k` incidences is
+    /// expected `O(k)`.
+    fn source_incidences(&self, hyperedge: Self::RelationId) -> Self::SourceIncidences<'_>;
+
+    /// Returns target-side participant incidence IDs for `hyperedge`.
+    ///
+    /// # Performance
+    ///
+    /// Expected `O(1)` to create the iterator; yielding `k` incidences is
+    /// expected `O(k)`.
+    fn target_incidences(&self, hyperedge: Self::RelationId) -> Self::TargetIncidences<'_>;
+}
+
+/// Capability for traversing source/target hyperedges incident to a vertex.
+///
+/// This relation-level directed expansion is distinct from successor-vertex
+/// expansion. `PageRank`'s incidence/bipartite policy needs source vertex →
+/// relation transitions before relation → target vertex transitions.
+///
+/// # Performance
+///
+/// Creating either iterator should be `O(1)` unless an implementation documents
+/// a weaker contract. Yielding `k` hyperedges should be `O(k)`.
+pub trait DirectedVertexHyperedges: TopologyBase {
+    /// Iterator over hyperedges where the vertex is source-side.
+    ///
+    /// # Performance
+    ///
+    /// Advancing the iterator should be amortized `O(1)` unless an
+    /// implementation documents otherwise.
+    type OutgoingHyperedges<'view>: Iterator<Item = Self::RelationId>
+    where
+        Self: 'view;
+
+    /// Iterator over hyperedges where the vertex is target-side.
+    ///
+    /// # Performance
+    ///
+    /// Advancing the iterator should be amortized `O(1)` unless an
+    /// implementation documents otherwise.
+    type IncomingHyperedges<'view>: Iterator<Item = Self::RelationId>
+    where
+        Self: 'view;
+
+    /// Returns hyperedges where `vertex` participates on the source side.
+    ///
+    /// # Performance
+    ///
+    /// Expected `O(1)` to create the iterator; yielding `k` hyperedges is
+    /// expected `O(k)`.
+    fn outgoing_hyperedges(&self, vertex: Self::ElementId) -> Self::OutgoingHyperedges<'_>;
+
+    /// Returns hyperedges where `vertex` participates on the target side.
+    ///
+    /// # Performance
+    ///
+    /// Expected `O(1)` to create the iterator; yielding `k` hyperedges is
+    /// expected `O(k)`.
+    fn incoming_hyperedges(&self, vertex: Self::ElementId) -> Self::IncomingHyperedges<'_>;
+}
+
 /// Capability for expanding a directed hypergraph vertex to successor vertices.
 ///
 /// This is the hypergraph-facing name for [`ElementSuccessors`]. A successor
@@ -839,7 +939,12 @@ impl<T> Hypergraph for T where T: HyperedgeParticipants + IncidentHyperedges {}
 ///
 /// `perf: unspecified`; performance is inherited from the component traits.
 pub trait DirectedHypergraph:
-    Hypergraph + DirectedHyperedgeParticipants + DirectedVertexSuccessors + DirectedVertexPredecessors
+    Hypergraph
+    + DirectedHyperedgeParticipants
+    + DirectedHyperedgeIncidences
+    + DirectedVertexHyperedges
+    + DirectedVertexSuccessors
+    + DirectedVertexPredecessors
 {
 }
 
@@ -854,6 +959,8 @@ pub trait DirectedHypergraph:
 impl<T> DirectedHypergraph for T where
     T: Hypergraph
         + DirectedHyperedgeParticipants
+        + DirectedHyperedgeIncidences
+        + DirectedVertexHyperedges
         + DirectedVertexSuccessors
         + DirectedVertexPredecessors
 {
