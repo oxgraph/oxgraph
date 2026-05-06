@@ -1,0 +1,17 @@
+[build-system]
+requires = ["maturin>=1.8,<2"]
+build-backend = "maturin"
+
+[project]
+name = "oxgraph"
+version = "0.0.0"
+description = "Python bindings for OxGraph topology builders and algorithms"
+requires-python = ">=3.9"
+readme = "SAFETY.md"
+license = { text = "MIT OR Apache-2.0" }
+authors = [{ name = "oxgraph contributors" }]
+
+[tool.maturin]
+module-name = "oxgraph._oxgraph"
+python-source = "python"
+features = ["pyo3/extension-module"]

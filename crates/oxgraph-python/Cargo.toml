@@ -1,0 +1,56 @@
+[package]
+name = "oxgraph-python"
+version = "0.0.0"
+description = "Python bindings for OxGraph."
+publish = false
+
+authors.workspace = true
+edition.workspace = true
+repository.workspace = true
+
+[lib]
+name = "_oxgraph"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+arrow-array = { workspace = true }
+arrow-schema = { workspace = true }
+oxgraph-algo = { version = "0.0.0", path = "../oxgraph-algo", features = ["std"] }
+oxgraph-csr = { version = "0.0.0", path = "../oxgraph-csr" }
+oxgraph-graph = { version = "0.0.0", path = "../oxgraph-graph" }
+oxgraph-graph-build = { version = "0.0.0", path = "../oxgraph-graph-build" }
+oxgraph-hyper = { version = "0.0.0", path = "../oxgraph-hyper" }
+oxgraph-hyper-bcsr = { version = "0.0.0", path = "../oxgraph-hyper-bcsr" }
+oxgraph-hyper-build = { version = "0.0.0", path = "../oxgraph-hyper-build" }
+oxgraph-property = { version = "0.0.0", path = "../oxgraph-property" }
+oxgraph-snapshot = { version = "0.0.0", path = "../oxgraph-snapshot" }
+oxgraph-topology = { version = "0.0.0", path = "../oxgraph-topology" }
+pyo3 = { version = "0.28.3", features = ["extension-module"] }
+
+[build-dependencies]
+pyo3-build-config = "0.28.3"
+
+[lints.rust]
+rust_2024_compatibility = { level = "deny", priority = -1 }
+missing_docs = "deny"
+unreachable_pub = "deny"
+unsafe_code = "allow"
+unexpected_cfgs = { level = "deny", check-cfg = ["cfg(kani)"] }
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+cargo = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+cognitive_complexity = "deny"
+excessive_nesting = "deny"
+too_many_arguments = "deny"
+too_many_lines = "deny"
+type_complexity = "deny"
+missing_docs_in_private_items = "deny"
+expect_used = "deny"
+unwrap_used = "deny"
+allow_attributes = "deny"
+allow_attributes_without_reason = "deny"
+multiple_crate_versions = { level = "allow", priority = 1 }
+module_name_repetitions = { level = "allow", priority = 1 }
