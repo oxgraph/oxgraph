@@ -1,0 +1,62 @@
+id: 22
+name: PageRank algorithms
+description: |
+  PageRank/ranking algorithms in oxgraph-algo over topology and graph/hypergraph
+  capability views. Ordinary directed graph PageRank supports unweighted edges and
+  selected relation weights. Directed hypergraph PageRank uses the incidence/bipartite
+  policy over element and relation states.
+profile: 1
+status: proposed
+intent:
+  kind: feature
+  summary: Ordinary graph and incidence/bipartite hypergraph PageRank over topology capabilities
+  source: ai
+  goals: |
+    - Add pagerank under oxgraph-algo with configurable damping, tolerance,
+      max_iterations, and optional personalization/teleport vectors.
+    - Support ordinary directed graph PageRank with implicit unit edge weights and
+      selected relation weights, row-normalizing outgoing weights internally.
+    - Keep rank scalar generic across configuration, reports, errors, personalization,
+      output ranks, teleport vectors, and scratch/workspace storage.
+    - Convert topology weight values into the rank scalar through OxGraph-owned algorithm traits.
+    - Return typed errors for invalid damping/tolerance, negative or non-finite converted weights,
+      invalid personalization, undersized output/scratch/workspace slices, and non-convergence.
+    - Add directed hypergraph incidence/bipartite PageRank over element + relation state
+      space with element->relation and relation->target-element transitions.
+    - Keep oxgraph-algo independent of Arrow; property layers become weights through
+      selected views.
+    - Provide borrowed scratch and owned workspace APIs so repeated PageRank runs can avoid allocation, mirroring the BFS API tier pattern.
+  non_goals: |
+    No Arrow dependency in algorithms, no PageRank name variants, no projected
+    hypergraph PageRank as the default policy, no third-party compatibility shims, and
+    no hidden property lookup inside the algorithm.
+  rationale: |
+    PageRank is the ranking primitive downstream Python users need, but it must land as
+    a substrate-agnostic algorithm rather than as a Python graph-object method. The
+    algorithm defines numeric semantics; topology weight traits only provide values.
+constraints:
+- 26
+- 27
+- 29
+realization:
+- bindings:
+  - scheme: path
+    value: crates/oxgraph-algo/src/pagerank.rs
+    metadata:
+      summary: Generic PageRank scalar traits, configuration, typed errors, scratch/workspace APIs, ordinary graph PageRank, and directed hypergraph incidence/bipartite PageRank.
+  - scheme: path
+    value: crates/oxgraph-algo/src/lib.rs
+    metadata:
+      summary: Re-exports the pagerank API alongside BFS.
+  - scheme: path
+    value: crates/oxgraph-algo/tests/pagerank.rs
+    metadata:
+      summary: Concrete-layout coverage for unweighted, weighted, f32/f64 scalar, non-f64 weight, scratch, and workspace PageRank over CSR graph and BCSR hypergraph views.
+  role: primary
+amendment_log:
+- 9
+- 10
+- 11
+parents:
+- id: 9
+  role: component

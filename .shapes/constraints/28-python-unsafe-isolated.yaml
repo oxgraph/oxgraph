@@ -1,0 +1,41 @@
+id: 28
+name: python unsafe isolated
+description: |
+  PyO3 may require macro-generated or crate-local unsafe glue to expose Rust objects to
+  CPython. That exception is isolated to oxgraph-python and documented as an FFI
+  boundary; it does not weaken the workspace-level safety posture of foundation crates.
+kind: boundary
+rule: |
+  Any unsafe code or macro-generated unsafe required by PyO3 is isolated to
+  oxgraph-python; foundation crates keep unsafe_code forbidden and Python-facing
+  ownership, stale-view, GIL, panic, and validation behavior is documented in
+  oxgraph-python safety documentation.
+enforcement: manual
+profile: 1
+status: proposed
+intent:
+  kind: boundary
+  summary: PyO3 unsafe boundary is crate-local and documented
+  source: ai
+  rationale: |
+    Python interop is a higher-layer FFI concern. The substrate can expose a Python
+    facade without allowing unsafe code to leak into topology, layout, snapshot,
+    property, builder, or algorithm crates. Documenting the boundary keeps the exception
+    visible and reviewable.
+  impact_if_violated: |
+    Unsafe policy would erode across the workspace, and Python ownership or panic
+    behavior could become implicit instead of an explicit API contract.
+  verification_method: |
+    Manual review of oxgraph-python Cargo lint settings and SAFETY.md. Foundation
+    crates continue to inherit workspace unsafe_code = forbid.
+realization:
+- bindings:
+  - scheme: path
+    value: crates/oxgraph-python/SAFETY.md
+    metadata:
+      summary: Python FFI safety contract for PyO3 glue, ownership, GIL behavior, stale views, and panic/error mapping.
+  - scheme: path
+    value: crates/oxgraph-python/Cargo.toml
+    metadata:
+      summary: Crate-local lint policy for Python FFI while other crates keep workspace lints.
+  role: primary

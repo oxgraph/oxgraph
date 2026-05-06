@@ -1,0 +1,53 @@
+id: 18
+name: topology weights and identity
+description: |
+  Optional topology capabilities for semantic-free weights and opt-in canonical/local
+  identity. These traits live in oxgraph-topology because they are shared primitives of
+  graph-like topology families, but they do not force every backend to implement them.
+  Weights are total Copy values for a visible ID family; canonical IDs are guaranteed
+  only for views that explicitly opt in.
+profile: 1
+status: proposed
+intent:
+  kind: interface
+  summary: Optional topology capabilities for semantic-free weights and opt-in canonical/local identity
+  source: ai
+  goals: |
+    - Add ElementWeight, RelationWeight, and IncidenceWeight with independent Copy
+      associated Weight types and direct value returns.
+    - Add CanonicalElementIdentity, CanonicalRelationIdentity, and
+      CanonicalIncidenceIdentity plus optional Local* reverse lookups returning Option.
+    - Keep all traits no_std, associated-type-only, storage-agnostic, and independent
+      of named properties, Python labels, Arrow, or probabilities.
+    - Re-export the new capabilities through graph and hypergraph vocabulary crates.
+  non_goals: |
+    No named property maps, no probabilities, no weighted successor/predecessor traits,
+    no concrete default ID newtypes, no cross-snapshot lineage identity, and no Arrow or
+    Python dependency in foundation crates.
+  rationale: |
+    Algorithms and builders need to express relation weights and stable identity without
+    smuggling higher-layer property semantics into topology. Optional capabilities keep
+    the foundation honest: a view either guarantees a mapping/value for every visible ID
+    in the family or it simply does not implement the trait.
+constraints:
+- 17
+- 26
+- 27
+realization:
+- bindings:
+  - scheme: path
+    value: crates/oxgraph-topology/src/lib.rs
+    metadata:
+      summary: New optional weight and canonical/local identity capability traits.
+  - scheme: path
+    value: crates/oxgraph-graph/src/lib.rs
+    metadata:
+      summary: Graph-facing re-exports of topology weight and identity capabilities.
+  - scheme: path
+    value: crates/oxgraph-hyper/src/lib.rs
+    metadata:
+      summary: Hypergraph-facing re-exports of topology weight and identity capabilities.
+  role: primary
+parents:
+- id: 2
+  role: component

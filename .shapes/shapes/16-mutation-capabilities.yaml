@@ -7,7 +7,8 @@ description: |
   snapshot workflows. Modeled early as a placeholder because mutation changes ID
   stability, deletion semantics, tombstones, compaction, freezing, and stale-handle
   behavior — those decisions cannot be retrofitted onto read views without breaking
-  them. Concrete implementation is deferred until pressure surfaces.
+  them. The first concrete child is a construction-time builder layer; general mutation
+  remains deferred.
 profile: 1
 status: proposed
 intent:
@@ -20,20 +21,22 @@ intent:
     - Distinguish concept tiers up-front: immutable view, mutable view, append-only
       mutable view, removable mutable view, overlay view, freezable builder, validated
       snapshot.
-    - When the first concrete need arrives (builder, overlay, or both), commit to a
-      specific layer shape and promote this shape from proposed to canonical with the
-      decision recorded.
+    - Commit the first concrete child as append/update-only builders that freeze to
+      immutable views, while leaving overlays and removable mutation for later shapes.
   non_goals: |
-    No concrete builder, overlay, or mutation impl in v1. No commitment yet to
-    generational IDs, tombstones, or compaction policies. No mutation methods on
-    existing read traits — mutation lives in its own capability traits when it lands.
+    No deletion, tombstones, ID reuse, compaction policies, overlay views, or mutation
+    methods on existing read traits. The builder child is construction-time only, not a
+    general mutable graph API.
   rationale: |
     Mutation cannot be deferred entirely — it is one of the next things to implement.
-    But the specific layer shape is undecided: producer-side (builder + freeze →
-    snapshot), consumer-side (overlay/delta over an immutable view), and capability-
-    traits-only (markers without impls) are all viable first moves and the user has
-    not picked one. Modeling the shape as deliberately-proposed reserves the slot
-    without overfitting it to whichever direction has not yet been chosen.
+    The Python-enabling slice picked the producer-side first move: builder + freeze →
+    immutable view/snapshot. Modeling the broader shape as proposed keeps overlay and
+    full mutation semantics out of scope until they have their own pressure and rules.
+amendment_log:
+- 8
 parents:
 - id: 1
   role: pending
+children:
+- shape: 20
+  role: component

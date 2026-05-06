@@ -1,0 +1,52 @@
+id: 21
+name: snapshot identity property sections
+description: |
+  Snapshot extension story for canonical identity maps and property layers. The v1
+  container remains a topology-agnostic section carrier, while higher layers register
+  explicit section kinds for identity maps and property descriptors/data. Snapshot open
+  validates structure; algorithms validate numeric semantics later.
+profile: 1
+status: proposed
+intent:
+  kind: interface
+  summary: Snapshot section story for canonical identity maps and property layers
+  source: ai
+  goals: |
+    - Define section-kind constants for canonical identity maps and property descriptors
+      without changing the container's topology-agnostic contract.
+    - Persist local-to-canonical maps when a snapshot opts into canonical identity and
+      local IDs may differ; allow identity-map mode when local equals canonical.
+    - Provide property descriptor/data section validation hooks in the property layer.
+    - Use arrow-rs schema/IPC/array machinery for property payload fidelity rather than custom f64 records.
+    - Keep snapshot validation structural: lengths, Arrow schema/type tags, family compatibility,
+      duplicate names, and section consistency. Numeric contracts stay with algorithms.
+  non_goals: |
+    No stable snapshot ABI promotion, no required-section policy, no mmap helper change,
+    no algorithm probability validation in snapshot open, and no unresolved layout hidden
+    inside foundation crates.
+  rationale: |
+    Canonical identity and named layers must survive freeze/open flows if Python and
+    downstream systems are to rely on them. Keeping the container generic and registering
+    higher-layer sections preserves the storage-anywhere design.
+constraints:
+- 15
+- 22
+- 26
+- 29
+realization:
+- bindings:
+  - scheme: path
+    value: crates/oxgraph-property/src/lib.rs
+    metadata:
+      summary: Property snapshot section-kind constants and descriptor/data validation helpers for property layers.
+  - scheme: path
+    value: crates/oxgraph-snapshot/src/lib.rs
+    metadata:
+      summary: Unchanged topology-agnostic section container used by identity/property sections.
+  role: primary
+amendment_log:
+- 9
+- 10
+parents:
+- id: 7
+  role: component

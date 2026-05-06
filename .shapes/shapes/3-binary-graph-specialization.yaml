@@ -42,8 +42,10 @@ realization:
   - scheme: path
     value: crates/oxgraph-graph/src/lib.rs
     metadata:
-      summary: All graph traits — GraphBase, GraphCounts, NodeIndex, EdgeIndex, OutgoingGraph, IncomingGraph, OutgoingNeighborsGraph, IncomingNeighborsGraph, DirectedGraph, ForwardGraph, ReverseGraph.
+      summary: All graph traits and re-exports — GraphBase, indexes, outgoing/incoming traversal, directed bundles, plus topology weight and identity capability vocabulary.
   role: primary
+amendment_log:
+- 8
 parents:
 - id: 1
   role: component

@@ -60,12 +60,15 @@ constraints:
 - 21
 - 23
 - 25
+- 26
+- 27
+- 28
 realization:
 - bindings:
   - scheme: path
     value: Cargo.toml
     metadata:
-      summary: Workspace manifest declaring the seven kernel crates plus the umbrella crate, with deny-by-default lint groups.
+      summary: Workspace manifest declaring kernel, property, builder, algorithm, Python, and umbrella crates, with deny-by-default lint groups.
   - scheme: path
     value: vision.md
     metadata:
@@ -79,6 +82,8 @@ realization:
     metadata:
       summary: Implementation tracker — what has been built, what was deferred, where implementation diverged from the original plan and why.
   role: primary
+amendment_log:
+- 8
 children:
 - shape: 2
   role: component
@@ -108,3 +113,9 @@ children:
   role: pending
 - shape: 17
   role: pending
+- shape: 19
+  role: component
+- shape: 23
+  role: component
+- shape: 24
+  role: component

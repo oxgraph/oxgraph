@@ -1,0 +1,42 @@
+id: 8
+name: Python bindings and weighted topology plan
+description: |
+  Records the cross-cutting implementation slice that turns the Python bindings plan
+  into shapes and code: topology weight/identity capabilities, Arrow-backed property
+  layers, construction builders, snapshot identity/property section direction,
+  PageRank, Python facade, and architecture documentation. The user explicitly directed
+  implementation to proceed end-to-end, covering the usual pause-and-ask gates for new
+  crates and public capability traits in this slice.
+targets:
+  shape_ids:
+  - 1
+  - 2
+  - 3
+  - 4
+  - 6
+  - 7
+  - 9
+  - 11
+  - 16
+status: proposed
+version_impact: minor
+intent:
+  kind: amendment
+  summary: Implement Python-enabling slice with weighted topology, identity, properties, builders, snapshots, PageRank, and Python facade
+  source: ai
+  rationale: |
+    The plan needs new public capability traits and workspace crates. Capturing the
+    change as an amendment preserves the reason and scope before source changes land.
+initiated_by:
+  type: human
+realization:
+- bindings:
+  - scheme: path
+    value: plans/python-bindings-birdsong.md
+    metadata:
+      summary: Source plan being implemented; birdsong remains out of scope.
+  - scheme: path
+    value: docs/architecture.md
+    metadata:
+      summary: Durable architecture document created from the accepted plan.
+  role: primary

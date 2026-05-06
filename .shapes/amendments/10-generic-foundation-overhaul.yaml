@@ -1,0 +1,30 @@
+id: 10
+name: Generic foundation overhaul
+description: Generic foundation overhaul
+targets:
+  shape_ids:
+  - 19
+  - 20
+  - 21
+  - 22
+  - 23
+  - 24
+status: proposed
+intent:
+  kind: amendment
+  summary: Replace f64-only Rust property, builder, snapshot, and PageRank surfaces with generic topology-weight, Arrow-backed property, and rank-scalar contracts.
+  source: human
+  goals: |
+    - Keep topology weight traits semantic-free with associated Weight types; do not add PageRank arithmetic semantics to topology.
+    - Replace DenseF64Layer/SparseF64Layer and DefaultF64 with generic Arrow-backed property layers, Arrow scalar/default handling, and generic selected weight adapters.
+    - Use arrow-rs schema/IPC/array machinery for property snapshot persistence instead of custom f64 payload records.
+    - Make graph and hypergraph builders generic over element/relation/incidence weight types and support named Arrow property layers before freeze/export.
+    - Make PageRank generic over rank scalar S and convert topology weight values into S through OxGraph-owned minimal numeric traits.
+    - Keep Python float APIs as explicit boundary specializations over generic Rust APIs, not as the Rust model.
+    - Remove f64-only public Rust compatibility aliases or deprecated shims from this unlanded greenfield branch.
+  non_goals: |
+    No arithmetic semantics in oxgraph-topology weight traits, no num-traits dependency in the public API unless separately justified, no custom property payload encoding that duplicates Arrow, no stable snapshot ABI promotion, no deletion/overlay mutation, and no third-party Python exporters.
+  rationale: |
+    The branch introduced the right topology shape but then scalar-locked the higher Rust layers to f64. That breaks the foundational architecture: downstream users should be able to select integer, f32, decimal, fixed-point, or Arrow-native values without converting everything into f64 at the substrate boundary. The graph is greenfield, so the correct fix is to rewrite the unlanded f64-specific surfaces as generic code rather than preserving compatibility.
+initiated_by:
+  type: human

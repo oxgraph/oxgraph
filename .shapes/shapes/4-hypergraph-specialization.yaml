@@ -18,8 +18,8 @@ intent:
       ParticipantRole) and the hyperedge/participant trait DAG.
     - Preserve "one relation, many participants" as a first-class concept — hyperedges
       are not encoded as graphs.
-    - Provide directed hyperedge primitives: head/tail participant sets, directed vertex
-      successors, directed vertex predecessors.
+    - Provide directed hyperedge primitives: head/tail participant sets and incidences,
+      directed vertex hyperedges, directed vertex successors, directed vertex predecessors.
     - Stay first-class architecturally even if concrete hypergraph features mature later
       than the graph hot path.
   non_goals: |
@@ -45,10 +45,11 @@ realization:
   - scheme: path
     value: crates/oxgraph-hyper/src/lib.rs
     metadata:
-      summary: All hypergraph traits — HypergraphBase, HypergraphCounts, vertex/hyperedge/participant indexes, HyperedgeParticipants, IncidentHyperedges, DirectedHyperedgeParticipants, DirectedVertexSuccessors/Predecessors, Hypergraph bundle.
+      summary: All hypergraph traits — HypergraphBase, counts, indexes, HyperedgeParticipants, IncidentHyperedges, DirectedHyperedgeParticipants/Incidences, DirectedVertexHyperedges, DirectedVertexSuccessors/Predecessors, Hypergraph bundles.
   role: primary
 parents:
 - id: 1
   role: component
 amendment_log:
 - 6
+- 8

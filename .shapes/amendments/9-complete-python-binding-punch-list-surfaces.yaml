@@ -1,0 +1,30 @@
+id: 9
+name: Complete Python binding punch list surfaces
+description: Complete Python binding punch list surfaces
+targets:
+  shape_ids:
+  - 19
+  - 20
+  - 21
+  - 22
+  - 23
+  - 24
+status: proposed
+intent:
+  kind: amendment
+  summary: Complete the remaining plan checklist with concrete sparse property selection, identity/property snapshot metadata, builder validation, PageRank verification, Python packaging, and local fixtures.
+  source: human
+  goals: |
+    - Add sparse totalizing f64 selected-weight views and descriptor-level Arrow value-family validation in oxgraph-property.
+    - Use one internal v1 property descriptor section plus one internal v1 property data section: fixed records encode layer metadata, Arrow value family, storage, missing policy, logical length, and data offsets; UTF-8 layer names and Arrow field names live in the descriptor string table; dense f64 data is little-endian f64 values, sparse f64 data is little-endian u64 indexes followed by little-endian f64 values.
+    - Use one internal v1 identity-mode section plus optional explicit local-to-canonical u32 map sections per ID family. A mode record declares local==canonical or explicit-u32-map for element, relation, and incidence families.
+    - Keep these sections ABI-candidate/internal while snapshot v1 bytes are not stable.
+    - Normalize hypergraph builder participants into strictly ascending per-side sets before BCSR export and reject duplicate same-side participants.
+    - Add PageRank policy/error tests, non-convergence delta fixes, and throughput benchmarks.
+    - Add maturin packaging metadata, import smoke tests, checked Python accessors, frozen label/identity lookup, snapshot open helpers, and property-backed selected weight APIs.
+  non_goals: |
+    No stable snapshot ABI promotion, no cross-snapshot identity lineage, no deletion or overlay mutation, no third-party Python exporters, and no Arrow/Python/property dependencies in foundation crates.
+  rationale: |
+    The active plan asks for completion rather than a narrowed landing slice. The concrete snapshot encodings above resolve the plan's open physical-layout questions for this internal v1 implementation while preserving the documented non-stable ABI boundary.
+initiated_by:
+  type: human
