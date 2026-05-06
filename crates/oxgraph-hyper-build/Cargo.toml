@@ -1,0 +1,29 @@
+[package]
+name = "oxgraph-hyper-build"
+version = "0.0.0"
+description = "Append/update-only hypergraph builders for OxGraph."
+publish = false
+
+authors.workspace = true
+edition.workspace = true
+repository.workspace = true
+
+[dependencies]
+arrow-array = { workspace = true }
+arrow-schema = { workspace = true }
+oxgraph-hyper = { version = "0.0.0", path = "../oxgraph-hyper" }
+oxgraph-hyper-bcsr = { version = "0.0.0", path = "../oxgraph-hyper-bcsr" }
+oxgraph-property = { version = "0.0.0", path = "../oxgraph-property" }
+oxgraph-snapshot = { version = "0.0.0", path = "../oxgraph-snapshot", features = ["alloc"] }
+zerocopy = { workspace = true }
+
+[dev-dependencies]
+criterion = { workspace = true }
+proptest = { workspace = true }
+
+[[bench]]
+name = "builder"
+harness = false
+
+[lints]
+workspace = true
