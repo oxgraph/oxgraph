@@ -2,10 +2,10 @@
 //! BFS over the borrowed sections.
 //!
 //! Defends one perf contract:
-//! - Snapshot open plus `CsrSnapshotGraph::<u32>::from_snapshot` plus forward BFS is `O(n + m)` for
-//!   the ring fixture (each `n`-node ring carries `n` edges, so `n + m = 2n`). Benched at multiple
-//!   node counts so the bytes-to-traversal pipeline cost tracks linearly; a regression in any
-//!   sub-step (snapshot validation, CSR validation, or BFS) shows up as a sub-linear curve.
+//! - Snapshot open plus `CsrSnapshotGraph::<u32, u32>::from_snapshot` plus forward BFS is `O(n +
+//!   m)` for the ring fixture (each `n`-node ring carries `n` edges, so `n + m = 2n`). Benched at
+//!   multiple node counts so the bytes-to-traversal pipeline cost tracks linearly; a regression in
+//!   any sub-step (snapshot validation, CSR validation, or BFS) shows up as a sub-linear curve.
 
 use std::hint::black_box;
 
@@ -14,7 +14,7 @@ use criterion::{
 };
 use oxgraph_algo::breadth_first_search;
 use oxgraph_csr::{
-    CsrNodeId, CsrSnapshotGraph, SNAPSHOT_KIND_CSR_OFFSETS, SNAPSHOT_KIND_CSR_TARGETS,
+    CsrNodeId, CsrSnapshotGraph, SNAPSHOT_KIND_CSR_OFFSETS_U32, SNAPSHOT_KIND_CSR_TARGETS_U32,
 };
 use oxgraph_snapshot::{Snapshot, SnapshotBuilder};
 
@@ -33,11 +33,11 @@ fn ring_snapshot_bytes(node_count: u32) -> Vec<u8> {
     let targets_bytes: Vec<u8> = targets.iter().flat_map(|word| word.to_le_bytes()).collect();
 
     let mut builder = SnapshotBuilder::new();
-    match builder.add_section(SNAPSHOT_KIND_CSR_OFFSETS, 0, 2, offsets_bytes) {
+    match builder.add_section(SNAPSHOT_KIND_CSR_OFFSETS_U32, 0, 2, offsets_bytes) {
         Ok(_) => {}
         Err(error) => panic!("bench offsets: {error:?}"),
     }
-    match builder.add_section(SNAPSHOT_KIND_CSR_TARGETS, 0, 2, targets_bytes) {
+    match builder.add_section(SNAPSHOT_KIND_CSR_TARGETS_U32, 0, 2, targets_bytes) {
         Ok(_) => {}
         Err(error) => panic!("bench targets: {error:?}"),
     }
@@ -47,7 +47,7 @@ fn ring_snapshot_bytes(node_count: u32) -> Vec<u8> {
     }
 }
 
-/// Benchmarks `Snapshot::open` + `CsrSnapshotGraph::<u32>::from_snapshot` together
+/// Benchmarks `Snapshot::open` + `CsrSnapshotGraph::<u32, u32>::from_snapshot` together
 /// (the cost of going from bytes to a traversable view).
 fn bench_open(group: &mut BenchmarkGroup<'_, WallTime>) {
     for &node_count in &[64u32, 1024, 16_384] {
@@ -61,7 +61,7 @@ fn bench_open(group: &mut BenchmarkGroup<'_, WallTime>) {
                         Ok(value) => value,
                         Err(error) => panic!("bench open: {error:?}"),
                     };
-                    let graph = match CsrSnapshotGraph::<u32>::from_snapshot(&snapshot) {
+                    let graph = match CsrSnapshotGraph::<u32, u32>::from_snapshot(&snapshot) {
                         Ok(value) => value,
                         Err(error) => panic!("bench from_snapshot: {error:?}"),
                     };
@@ -84,7 +84,7 @@ fn bench_bfs(group: &mut BenchmarkGroup<'_, WallTime>) {
                     Ok(value) => value,
                     Err(error) => panic!("bench open: {error:?}"),
                 };
-                let graph = match CsrSnapshotGraph::<u32>::from_snapshot(&snapshot) {
+                let graph = match CsrSnapshotGraph::<u32, u32>::from_snapshot(&snapshot) {
                     Ok(value) => value,
                     Err(error) => panic!("bench from_snapshot: {error:?}"),
                 };

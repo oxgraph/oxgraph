@@ -27,7 +27,7 @@ use oxgraph_algo::{
     reverse_breadth_first_search, reverse_breadth_first_search_with_scratch,
     reverse_breadth_first_search_with_workspace,
 };
-use oxgraph_csr::{CsrGraph, CsrNodeId};
+use oxgraph_csr::{CsrNativeGraph, CsrNodeId};
 use oxgraph_hyper_bcsr::{
     BcsrHypergraph, BcsrVertexId, SNAPSHOT_KIND_BCSR_HEAD_OFFSETS,
     SNAPSHOT_KIND_BCSR_HEAD_PARTICIPANTS, SNAPSHOT_KIND_BCSR_TAIL_OFFSETS,
@@ -152,7 +152,7 @@ fn build_sparse_reachable_csr(node_count: u32) -> CsrParts {
 }
 
 /// Runs allocating indexed BFS and returns the number of reached nodes.
-fn indexed_alloc_bfs_count(graph: &CsrGraph<'_, u32, u32>) -> usize {
+fn indexed_alloc_bfs_count(graph: &CsrNativeGraph<'_, u32, u32>) -> usize {
     match breadth_first_search(graph, CsrNodeId(0)) {
         Ok(traversal) => traversal.count(),
         Err(error) => panic!("benchmark BFS start was invalid: {error:?}"),
@@ -161,7 +161,7 @@ fn indexed_alloc_bfs_count(graph: &CsrGraph<'_, u32, u32>) -> usize {
 
 /// Runs scratch-backed indexed BFS and returns the number of reached nodes.
 fn scratch_bfs_count(
-    graph: &CsrGraph<'_, u32, u32>,
+    graph: &CsrNativeGraph<'_, u32, u32>,
     visited: &mut [u8],
     queue: &mut [CsrNodeId<u32>],
 ) -> usize {
@@ -173,8 +173,8 @@ fn scratch_bfs_count(
 
 /// Runs epoch-scratch indexed BFS and returns the number of reached nodes.
 fn epoch_bfs_count<'graph>(
-    graph: &CsrGraph<'graph, u32, u32>,
-    scratch: &mut BfsEpochScratch<'_, CsrGraph<'graph, u32, u32>>,
+    graph: &CsrNativeGraph<'graph, u32, u32>,
+    scratch: &mut BfsEpochScratch<'_, CsrNativeGraph<'graph, u32, u32>>,
 ) -> usize {
     match breadth_first_search_with_epoch_scratch(graph, CsrNodeId(0), scratch) {
         Ok(traversal) => traversal.count(),
@@ -184,8 +184,8 @@ fn epoch_bfs_count<'graph>(
 
 /// Runs workspace-backed indexed BFS and returns the number of reached nodes.
 fn workspace_bfs_count<'graph>(
-    graph: &CsrGraph<'graph, u32, u32>,
-    workspace: &mut BfsWorkspace<CsrGraph<'graph, u32, u32>>,
+    graph: &CsrNativeGraph<'graph, u32, u32>,
+    workspace: &mut BfsWorkspace<CsrNativeGraph<'graph, u32, u32>>,
 ) -> usize {
     match breadth_first_search_with_workspace(graph, CsrNodeId(0), workspace) {
         Ok(traversal) => traversal.count(),
@@ -213,7 +213,7 @@ fn usize_to_u32(value: usize) -> u32 {
 fn bench_clear_scratch_lanes(
     group: &mut BenchmarkGroup<'_, WallTime>,
     node_count: u32,
-    graph: &CsrGraph<'_, u32, u32>,
+    graph: &CsrNativeGraph<'_, u32, u32>,
     scratch: &mut ClearScratch<'_>,
 ) {
     group.bench_with_input(
@@ -229,8 +229,8 @@ fn bench_clear_scratch_lanes(
 fn bench_epoch_scratch_lanes<'graph>(
     group: &mut BenchmarkGroup<'_, WallTime>,
     node_count: u32,
-    graph: &CsrGraph<'graph, u32, u32>,
-    scratch: &mut BfsEpochScratch<'_, CsrGraph<'graph, u32, u32>>,
+    graph: &CsrNativeGraph<'graph, u32, u32>,
+    scratch: &mut BfsEpochScratch<'_, CsrNativeGraph<'graph, u32, u32>>,
 ) {
     group.bench_with_input(
         BenchmarkId::new("scratch_epoch_reused", node_count),
@@ -245,7 +245,7 @@ fn bench_epoch_scratch_lanes<'graph>(
 fn bench_allocating_indexed_lanes(
     group: &mut BenchmarkGroup<'_, WallTime>,
     node_count: u32,
-    graph: &CsrGraph<'_, u32, u32>,
+    graph: &CsrNativeGraph<'_, u32, u32>,
 ) {
     group.bench_with_input(
         BenchmarkId::new("indexed_alloc_vec_head", node_count),
@@ -260,8 +260,8 @@ fn bench_allocating_indexed_lanes(
 fn bench_workspace_lanes<'graph>(
     group: &mut BenchmarkGroup<'_, WallTime>,
     node_count: u32,
-    graph: &CsrGraph<'graph, u32, u32>,
-    workspace: &mut BfsWorkspace<CsrGraph<'graph, u32, u32>>,
+    graph: &CsrNativeGraph<'graph, u32, u32>,
+    workspace: &mut BfsWorkspace<CsrNativeGraph<'graph, u32, u32>>,
 ) {
     group.bench_with_input(
         BenchmarkId::new("workspace_epoch_alloc", node_count),
@@ -282,7 +282,7 @@ fn bench_csr_fixture(
     let mut group = c.benchmark_group(group_name);
     for node_count in node_counts {
         let (offsets, targets) = build(*node_count);
-        let graph = match CsrGraph::validate(*node_count, &offsets, &targets) {
+        let graph = match CsrNativeGraph::<u32, u32>::validate(*node_count, &offsets, &targets) {
             Ok(validated) => validated,
             Err(error) => panic!("benchmark CSR fixture was invalid: {error:?}"),
         };
@@ -292,7 +292,7 @@ fn bench_csr_fixture(
         let mut marks = vec![0; bound];
         let mut epoch_queue = vec![CsrNodeId(0); bound];
         let mut epoch_scratch = BfsEpochScratch::for_graph(&graph, &mut marks, &mut epoch_queue);
-        let mut workspace = BfsWorkspace::<CsrGraph<'_, u32, u32>>::with_element_bound(bound);
+        let mut workspace = BfsWorkspace::<CsrNativeGraph<'_, u32, u32>>::with_element_bound(bound);
 
         group.throughput(Throughput::Elements(u64::from(*node_count)));
         let mut clear_scratch = ClearScratch {

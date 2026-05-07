@@ -3,19 +3,19 @@
 use std::fmt;
 
 use oxgraph_algo::{BfsError, breadth_first_search_with_scratch};
-use oxgraph_csr::{CsrError, CsrGraph, CsrNodeId};
+use oxgraph_csr::{CsrError, CsrNativeGraph, CsrNodeId};
 
 /// Error returned by the example.
 #[derive(Debug)]
 enum ExampleError {
     /// CSR validation failed.
-    Csr(CsrError<u32>),
+    Csr(CsrError<u32, u32>),
     /// BFS scratch validation failed.
     Bfs(BfsError),
 }
 
-impl From<CsrError<u32>> for ExampleError {
-    fn from(error: CsrError<u32>) -> Self {
+impl From<CsrError<u32, u32>> for ExampleError {
+    fn from(error: CsrError<u32, u32>) -> Self {
         Self::Csr(error)
     }
 }
@@ -40,7 +40,7 @@ fn main() -> Result<(), ExampleError> {
     static OFFSETS: &[u32] = &[0, 2, 3, 4, 4];
     static TARGETS: &[u32] = &[1, 2, 2, 3];
 
-    let graph = CsrGraph::validate(4, OFFSETS, TARGETS)?;
+    let graph = CsrNativeGraph::<u32, u32>::validate(4, OFFSETS, TARGETS)?;
     let mut visited = [0; 4];
     let mut queue = [CsrNodeId(0); 4];
 

@@ -22,37 +22,62 @@ use oxgraph_graph::{
 };
 use oxgraph_snapshot::{SectionViewError, Snapshot};
 use zerocopy::{
-    FromBytes, Immutable, KnownLayout,
-    byteorder::{LE, U16, U32, U64, Usize},
+    FromBytes, Immutable, IntoBytes, KnownLayout,
+    byteorder::{LE, U16, U32, U64},
 };
 
-/// Section kind for a CSR offsets array stored in an `oxgraph-snapshot`.
+/// Section kind for a CSR `u16` offsets array stored in an `oxgraph-snapshot`.
 ///
-/// The payload is a sequence of unaligned little-endian index words of length
-/// `node_count + 1`. The concrete word width is selected by the consumer's
-/// [`CsrSnapshotGraph`] index type; the CSR view derives `node_count` from this
-/// length, so no separate metadata section is required.
+/// The payload is a sequence of unaligned little-endian `u16` words of length
+/// `node_count + 1`.
 ///
 /// # Performance
 ///
 /// `perf: unspecified`; this is a compile-time constant.
-pub const SNAPSHOT_KIND_CSR_OFFSETS: u32 = 0x0001;
+pub const SNAPSHOT_KIND_CSR_OFFSETS_U16: u32 = 0x0001;
 
-/// Section kind for a CSR targets array stored in an `oxgraph-snapshot`.
-///
-/// The payload is a sequence of unaligned little-endian index words whose
-/// length equals the final value of the CSR offsets array. The concrete word
-/// width is selected by the consumer's [`CsrSnapshotGraph`] index type.
+/// Section kind for a CSR `u32` offsets array stored in an `oxgraph-snapshot`.
 ///
 /// # Performance
 ///
 /// `perf: unspecified`; this is a compile-time constant.
-pub const SNAPSHOT_KIND_CSR_TARGETS: u32 = 0x0002;
+pub const SNAPSHOT_KIND_CSR_OFFSETS_U32: u32 = 0x0002;
+
+/// Section kind for a CSR `u64` offsets array stored in an `oxgraph-snapshot`.
+///
+/// # Performance
+///
+/// `perf: unspecified`; this is a compile-time constant.
+pub const SNAPSHOT_KIND_CSR_OFFSETS_U64: u32 = 0x0003;
+
+/// Section kind for a CSR `u16` targets array stored in an `oxgraph-snapshot`.
+///
+/// # Performance
+///
+/// `perf: unspecified`; this is a compile-time constant.
+pub const SNAPSHOT_KIND_CSR_TARGETS_U16: u32 = 0x0004;
+
+/// Section kind for a CSR `u32` targets array stored in an `oxgraph-snapshot`.
+///
+/// # Performance
+///
+/// `perf: unspecified`; this is a compile-time constant.
+pub const SNAPSHOT_KIND_CSR_TARGETS_U32: u32 = 0x0005;
+
+/// Section kind for a CSR `u64` targets array stored in an `oxgraph-snapshot`.
+///
+/// # Performance
+///
+/// `perf: unspecified`; this is a compile-time constant.
+pub const SNAPSHOT_KIND_CSR_TARGETS_U64: u32 = 0x0006;
 
 /// Private sealing traits for CSR-supported index and snapshot word types.
 mod sealed {
     /// Seals [`super::CsrIndex`] to the built-in unsigned integer widths.
     pub trait CsrIndex {}
+
+    /// Seals [`super::CsrSnapshotIndex`] to portable snapshot widths.
+    pub trait CsrSnapshotIndex {}
 
     /// Seals [`super::CsrSnapshotWord`] to built-in little-endian storage words.
     pub trait CsrSnapshotWord {}
@@ -82,13 +107,6 @@ mod sealed {
 pub trait CsrIndex:
     sealed::CsrIndex + Copy + Eq + Ord + fmt::Debug + fmt::Display + Hash + Sized
 {
-    /// Little-endian zerocopy storage word for this logical index type.
-    ///
-    /// # Performance
-    ///
-    /// `perf: unspecified`; this associated type carries no runtime cost.
-    type LittleEndianWord: CsrSnapshotWord<Index = Self>;
-
     /// Zero value for this index type.
     ///
     /// # Performance
@@ -106,7 +124,7 @@ pub trait CsrIndex:
     /// # Performance
     ///
     /// This method is `O(1)`.
-    fn to_usize(self) -> Result<usize, CsrError<Self>>;
+    fn to_usize(self) -> Option<usize>;
 
     /// Converts a `usize` to this index type when representable.
     ///
@@ -119,16 +137,14 @@ pub trait CsrIndex:
 
 /// Implements [`CsrIndex`] for one native unsigned integer type.
 macro_rules! impl_csr_index {
-    ($index:ty, $little_endian:ty) => {
+    ($index:ty) => {
         impl sealed::CsrIndex for $index {}
 
         impl CsrIndex for $index {
-            type LittleEndianWord = $little_endian;
-
             const ZERO: Self = 0;
 
-            fn to_usize(self) -> Result<usize, CsrError<Self>> {
-                usize::try_from(self).map_err(|_error| CsrError::UsizeOverflow { value: self })
+            fn to_usize(self) -> Option<usize> {
+                usize::try_from(self).ok()
             }
 
             fn from_usize(value: usize) -> Option<Self> {
@@ -138,25 +154,88 @@ macro_rules! impl_csr_index {
     };
 }
 
-impl_csr_index!(u16, U16<LE>);
-impl_csr_index!(u32, U32<LE>);
-impl_csr_index!(u64, U64<LE>);
+impl_csr_index!(u16);
+impl_csr_index!(u32);
+impl_csr_index!(u64);
 
 impl sealed::CsrIndex for usize {}
 
 impl CsrIndex for usize {
-    type LittleEndianWord = Usize<LE>;
-
     const ZERO: Self = 0;
 
-    fn to_usize(self) -> Result<usize, CsrError<Self>> {
-        Ok(self)
+    fn to_usize(self) -> Option<usize> {
+        Some(self)
     }
 
     fn from_usize(value: usize) -> Option<Self> {
         Some(value)
     }
 }
+
+/// Portable index width usable for persisted CSR snapshot payloads.
+///
+/// `usize` deliberately does not implement this trait. Snapshot bytes encode
+/// their width through section kinds and use only fixed little-endian unsigned
+/// widths.
+///
+/// # Performance
+///
+/// `perf: unspecified`; this trait carries compile-time metadata only.
+pub trait CsrSnapshotIndex: sealed::CsrSnapshotIndex + CsrIndex {
+    /// Little-endian zerocopy storage word for this logical index type.
+    ///
+    /// # Performance
+    ///
+    /// `perf: unspecified`; this associated type carries no runtime cost.
+    type LittleEndianWord: CsrSnapshotWord<Index = Self>;
+
+    /// Width-specific CSR offsets section kind.
+    ///
+    /// # Performance
+    ///
+    /// Reading this constant is `O(1)`.
+    const OFFSETS_KIND: u32;
+
+    /// Width-specific CSR targets section kind.
+    ///
+    /// # Performance
+    ///
+    /// Reading this constant is `O(1)`.
+    const TARGETS_KIND: u32;
+}
+
+/// Implements [`CsrSnapshotIndex`] for one portable snapshot width.
+macro_rules! impl_csr_snapshot_index {
+    ($index:ty, $little_endian:ty, $offsets_kind:expr, $targets_kind:expr) => {
+        impl sealed::CsrSnapshotIndex for $index {}
+
+        impl CsrSnapshotIndex for $index {
+            type LittleEndianWord = $little_endian;
+
+            const OFFSETS_KIND: u32 = $offsets_kind;
+            const TARGETS_KIND: u32 = $targets_kind;
+        }
+    };
+}
+
+impl_csr_snapshot_index!(
+    u16,
+    U16<LE>,
+    SNAPSHOT_KIND_CSR_OFFSETS_U16,
+    SNAPSHOT_KIND_CSR_TARGETS_U16
+);
+impl_csr_snapshot_index!(
+    u32,
+    U32<LE>,
+    SNAPSHOT_KIND_CSR_OFFSETS_U32,
+    SNAPSHOT_KIND_CSR_TARGETS_U32
+);
+impl_csr_snapshot_index!(
+    u64,
+    U64<LE>,
+    SNAPSHOT_KIND_CSR_OFFSETS_U64,
+    SNAPSHOT_KIND_CSR_TARGETS_U64
+);
 
 /// Integer word usable in borrowed CSR sections.
 ///
@@ -222,7 +301,6 @@ macro_rules! impl_little_endian_csr_word {
 impl_little_endian_csr_word!(U16<LE>, u16);
 impl_little_endian_csr_word!(U32<LE>, u32);
 impl_little_endian_csr_word!(U64<LE>, u64);
-impl_little_endian_csr_word!(Usize<LE>, usize);
 
 /// Little-endian zerocopy word usable when opening CSR data from a snapshot.
 ///
@@ -233,22 +311,37 @@ impl_little_endian_csr_word!(Usize<LE>, usize);
 ///
 /// `perf: unspecified`; this marker trait has no methods.
 pub trait CsrSnapshotWord:
-    sealed::CsrSnapshotWord + CsrWord + FromBytes + Immutable + KnownLayout
+    sealed::CsrSnapshotWord + CsrWord + FromBytes + Immutable + IntoBytes + KnownLayout
 {
 }
 
-/// Snapshot-backed little-endian CSR graph alias.
+/// Native borrowed CSR graph alias.
 ///
-/// The `Index` parameter selects the logical index width (`u16`, `u32`, `u64`,
-/// or `usize`). The underlying borrowed storage word is the matching zerocopy
-/// little-endian wrapper. `usize` snapshots are pointer-width-specific; prefer
-/// fixed-width indexes for portable persisted snapshots.
+/// The node and edge index parameters are spelled explicitly. Target entries
+/// use `NodeIndex`, and offset entries use `EdgeIndex`.
 ///
 /// # Performance
 ///
 /// `perf: unspecified`; this alias carries no runtime cost.
-pub type CsrSnapshotGraph<'view, Index> =
-    CsrGraph<'view, Index, <Index as CsrIndex>::LittleEndianWord>;
+pub type CsrNativeGraph<'view, NodeIndex, EdgeIndex> =
+    CsrGraph<'view, NodeIndex, EdgeIndex, EdgeIndex, NodeIndex>;
+
+/// Snapshot-backed little-endian CSR graph alias.
+///
+/// `NodeIndex` selects the target-entry wire width, and `EdgeIndex` selects the
+/// offset-entry wire width. Both widths must be portable snapshot widths
+/// (`u16`, `u32`, or `u64`).
+///
+/// # Performance
+///
+/// `perf: unspecified`; this alias carries no runtime cost.
+pub type CsrSnapshotGraph<'view, NodeIndex, EdgeIndex> = CsrGraph<
+    'view,
+    NodeIndex,
+    EdgeIndex,
+    <EdgeIndex as CsrSnapshotIndex>::LittleEndianWord,
+    <NodeIndex as CsrSnapshotIndex>::LittleEndianWord,
+>;
 
 /// Local node ID for [`CsrGraph`].
 ///
@@ -378,10 +471,7 @@ impl<Index> EdgeSlot<Unchecked, Index> {
     }
 }
 
-impl<Index> EdgeSlot<Checked, Index>
-where
-    Index: CsrIndex,
-{
+impl<Index> EdgeSlot<Checked, Index> {
     /// Creates a checked edge slot after graph validation has succeeded.
     ///
     /// # Performance
@@ -406,10 +496,31 @@ where
     /// # Performance
     ///
     /// This function is `O(1)`.
-    fn from_csr_range_slot(slot: usize) -> Self {
-        let raw = Index::from_usize(slot)
-            .unwrap_or_else(|| unreachable!("checked CSR edge slot must fit index type"));
-        Self::from_raw_slot(raw, slot)
+    fn from_csr_range_slot(slot: usize) -> Option<Self>
+    where
+        Index: CsrIndex,
+    {
+        let raw = Index::from_usize(slot)?;
+        Some(Self::from_raw_slot(raw, slot))
+    }
+
+    /// Reconstructs a checked edge slot from a validated CSR range position.
+    ///
+    /// # Panics
+    ///
+    /// Panics via `unreachable!()` only if CSR validation or range construction
+    /// has been bypassed inside this module. Public callers cannot construct a
+    /// checked edge range.
+    ///
+    /// # Performance
+    ///
+    /// This function is `O(1)`.
+    fn from_csr_range_slot_unchecked(slot: usize) -> Self
+    where
+        Index: CsrIndex,
+    {
+        Self::from_csr_range_slot(slot)
+            .unwrap_or_else(|| unreachable!("checked CSR edge slot must fit index type"))
     }
 
     /// Returns the dense `usize` edge slot.
@@ -426,7 +537,10 @@ where
     /// # Performance
     ///
     /// This function is `O(1)`.
-    const fn id(&self) -> CsrEdgeId<Index> {
+    const fn id(&self) -> CsrEdgeId<Index>
+    where
+        Index: Copy,
+    {
         CsrEdgeId(self.raw)
     }
 }
@@ -490,7 +604,7 @@ where
             return None;
         }
 
-        let slot = EdgeSlot::from_csr_range_slot(self.start);
+        let slot = EdgeSlot::from_csr_range_slot_unchecked(self.start);
         self.start += 1;
         Some(slot)
     }
@@ -500,10 +614,10 @@ where
 ///
 /// The graph stores outgoing adjacency using `offsets[node]..offsets[node + 1]`
 /// ranges into the flat `targets` slice. The view borrows both slices and does
-/// not allocate. `Index` is the single host-endian logical index type used for
-/// nodes, edges, offsets, and targets. `StorageWord` is how those indexes are
-/// stored in the borrowed slices; for native slices it is the same as `Index`,
-/// and for snapshots it is a matching little-endian zerocopy wrapper.
+/// not allocate. `NodeIndex` is the host-endian logical index type used for
+/// node IDs and target entries. `EdgeIndex` is the host-endian logical index
+/// type used for edge IDs and offset entries. The borrowed offset and target
+/// slices may use native words or matching little-endian zerocopy words.
 ///
 /// # Performance
 ///
@@ -511,25 +625,30 @@ where
 /// validation checks monotonic offsets and target bounds. Outgoing traversal for
 /// one node is `O(1)` to create and `O(k)` to yield `k` outgoing edges.
 #[derive(Clone, Copy, Debug)]
-pub struct CsrGraph<'view, Index, StorageWord>
+pub struct CsrGraph<'view, NodeIndex, EdgeIndex, OffsetWord, TargetWord>
 where
-    Index: CsrIndex,
-    StorageWord: CsrWord<Index = Index>,
+    NodeIndex: CsrIndex,
+    EdgeIndex: CsrIndex,
+    OffsetWord: CsrWord<Index = EdgeIndex>,
+    TargetWord: CsrWord<Index = NodeIndex>,
 {
     /// Number of nodes in the graph as the public logical index type.
-    node_count: Index,
+    node_count: NodeIndex,
     /// Number of nodes cached as a validated `usize` slot bound.
     node_bound: usize,
     /// CSR offsets with length `node_count + 1`.
-    offsets: &'view [StorageWord],
+    offsets: &'view [OffsetWord],
     /// Flat outgoing target node IDs.
-    targets: &'view [StorageWord],
+    targets: &'view [TargetWord],
 }
 
-impl<'view, Index, StorageWord> CsrGraph<'view, Index, StorageWord>
+impl<'view, NodeIndex, EdgeIndex, OffsetWord, TargetWord>
+    CsrGraph<'view, NodeIndex, EdgeIndex, OffsetWord, TargetWord>
 where
-    Index: CsrIndex,
-    StorageWord: CsrWord<Index = Index>,
+    NodeIndex: CsrIndex,
+    EdgeIndex: CsrIndex,
+    OffsetWord: CsrWord<Index = EdgeIndex>,
+    TargetWord: CsrWord<Index = NodeIndex>,
 {
     /// Validates borrowed CSR sections and returns a graph view.
     ///
@@ -544,11 +663,13 @@ where
     ///
     /// Validation is `O(n + m)` for `n` nodes and `m` edges.
     pub fn validate(
-        node_count: Index,
-        offsets: &'view [StorageWord],
-        targets: &'view [StorageWord],
-    ) -> Result<Self, CsrError<Index>> {
-        let node_bound = node_count.to_usize()?;
+        node_count: NodeIndex,
+        offsets: &'view [OffsetWord],
+        targets: &'view [TargetWord],
+    ) -> Result<Self, CsrError<NodeIndex, EdgeIndex>> {
+        let node_bound = node_count
+            .to_usize()
+            .ok_or(CsrError::NodeUsizeOverflow { value: node_count })?;
         let expected_offsets = node_bound
             .checked_add(1)
             .ok_or(CsrError::OffsetLengthOverflow { node_count })?;
@@ -560,10 +681,10 @@ where
             });
         }
 
-        let mut previous = Index::ZERO;
+        let mut previous = EdgeIndex::ZERO;
         for (index, offset_word) in offsets.iter().copied().enumerate() {
             let offset = offset_word.get();
-            if index == 0 && offset != Index::ZERO {
+            if index == 0 && offset != EdgeIndex::ZERO {
                 return Err(CsrError::FirstOffset { actual: offset });
             }
             if offset < previous {
@@ -577,7 +698,9 @@ where
         }
 
         let final_offset = offsets[offsets.len() - 1].get();
-        let final_offset_usize = final_offset.to_usize()?;
+        let final_offset_usize = final_offset.to_usize().ok_or(CsrError::EdgeUsizeOverflow {
+            value: final_offset,
+        })?;
         if final_offset_usize != targets.len() {
             return Err(CsrError::FinalOffset {
                 final_offset,
@@ -610,7 +733,7 @@ where
     ///
     /// This method is `O(1)`.
     #[must_use]
-    pub const fn offsets(&self) -> &'view [StorageWord] {
+    pub const fn offsets(&self) -> &'view [OffsetWord] {
         self.offsets
     }
 
@@ -620,7 +743,7 @@ where
     ///
     /// This method is `O(1)`.
     #[must_use]
-    pub const fn targets(&self) -> &'view [StorageWord] {
+    pub const fn targets(&self) -> &'view [TargetWord] {
         self.targets
     }
 
@@ -630,7 +753,7 @@ where
     ///
     /// This method is `O(1)`.
     #[must_use]
-    pub fn contains_node(&self, node: CsrNodeId<Index>) -> bool {
+    pub fn contains_node(&self, node: CsrNodeId<NodeIndex>) -> bool {
         self.try_node_slot(node).is_some()
     }
 
@@ -640,7 +763,7 @@ where
     ///
     /// This method is `O(1)`.
     #[must_use]
-    pub fn contains_edge(&self, edge: CsrEdgeId<Index>) -> bool {
+    pub fn contains_edge(&self, edge: CsrEdgeId<EdgeIndex>) -> bool {
         self.try_edge_slot(edge).is_some()
     }
 
@@ -650,7 +773,7 @@ where
     ///
     /// This method is `O(1)`.
     #[must_use]
-    pub fn try_target(&self, edge: CsrEdgeId<Index>) -> Option<CsrNodeId<Index>> {
+    pub fn try_target(&self, edge: CsrEdgeId<EdgeIndex>) -> Option<CsrNodeId<NodeIndex>> {
         self.try_edge_slot(edge)
             .map(|checked| self.target_node(checked))
     }
@@ -660,7 +783,7 @@ where
     /// # Performance
     ///
     /// This method is `O(1)`.
-    fn try_node_slot(&self, node: CsrNodeId<Index>) -> Option<NodeSlot<Checked, Index>> {
+    fn try_node_slot(&self, node: CsrNodeId<NodeIndex>) -> Option<NodeSlot<Checked, NodeIndex>> {
         self.check_node_slot(NodeSlot::from_id(node))
     }
 
@@ -671,12 +794,9 @@ where
     /// This method is `O(1)`.
     fn check_node_slot(
         &self,
-        node: NodeSlot<Unchecked, Index>,
-    ) -> Option<NodeSlot<Checked, Index>> {
-        let slot = match node.raw.to_usize() {
-            Ok(value) => value,
-            Err(_error) => return None,
-        };
+        node: NodeSlot<Unchecked, NodeIndex>,
+    ) -> Option<NodeSlot<Checked, NodeIndex>> {
+        let slot = node.raw.to_usize()?;
         if node.raw < self.node_count && slot < self.node_bound {
             Some(NodeSlot::from_raw_slot(node.raw, slot))
         } else {
@@ -694,7 +814,7 @@ where
     /// # Performance
     ///
     /// This method is `O(1)`.
-    fn checked_node_slot(&self, node: CsrNodeId<Index>) -> NodeSlot<Checked, Index> {
+    fn checked_node_slot(&self, node: CsrNodeId<NodeIndex>) -> NodeSlot<Checked, NodeIndex> {
         self.try_node_slot(node)
             .unwrap_or_else(|| panic!("CSR node ID {node:?} is invalid for this graph"))
     }
@@ -704,7 +824,7 @@ where
     /// # Performance
     ///
     /// This method is `O(1)`.
-    fn try_edge_slot(&self, edge: CsrEdgeId<Index>) -> Option<EdgeSlot<Checked, Index>> {
+    fn try_edge_slot(&self, edge: CsrEdgeId<EdgeIndex>) -> Option<EdgeSlot<Checked, EdgeIndex>> {
         self.check_edge_slot(EdgeSlot::from_id(edge))
     }
 
@@ -715,12 +835,9 @@ where
     /// This method is `O(1)`.
     fn check_edge_slot(
         &self,
-        edge: EdgeSlot<Unchecked, Index>,
-    ) -> Option<EdgeSlot<Checked, Index>> {
-        let slot = match edge.raw.to_usize() {
-            Ok(value) => value,
-            Err(_error) => return None,
-        };
+        edge: EdgeSlot<Unchecked, EdgeIndex>,
+    ) -> Option<EdgeSlot<Checked, EdgeIndex>> {
+        let slot = edge.raw.to_usize()?;
         if slot < self.targets.len() {
             Some(EdgeSlot::from_raw_slot(edge.raw, slot))
         } else {
@@ -738,7 +855,7 @@ where
     /// # Performance
     ///
     /// This method is `O(1)`.
-    fn checked_edge_slot(&self, edge: CsrEdgeId<Index>) -> EdgeSlot<Checked, Index> {
+    fn checked_edge_slot(&self, edge: CsrEdgeId<EdgeIndex>) -> EdgeSlot<Checked, EdgeIndex> {
         self.try_edge_slot(edge)
             .unwrap_or_else(|| panic!("CSR edge ID {edge:?} is invalid for this graph"))
     }
@@ -755,11 +872,10 @@ where
     /// # Performance
     ///
     /// This method is `O(1)`.
-    fn checked_offset_slot(offset: Index) -> usize {
-        match offset.to_usize() {
-            Ok(slot) => slot,
-            Err(_error) => unreachable!("checked CSR offset must fit usize"),
-        }
+    fn checked_offset_slot(offset: EdgeIndex) -> usize {
+        offset
+            .to_usize()
+            .unwrap_or_else(|| unreachable!("checked CSR offset must fit usize"))
     }
 
     /// Returns the target node for a checked CSR edge slot.
@@ -767,7 +883,7 @@ where
     /// # Performance
     ///
     /// This method is `O(1)` for valid edge IDs from this view.
-    fn target_node(&self, edge: EdgeSlot<Checked, Index>) -> CsrNodeId<Index> {
+    fn target_node(&self, edge: EdgeSlot<Checked, EdgeIndex>) -> CsrNodeId<NodeIndex> {
         CsrNodeId(self.targets[edge.index()].get())
     }
 
@@ -776,7 +892,7 @@ where
     /// # Performance
     ///
     /// This method is `O(1)` for valid node IDs from this view.
-    fn outgoing_range(&self, node: NodeSlot<Checked, Index>) -> EdgeRange<Checked, Index> {
+    fn outgoing_range(&self, node: NodeSlot<Checked, NodeIndex>) -> EdgeRange<Checked, EdgeIndex> {
         let index = node.index();
         EdgeRange::from_bounds(
             Self::checked_offset_slot(self.offsets[index].get()),
@@ -785,19 +901,26 @@ where
     }
 }
 
-impl<'view, Index, StorageWord> CsrGraph<'view, Index, StorageWord>
+impl<'view, NodeIndex, EdgeIndex>
+    CsrGraph<
+        'view,
+        NodeIndex,
+        EdgeIndex,
+        <EdgeIndex as CsrSnapshotIndex>::LittleEndianWord,
+        <NodeIndex as CsrSnapshotIndex>::LittleEndianWord,
+    >
 where
-    Index: CsrIndex,
-    StorageWord: CsrSnapshotWord<Index = Index>,
+    NodeIndex: CsrSnapshotIndex,
+    EdgeIndex: CsrSnapshotIndex,
 {
     /// Builds a snapshot-backed CSR view from a validated [`Snapshot`].
     ///
-    /// Reads the [`SNAPSHOT_KIND_CSR_OFFSETS`] and [`SNAPSHOT_KIND_CSR_TARGETS`]
-    /// sections, borrows them as little-endian index words, derives
-    /// `node_count` from `offsets.len() - 1`, and runs CSR-shape validation. The
-    /// returned view borrows directly from the snapshot's byte slice — no
-    /// copying. Use [`CsrSnapshotGraph`] to select a snapshot index width by its
-    /// native type, for example `CsrSnapshotGraph<'_, u64>`.
+    /// Reads the width-specific CSR offsets and targets sections, borrows them
+    /// as little-endian index words, derives `node_count` from
+    /// `offsets.len() - 1`, and runs CSR-shape validation. The returned view
+    /// borrows directly from the snapshot's byte slice and does not copy. Use
+    /// [`CsrSnapshotGraph`] to select node and edge snapshot widths, for example
+    /// `CsrSnapshotGraph<'_, u32, u64>`.
     ///
     /// # Errors
     ///
@@ -809,18 +932,20 @@ where
     ///
     /// This function is `O(s + n + m)` for `s` snapshot sections, `n` graph
     /// nodes, and `m` graph edges.
-    pub fn from_snapshot(snapshot: &Snapshot<'view>) -> Result<Self, CsrSnapshotError<Index>> {
+    pub fn from_snapshot(
+        snapshot: &Snapshot<'view>,
+    ) -> Result<Self, CsrSnapshotError<NodeIndex, EdgeIndex>> {
         let offsets_section = snapshot
-            .section(SNAPSHOT_KIND_CSR_OFFSETS)
+            .section(EdgeIndex::OFFSETS_KIND)
             .ok_or(CsrSnapshotError::MissingOffsets)?;
         let targets_section = snapshot
-            .section(SNAPSHOT_KIND_CSR_TARGETS)
+            .section(NodeIndex::TARGETS_KIND)
             .ok_or(CsrSnapshotError::MissingTargets)?;
 
-        let offsets: &'view [StorageWord] = offsets_section
+        let offsets: &'view [<EdgeIndex as CsrSnapshotIndex>::LittleEndianWord] = offsets_section
             .try_as_slice()
             .map_err(CsrSnapshotError::OffsetsView)?;
-        let targets: &'view [StorageWord] = targets_section
+        let targets: &'view [<NodeIndex as CsrSnapshotIndex>::LittleEndianWord] = targets_section
             .try_as_slice()
             .map_err(CsrSnapshotError::TargetsView)?;
 
@@ -830,7 +955,7 @@ where
 
         let node_count_usize = offsets.len() - 1;
         let node_count =
-            Index::from_usize(node_count_usize).ok_or(CsrSnapshotError::NodeCountOverflow {
+            NodeIndex::from_usize(node_count_usize).ok_or(CsrSnapshotError::NodeCountOverflow {
                 offsets_len: offsets.len(),
             })?;
 
@@ -838,19 +963,25 @@ where
     }
 }
 
-impl<Index, StorageWord> TopologyBase for CsrGraph<'_, Index, StorageWord>
+impl<NodeIndex, EdgeIndex, OffsetWord, TargetWord> TopologyBase
+    for CsrGraph<'_, NodeIndex, EdgeIndex, OffsetWord, TargetWord>
 where
-    Index: CsrIndex,
-    StorageWord: CsrWord<Index = Index>,
+    NodeIndex: CsrIndex,
+    EdgeIndex: CsrIndex,
+    OffsetWord: CsrWord<Index = EdgeIndex>,
+    TargetWord: CsrWord<Index = NodeIndex>,
 {
-    type ElementId = CsrNodeId<Index>;
-    type RelationId = CsrEdgeId<Index>;
+    type ElementId = CsrNodeId<NodeIndex>;
+    type RelationId = CsrEdgeId<EdgeIndex>;
 }
 
-impl<Index, StorageWord> TopologyCounts for CsrGraph<'_, Index, StorageWord>
+impl<NodeIndex, EdgeIndex, OffsetWord, TargetWord> TopologyCounts
+    for CsrGraph<'_, NodeIndex, EdgeIndex, OffsetWord, TargetWord>
 where
-    Index: CsrIndex,
-    StorageWord: CsrWord<Index = Index>,
+    NodeIndex: CsrIndex,
+    EdgeIndex: CsrIndex,
+    OffsetWord: CsrWord<Index = EdgeIndex>,
+    TargetWord: CsrWord<Index = NodeIndex>,
 {
     fn element_count(&self) -> usize {
         self.node_bound
@@ -861,109 +992,136 @@ where
     }
 }
 
-impl<Index, StorageWord> GraphCounts for CsrGraph<'_, Index, StorageWord>
+impl<NodeIndex, EdgeIndex, OffsetWord, TargetWord> GraphCounts
+    for CsrGraph<'_, NodeIndex, EdgeIndex, OffsetWord, TargetWord>
 where
-    Index: CsrIndex,
-    StorageWord: CsrWord<Index = Index>,
+    NodeIndex: CsrIndex,
+    EdgeIndex: CsrIndex,
+    OffsetWord: CsrWord<Index = EdgeIndex>,
+    TargetWord: CsrWord<Index = NodeIndex>,
 {
 }
 
-impl<Index, StorageWord> ElementIndex for CsrGraph<'_, Index, StorageWord>
+impl<NodeIndex, EdgeIndex, OffsetWord, TargetWord> ElementIndex
+    for CsrGraph<'_, NodeIndex, EdgeIndex, OffsetWord, TargetWord>
 where
-    Index: CsrIndex,
-    StorageWord: CsrWord<Index = Index>,
+    NodeIndex: CsrIndex,
+    EdgeIndex: CsrIndex,
+    OffsetWord: CsrWord<Index = EdgeIndex>,
+    TargetWord: CsrWord<Index = NodeIndex>,
 {
     fn element_bound(&self) -> usize {
         self.node_bound
     }
 
-    fn element_index(&self, element: CsrNodeId<Index>) -> usize {
+    fn element_index(&self, element: CsrNodeId<NodeIndex>) -> usize {
         self.checked_node_slot(element).index()
     }
 }
 
-impl<Index, StorageWord> RelationIndex for CsrGraph<'_, Index, StorageWord>
+impl<NodeIndex, EdgeIndex, OffsetWord, TargetWord> RelationIndex
+    for CsrGraph<'_, NodeIndex, EdgeIndex, OffsetWord, TargetWord>
 where
-    Index: CsrIndex,
-    StorageWord: CsrWord<Index = Index>,
+    NodeIndex: CsrIndex,
+    EdgeIndex: CsrIndex,
+    OffsetWord: CsrWord<Index = EdgeIndex>,
+    TargetWord: CsrWord<Index = NodeIndex>,
 {
     fn relation_bound(&self) -> usize {
         self.targets.len()
     }
 
-    fn relation_index(&self, relation: CsrEdgeId<Index>) -> usize {
+    fn relation_index(&self, relation: CsrEdgeId<EdgeIndex>) -> usize {
         self.checked_edge_slot(relation).index()
     }
 }
 
-impl<Index, StorageWord> ContainsElement for CsrGraph<'_, Index, StorageWord>
+impl<NodeIndex, EdgeIndex, OffsetWord, TargetWord> ContainsElement
+    for CsrGraph<'_, NodeIndex, EdgeIndex, OffsetWord, TargetWord>
 where
-    Index: CsrIndex,
-    StorageWord: CsrWord<Index = Index>,
+    NodeIndex: CsrIndex,
+    EdgeIndex: CsrIndex,
+    OffsetWord: CsrWord<Index = EdgeIndex>,
+    TargetWord: CsrWord<Index = NodeIndex>,
 {
-    fn contains_element(&self, element: CsrNodeId<Index>) -> bool {
+    fn contains_element(&self, element: CsrNodeId<NodeIndex>) -> bool {
         self.contains_node(element)
     }
 }
 
-impl<Index, StorageWord> ContainsRelation for CsrGraph<'_, Index, StorageWord>
+impl<NodeIndex, EdgeIndex, OffsetWord, TargetWord> ContainsRelation
+    for CsrGraph<'_, NodeIndex, EdgeIndex, OffsetWord, TargetWord>
 where
-    Index: CsrIndex,
-    StorageWord: CsrWord<Index = Index>,
+    NodeIndex: CsrIndex,
+    EdgeIndex: CsrIndex,
+    OffsetWord: CsrWord<Index = EdgeIndex>,
+    TargetWord: CsrWord<Index = NodeIndex>,
 {
-    fn contains_relation(&self, relation: CsrEdgeId<Index>) -> bool {
+    fn contains_relation(&self, relation: CsrEdgeId<EdgeIndex>) -> bool {
         self.contains_edge(relation)
     }
 }
 
-impl<Index, StorageWord> EdgeTargetGraph for CsrGraph<'_, Index, StorageWord>
+impl<NodeIndex, EdgeIndex, OffsetWord, TargetWord> EdgeTargetGraph
+    for CsrGraph<'_, NodeIndex, EdgeIndex, OffsetWord, TargetWord>
 where
-    Index: CsrIndex,
-    StorageWord: CsrWord<Index = Index>,
+    NodeIndex: CsrIndex,
+    EdgeIndex: CsrIndex,
+    OffsetWord: CsrWord<Index = EdgeIndex>,
+    TargetWord: CsrWord<Index = NodeIndex>,
 {
-    fn target(&self, edge: CsrEdgeId<Index>) -> CsrNodeId<Index> {
+    fn target(&self, edge: CsrEdgeId<EdgeIndex>) -> CsrNodeId<NodeIndex> {
         self.target_node(self.checked_edge_slot(edge))
     }
 }
 
-impl<Index, StorageWord> OutgoingGraph for CsrGraph<'_, Index, StorageWord>
+impl<NodeIndex, EdgeIndex, OffsetWord, TargetWord> OutgoingGraph
+    for CsrGraph<'_, NodeIndex, EdgeIndex, OffsetWord, TargetWord>
 where
-    Index: CsrIndex,
-    StorageWord: CsrWord<Index = Index>,
+    NodeIndex: CsrIndex,
+    EdgeIndex: CsrIndex,
+    OffsetWord: CsrWord<Index = EdgeIndex>,
+    TargetWord: CsrWord<Index = NodeIndex>,
 {
     type OutEdges<'view>
-        = CsrOutEdges<Index>
+        = CsrOutEdges<EdgeIndex>
     where
         Self: 'view;
 
-    fn outgoing_edges(&self, node: CsrNodeId<Index>) -> Self::OutEdges<'_> {
+    fn outgoing_edges(&self, node: CsrNodeId<NodeIndex>) -> Self::OutEdges<'_> {
         CsrOutEdges {
             range: self.outgoing_range(self.checked_node_slot(node)),
         }
     }
 }
 
-impl<Index, StorageWord> OutgoingEdgeCount for CsrGraph<'_, Index, StorageWord>
+impl<NodeIndex, EdgeIndex, OffsetWord, TargetWord> OutgoingEdgeCount
+    for CsrGraph<'_, NodeIndex, EdgeIndex, OffsetWord, TargetWord>
 where
-    Index: CsrIndex,
-    StorageWord: CsrWord<Index = Index>,
+    NodeIndex: CsrIndex,
+    EdgeIndex: CsrIndex,
+    OffsetWord: CsrWord<Index = EdgeIndex>,
+    TargetWord: CsrWord<Index = NodeIndex>,
 {
-    fn out_degree(&self, node: CsrNodeId<Index>) -> usize {
+    fn out_degree(&self, node: CsrNodeId<NodeIndex>) -> usize {
         self.outgoing_range(self.checked_node_slot(node)).len()
     }
 }
 
-impl<Index, StorageWord> ElementSuccessors for CsrGraph<'_, Index, StorageWord>
+impl<NodeIndex, EdgeIndex, OffsetWord, TargetWord> ElementSuccessors
+    for CsrGraph<'_, NodeIndex, EdgeIndex, OffsetWord, TargetWord>
 where
-    Index: CsrIndex,
-    StorageWord: CsrWord<Index = Index>,
+    NodeIndex: CsrIndex,
+    EdgeIndex: CsrIndex,
+    OffsetWord: CsrWord<Index = EdgeIndex>,
+    TargetWord: CsrWord<Index = NodeIndex>,
 {
     type Successors<'view>
-        = CsrOutNeighbors<'view, StorageWord>
+        = CsrOutNeighbors<'view, TargetWord>
     where
         Self: 'view;
 
-    fn element_successors(&self, node: CsrNodeId<Index>) -> Self::Successors<'_> {
+    fn element_successors(&self, node: CsrNodeId<NodeIndex>) -> Self::Successors<'_> {
         let range = self.outgoing_range(self.checked_node_slot(node));
         CsrOutNeighbors {
             targets: self.targets[range.as_range()].iter(),
@@ -1043,11 +1201,11 @@ where
 ///
 /// `perf: unspecified`; errors are returned only from validation paths.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum CsrError<Index> {
+pub enum CsrError<NodeIndex, EdgeIndex> {
     /// `node_count + 1` overflowed `usize`.
     OffsetLengthOverflow {
         /// Node count that could not be converted to an offset length.
-        node_count: Index,
+        node_count: NodeIndex,
     },
     /// Offset slice length does not equal `node_count + 1`.
     OffsetLength {
@@ -1059,21 +1217,21 @@ pub enum CsrError<Index> {
     /// The first CSR offset was not zero.
     FirstOffset {
         /// Actual first offset.
-        actual: Index,
+        actual: EdgeIndex,
     },
     /// Offsets were not monotonically increasing.
     NonMonotonicOffset {
         /// Offset index where monotonicity failed.
         index: usize,
         /// Previous offset value.
-        previous: Index,
+        previous: EdgeIndex,
         /// Actual offset value at `index`.
-        actual: Index,
+        actual: EdgeIndex,
     },
     /// Final offset does not match target slice length.
     FinalOffset {
         /// Final offset value.
-        final_offset: Index,
+        final_offset: EdgeIndex,
         /// Target slice length.
         target_len: usize,
     },
@@ -1082,20 +1240,26 @@ pub enum CsrError<Index> {
         /// Target slice index containing the bad value.
         index: usize,
         /// Bad target node ID.
-        target: Index,
+        target: NodeIndex,
         /// Number of nodes in the graph.
-        node_count: Index,
+        node_count: NodeIndex,
     },
-    /// An index value could not be represented as `usize` on this target.
-    UsizeOverflow {
-        /// Value that could not be represented as `usize`.
-        value: Index,
+    /// A node index value could not be represented as `usize` on this target.
+    NodeUsizeOverflow {
+        /// Node value that could not be represented as `usize`.
+        value: NodeIndex,
+    },
+    /// An edge index value could not be represented as `usize` on this target.
+    EdgeUsizeOverflow {
+        /// Edge value that could not be represented as `usize`.
+        value: EdgeIndex,
     },
 }
 
-impl<Index> fmt::Display for CsrError<Index>
+impl<NodeIndex, EdgeIndex> fmt::Display for CsrError<NodeIndex, EdgeIndex>
 where
-    Index: fmt::Display,
+    NodeIndex: fmt::Display,
+    EdgeIndex: fmt::Display,
 {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -1135,14 +1299,22 @@ where
                 formatter,
                 "CSR target at index {index} is out of range: target {target}, node count {node_count}"
             ),
-            Self::UsizeOverflow { value } => {
-                write!(formatter, "CSR index value {value} does not fit usize")
+            Self::NodeUsizeOverflow { value } => {
+                write!(formatter, "CSR node index value {value} does not fit usize")
+            }
+            Self::EdgeUsizeOverflow { value } => {
+                write!(formatter, "CSR edge index value {value} does not fit usize")
             }
         }
     }
 }
 
-impl<Index> core::error::Error for CsrError<Index> where Index: fmt::Debug + fmt::Display {}
+impl<NodeIndex, EdgeIndex> core::error::Error for CsrError<NodeIndex, EdgeIndex>
+where
+    NodeIndex: fmt::Debug + fmt::Display,
+    EdgeIndex: fmt::Debug + fmt::Display,
+{
+}
 
 /// Error returned when a snapshot cannot be opened as a CSR graph.
 ///
@@ -1150,10 +1322,10 @@ impl<Index> core::error::Error for CsrError<Index> where Index: fmt::Debug + fmt
 ///
 /// `perf: unspecified`; errors are returned only from snapshot-bound paths.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum CsrSnapshotError<Index> {
-    /// The snapshot has no [`SNAPSHOT_KIND_CSR_OFFSETS`] section.
+pub enum CsrSnapshotError<NodeIndex, EdgeIndex> {
+    /// The snapshot has no CSR offsets section for the requested edge width.
     MissingOffsets,
-    /// The snapshot has no [`SNAPSHOT_KIND_CSR_TARGETS`] section.
+    /// The snapshot has no CSR targets section for the requested node width.
     MissingTargets,
     /// The CSR offsets section payload could not be borrowed as the selected
     /// little-endian index word slice.
@@ -1170,12 +1342,13 @@ pub enum CsrSnapshotError<Index> {
         offsets_len: usize,
     },
     /// CSR-shape validation failed on the borrowed sections.
-    Csr(CsrError<Index>),
+    Csr(CsrError<NodeIndex, EdgeIndex>),
 }
 
-impl<Index> fmt::Display for CsrSnapshotError<Index>
+impl<NodeIndex, EdgeIndex> fmt::Display for CsrSnapshotError<NodeIndex, EdgeIndex>
 where
-    Index: fmt::Display,
+    NodeIndex: fmt::Display,
+    EdgeIndex: fmt::Display,
 {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -1199,10 +1372,17 @@ where
     }
 }
 
-impl<Index> core::error::Error for CsrSnapshotError<Index> where Index: fmt::Debug + fmt::Display {}
+impl<NodeIndex, EdgeIndex> core::error::Error for CsrSnapshotError<NodeIndex, EdgeIndex>
+where
+    NodeIndex: fmt::Debug + fmt::Display,
+    EdgeIndex: fmt::Debug + fmt::Display,
+{
+}
 
-impl<Index> From<CsrError<Index>> for CsrSnapshotError<Index> {
-    fn from(error: CsrError<Index>) -> Self {
+impl<NodeIndex, EdgeIndex> From<CsrError<NodeIndex, EdgeIndex>>
+    for CsrSnapshotError<NodeIndex, EdgeIndex>
+{
+    fn from(error: CsrError<NodeIndex, EdgeIndex>) -> Self {
         Self::Csr(error)
     }
 }

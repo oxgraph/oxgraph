@@ -8,8 +8,8 @@
 
 use oxgraph_algo::breadth_first_search;
 use oxgraph_csr::{
-    CsrNodeId, CsrSnapshotError, CsrSnapshotGraph, SNAPSHOT_KIND_CSR_OFFSETS,
-    SNAPSHOT_KIND_CSR_TARGETS,
+    CsrNodeId, CsrSnapshotError, CsrSnapshotGraph, SNAPSHOT_KIND_CSR_OFFSETS_U32,
+    SNAPSHOT_KIND_CSR_TARGETS_U32,
 };
 use oxgraph_graph::GraphCounts;
 use oxgraph_snapshot::{Snapshot, SnapshotBuilder, SnapshotError};
@@ -20,7 +20,7 @@ enum DemoError {
     /// Snapshot opening failed.
     Snapshot(SnapshotError),
     /// CSR adaptor failed.
-    Adaptor(CsrSnapshotError<u32>),
+    Adaptor(CsrSnapshotError<u32, u32>),
 }
 
 impl From<SnapshotError> for DemoError {
@@ -29,8 +29,8 @@ impl From<SnapshotError> for DemoError {
     }
 }
 
-impl From<CsrSnapshotError<u32>> for DemoError {
-    fn from(error: CsrSnapshotError<u32>) -> Self {
+impl From<CsrSnapshotError<u32, u32>> for DemoError {
+    fn from(error: CsrSnapshotError<u32, u32>) -> Self {
         Self::Adaptor(error)
     }
 }
@@ -54,10 +54,10 @@ fn main() -> Result<(), DemoError> {
     let targets_bytes: Vec<u8> = targets.iter().flat_map(|word| word.to_le_bytes()).collect();
 
     let mut builder = SnapshotBuilder::new();
-    if let Err(error) = builder.add_section(SNAPSHOT_KIND_CSR_OFFSETS, 0, 2, offsets_bytes) {
+    if let Err(error) = builder.add_section(SNAPSHOT_KIND_CSR_OFFSETS_U32, 0, 2, offsets_bytes) {
         panic!("offsets section: {error:?}");
     }
-    if let Err(error) = builder.add_section(SNAPSHOT_KIND_CSR_TARGETS, 0, 2, targets_bytes) {
+    if let Err(error) = builder.add_section(SNAPSHOT_KIND_CSR_TARGETS_U32, 0, 2, targets_bytes) {
         panic!("targets section: {error:?}");
     }
     let bytes = match builder.finish() {
@@ -67,7 +67,7 @@ fn main() -> Result<(), DemoError> {
     println!("encoded snapshot: {} bytes", bytes.len());
 
     let snapshot = Snapshot::open(&bytes)?;
-    let graph = CsrSnapshotGraph::<u32>::from_snapshot(&snapshot)?;
+    let graph = CsrSnapshotGraph::<u32, u32>::from_snapshot(&snapshot)?;
     println!(
         "graph: {} nodes, {} edges",
         graph.node_count(),

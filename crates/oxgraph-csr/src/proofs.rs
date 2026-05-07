@@ -33,7 +33,7 @@ fn validate_total_n3_m4() {
     kani::assume(offsets_take <= offsets_storage.len());
     let offsets_slice = &offsets_storage[..offsets_take];
 
-    let _ = CsrGraph::<u32, u32>::validate(node_count, offsets_slice, &targets);
+    let _ = CsrGraph::<u32, u32, u32, u32>::validate(node_count, offsets_slice, &targets);
 }
 
 /// A successfully validated CSR view never produces an out-of-bounds target
@@ -51,7 +51,7 @@ fn validated_traversal_in_bounds_n2_m2() {
     let offsets: [u32; 3] = kani::any();
     let targets: [u32; 2] = kani::any();
 
-    let graph = match CsrGraph::<u32, u32>::validate(2, &offsets, &targets) {
+    let graph = match CsrGraph::<u32, u32, u32, u32>::validate(2, &offsets, &targets) {
         Ok(value) => value,
         Err(_) => return,
     };
@@ -81,7 +81,7 @@ fn validated_final_offset_matches_targets_len_n3() {
     let offsets: [u32; 4] = kani::any();
     let targets: [u32; 3] = kani::any();
 
-    let graph = match CsrGraph::<u32, u32>::validate(3, &offsets, &targets) {
+    let graph = match CsrGraph::<u32, u32, u32, u32>::validate(3, &offsets, &targets) {
         Ok(value) => value,
         Err(_) => return,
     };

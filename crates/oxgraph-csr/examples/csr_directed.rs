@@ -4,7 +4,7 @@ use oxgraph_csr::{CsrGraph, CsrNodeId};
 use oxgraph_graph::{EdgeTargetGraph, GraphCounts, OutgoingEdgeCount, OutgoingGraph};
 
 /// Runs the example and reports validation errors.
-fn main() -> Result<(), oxgraph_csr::CsrError<u32>> {
+fn main() -> Result<(), oxgraph_csr::CsrError<u32, u32>> {
     static OFFSETS: &[u32] = &[0, 2, 3, 4, 4];
     static TARGETS: &[u32] = &[1, 2, 2, 3];
 
