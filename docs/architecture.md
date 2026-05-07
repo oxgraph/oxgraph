@@ -1,98 +1,164 @@
 # OxGraph architecture
 
-OxGraph is a storage-agnostic topology substrate: **Topology here. Meaning elsewhere. Storage anywhere.** The lowest crates stay small, no-std where possible, and independent of Arrow, Python, and named properties. Higher layers select richer data into capability views for algorithms.
+OxGraph is a storage-agnostic topology substrate: **Topology here. Meaning
+elsewhere. Storage anywhere.** Foundation crates stay domain-neutral, no-std
+where possible, and independent of Arrow, properties, PyO3, Python labels, and
+algorithm semantics. Higher layers adapt selected data into explicit capability
+views.
 
-## Layer hierarchy
+## Active layer graph
 
 ```text
-oxgraph-topology        no_std shared capabilities: IDs, traversal, weights, identity
-  ├─ oxgraph-graph      binary graph vocabulary wrappers
-  └─ oxgraph-hyper      hypergraph vocabulary wrappers
+oxgraph-topology        no_std shared IDs, traversal, weights, identity traits
+  |- oxgraph-graph      no_std binary graph vocabulary wrappers
+  `- oxgraph-hyper      no_std hypergraph vocabulary wrappers
+
 oxgraph-csr            borrowed CSR graph layout
 oxgraph-hyper-bcsr     borrowed directed bipartite-CSR hypergraph layout
 oxgraph-snapshot       topology-agnostic section container
-oxgraph-property       std + Arrow named typed layers and selected weight views
-oxgraph-graph-build    append/update graph builder, freeze to owned view
-oxgraph-hyper-build    append/update hypergraph builder, freeze to owned view
+
+oxgraph-property       std + Arrow named typed property layers and selections
+oxgraph-graph-build    no_std + alloc append/freeze graph construction core
+oxgraph-hyper-build    no_std + alloc append/freeze hypergraph construction core
 oxgraph-algo           BFS and PageRank over capability bounds
-oxgraph-python         PyO3 facade exposing OxGraph concepts to Python
-oxgraph                feature-gated umbrella re-exports
+oxgraph                feature-gated curated umbrella re-exports
 ```
 
-Foundation crates (`topology`, `graph`, `hyper`, `csr`, `hyper-bcsr`) do not depend on Arrow, PyO3, Python labels, or `oxgraph-property`.
+The Python facade is not part of the active Rust merge stack. It is a blocked
+follow-up after the Rust contracts in this document are implemented and
+reviewed.
 
-## Weights versus properties
+Foundation crates (`topology`, `graph`, `hyper`, `csr`, and `hyper-bcsr`) must
+not depend on Arrow, `oxgraph-property`, PyO3, Python packaging, or builder
+crates. Builders may depend on snapshot/layout crates only behind explicit
+export features.
 
-Topology weights are optional capabilities:
+## Width policy
 
-- element weight
-- relation weight
-- incidence weight
+Public Rust APIs in this stack do not use default generic type parameters to
+choose ID widths, index widths, numeric scalars, damping policy, or tolerance
+policy for users. Callers spell the width or scalar type they want.
 
-A weight capability is total for every visible ID in its family and returns a `Copy` representation. It carries no meaning: not probability, distance, cost, capacity, count, confidence, or metadata.
+CSR memory views use two logical widths:
 
-Named values live in `oxgraph-property`. A property layer is keyed by ID family, has a stable layer ID and name, carries an Arrow field, and records dense or sparse storage with an explicit missing policy. Algorithms consume property data only after a caller selects a layer into a topology weight view.
+- `NodeIndex` for node IDs and target entries.
+- `EdgeIndex` for edge IDs and offset entries.
 
-## Identity
+BCSR memory views use three logical widths:
 
-Canonical identity is opt-in. A view that implements canonical identity guarantees local-to-canonical mapping for the selected ID family within the view generation, frozen view, or snapshot. Reverse canonical-to-local lookup is separate and optional because filtered/projected views may not have a total reverse map.
+- `VertexIndex` for vertex IDs and participant arrays.
+- `RelationIndex` for hyperedge/relation IDs and vertex relation arrays.
+- `IncidenceIndex` for participant/incidence IDs and offset arrays.
 
-Builders assign dense append-only canonical IDs. Frozen views may keep local IDs equal to canonical IDs or may reorder locally as long as opted-in identity maps recover the canonical IDs.
+Native memory views may use `u16`, `u32`, `u64`, or `usize`. Persisted snapshot
+wire widths are only `u16`, `u32`, and `u64`; `usize` is native-memory-only.
 
-Python labels are facade-owned domain maps. Rust algorithms never interpret them.
+## Snapshot wire contract
 
-## Builders and freeze
+`oxgraph-snapshot` remains a topology-agnostic section container. Layout and
+property crates register section kinds and validate their own payloads.
 
-The first builders are construction-time systems:
+Persisted integer payloads are explicitly little-endian. CSR and BCSR topology
+sections use width-specific section kinds, so a generic tool can identify
+payload width from section kind alone. Snapshot readers request a typed view;
+wrong-width opens fail instead of reinterpreting bytes.
 
-- add isolated elements;
-- add graph edges or directed hyperedges;
-- update typed weights/properties before freeze;
-- maintain construction indexes;
-- freeze/export to immutable owned views and snapshots.
+Property and identity sections are also width-specific. Descriptor records and
+identity mode/map records are generic over a selected metadata/canonical ID word
+width. Snapshot bytes remain an internal ABI candidate, not a stable ABI.
 
-Deletion, tombstones, ID reuse, compaction-after-delete, and overlay mutation are out of scope for this slice. Borrowed caches are generation-checked and invalidated by edits; Python exposes owned frozen views to avoid lifetime footguns.
+## Properties and identity
 
-## Snapshot direction
+Topology weights are semantic-free optional capabilities. A weight view is one
+selected total view at a time; it is not a named property registry.
 
-`oxgraph-snapshot` remains a topology-agnostic section container. Higher layers register section kinds for canonical identity maps and property descriptors/data. Snapshot validation checks structure: section consistency, ID-family compatibility, type tags, lengths, names, and layout. Algorithms validate numeric semantics such as finite/non-negative/normalizable values.
+Named values live in `oxgraph-property`. Property layer IDs, sparse indexes,
+descriptor metadata words, and identity-map canonical IDs are generic over
+explicit unsigned widths. Arrow IPC schema is the only stored Arrow type/schema
+source of truth; coarse duplicate Arrow family metadata is not part of the
+contract.
 
-The internal v1 property/identity encoding used by the Python-enabling slice is Arrow-backed and ABI-candidate only:
+Property arrays in snapshots are keyed by snapshot-local IDs. If a snapshot
+layout reorders IDs relative to canonical builder order, the exporter must:
 
-- one identity-mode section contains fixed records for element, relation, and incidence families;
-- a mode is either `local == canonical` or `explicit u32 local-to-canonical map`;
-- optional element/relation/incidence map sections contain little-endian `u32` canonical IDs when local IDs differ;
-- one property descriptor section contains fixed records plus UTF-8 layer-name and Arrow-field-name bytes;
-- one property data section stores concatenated Arrow IPC streams, preserving each layer's Arrow schema/type information, dense/sparse values, sparse indexes, and optional Arrow scalar default;
-- descriptor records carry the Arrow value family, ID family, role, storage, missing policy, logical length, and data offsets needed for structural validation, including missing, overlapping, gapped, or trailing data ranges.
+- emit the matching local-to-canonical identity map;
+- rekey affected property layers into snapshot-local order;
+- reject property layers that do not cover the visible local ID range.
 
-Snapshot v1 bytes remain an ABI candidate, not a stable ABI.
+For CSR graph snapshots, relation/edge properties are rekeyed when CSR local
+edge order differs from canonical edge insertion order. For BCSR hypergraph
+snapshots, incidence properties are rekeyed because snapshot-local participant
+order is head/source incidences followed by tail/target incidences in BCSR
+order.
 
-## PageRank policies
+Sparse-default property snapshots store two explicit Arrow IPC ranges: sparse
+index/value data and a length-one non-null default stream.
 
-`oxgraph-algo::pagerank` uses the canonical PageRank name.
+## Builders
 
-Ordinary directed graph PageRank:
+Builders are append/freeze construction systems, not mutation frameworks. The
+core graph and hypergraph builder crates are `no_std + alloc`, generic over
+explicit builder ID widths, and free of Arrow and property dependencies in their
+base feature set.
 
-- unweighted edges default to weight `1`;
-- rank configuration, reports, personalization, output ranks, teleport vectors, and scratch storage are generic over an OxGraph-owned `PageRankScalar`;
-- weighted mode consumes selected relation weights convertible into the PageRank scalar;
-- weights must be finite and non-negative after conversion;
-- outgoing rows are normalized inside the algorithm;
-- zero-total outgoing rows are dangling rows;
-- dangling mass redistributes according to personalization;
-- default damping is `0.85` for supported scalar implementations;
-- convergence uses L1 rank delta with configurable tolerance and max iterations;
-- invalid inputs, undersized scratch/output storage, and non-convergence return typed errors.
+Unweighted builders do not carry weight fields. Weighted builders require
+explicit element, relation, and incidence weights on add operations. Builder
+generation counters and cache invalidation APIs are not part of this stack.
 
-Directed hypergraph PageRank uses an incidence/bipartite state space of elements plus relations. Flow is source element → relation → target element. Relation weights choose outgoing relations from a source element when supplied; target incidence weights choose target participants when supplied. Weighted inputs convert through OxGraph-owned PageRank numeric traits instead of constraining topology weight types to `f64`. Dangling mass redistributes over one combined personalization vector.
+Snapshot export lives behind `snapshot` features. Property Arrow export lives
+behind `property-arrow` features and uses `oxgraph-property` rekey helpers
+rather than duplicating Arrow reorder logic in builder crates.
 
-PageRank follows the allocation-tier discipline used by BFS: allocating convenience APIs keep the canonical names, borrowed scratch APIs accept caller-owned teleport/next arrays, and owned workspace APIs reuse `Vec` storage branded to the topology view type and scalar.
+The base `snapshot` feature exports topology sections only. Canonical identity
+mode/map sections and weight/property payloads are emitted by `property-arrow`
+export helpers, because the identity records and typed value payloads are part
+of the property/identity snapshot contract. Generic Rust weight fields have no
+wire format unless the caller supplies explicit Arrow property layers.
 
-Projected hypergraph PageRank is a future explicit policy, not the default.
+## PageRank
 
-## Python facade and safety
+`oxgraph-algo::pagerank` uses induced visible-state semantics:
 
-The Python package is `oxgraph`, backed by the `oxgraph-python` native module. It exposes builders, frozen views, identity lookup, weights/properties, BFS, PageRank, and snapshot helpers. It deliberately does not expose third-party graph library exporters in this slice.
+- caller-provided elements and relations define the visible state set;
+- duplicate visible elements or relations are typed errors;
+- transitions to invisible states are ignored;
+- a row with no visible outgoing targets is dangling;
+- weighted row totals sum only visible outgoing targets.
 
-Any PyO3-required unsafe or macro-generated unsafe is isolated to `oxgraph-python` and documented in `crates/oxgraph-python/SAFETY.md`. Foundation crates keep `unsafe_code = "forbid"`.
+Rank configuration, reports, errors, scratch storage, workspaces, and output
+ranks are generic over a public `PageRankScalar`. Rust callers pass explicit
+damping, tolerance, max iteration, and scalar choices; the API does not default
+to `f64`.
+
+Borrowed scratch APIs compile without `alloc`. Allocating convenience functions
+and reusable workspace types are behind the `alloc` feature. PageRank does not
+depend on Arrow or named properties; callers pass selected topology weight
+views.
+
+## Umbrella crate
+
+`oxgraph` is a curated entry point, not a wildcard mirror of every internal
+crate root. Its default feature set is empty. Feature names expose dependency
+costs explicitly, including:
+
+- `property-arrow`;
+- `graph-snapshot`;
+- `hyper-snapshot`;
+- `graph-property-arrow`;
+- `hyper-property-arrow`.
+
+Enabling `graph-build` or `hyper-build` pulls only the core builder crates.
+Snapshot and property export costs require explicit snapshot/property features.
+
+## Python follow-up
+
+Python bindings move to a future follow-up under `bindings/python`, outside the
+Rust workspace default member set. That package may choose facade-owned string
+labels and `f64` convenience APIs, but those choices must not leak into Rust
+substrate APIs.
+
+The follow-up must keep any PyO3 unsafe allowance local to the Python crate and
+document it in `SAFETY.md`. Its first public surface is limited to builders,
+frozen views, snapshot open helpers, typed exceptions, BFS, and PageRank.
+Property-layer Python classes wait until property snapshot/export contracts are
+landed and tested in Rust.

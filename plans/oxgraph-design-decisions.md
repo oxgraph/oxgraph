@@ -9,6 +9,19 @@ This file is a working decision log. Each open question should end as either:
 - a concrete decision to fold back into `plans/python-bindings-birdsong.md`, `.shapes/`, and `docs/architecture.md`, or
 - a research gate with explicit scope and evidence needed before implementation.
 
+## Active contract note
+
+This log is historical context. The active architecture contract for the PR
+stack hardening work is `docs/architecture.md`, backed by
+`.shapes/amendments/12-pr-stack-hardening.yaml` and
+`.shapes/amendments/13-python-facade-blocked.yaml`.
+
+Decisions below that mention fixed `u32` identity maps, f64 Rust PageRank
+defaults, generation-checked builder caches, Python inside the Rust workspace,
+or wildcard umbrella re-exports are superseded for the current merge stack.
+Those choices remain useful context for why the hardening plan re-cut the stack,
+but they are not implementation guidance.
+
 ## Approach
 
 Work through one design question at a time. For each question:

@@ -3,9 +3,10 @@ name: construction builders
 description: |
   Append/update-only construction systems for ordinary directed graphs and directed
   hypergraphs. Builders assign dense append-only canonical IDs, accept isolated
-  elements, parallel graph edges, and typed weights/properties before freeze, then
-  export owned immutable views with local/canonical identity maps. They are builders,
-  not general mutation overlays.
+  elements and parallel graph edges, split unweighted from explicitly weighted
+  builders, and freeze to owned immutable views. Snapshot/property export is an
+  adapter layer behind explicit features. They are builders, not general mutation
+  overlays.
 profile: 1
 status: proposed
 intent:
@@ -14,18 +15,18 @@ intent:
   source: ai
   goals: |
     - Add oxgraph-graph-build with isolated-node support, parallel edges, generic
-      element/relation weights, named Arrow property layer attachment, canonical IDs,
-      and owned freeze to a directed view.
+      explicit ID widths, unweighted and explicitly weighted variants, canonical
+      IDs, and owned freeze to a directed view.
     - Add oxgraph-hyper-build with directed source/target participants, incidence IDs,
-      generic element/relation/incidence weights, named Arrow property layer attachment,
+      generic explicit ID widths, unweighted and explicitly weighted variants,
       canonical IDs, and owned freeze to a directed view.
-    - Borrowed caches/views are invalidated by builder edits; owned frozen views remain
-      independent after subsequent edits.
+    - Keep Arrow/property snapshot export out of core builders and behind explicit
+      snapshot/property-arrow features.
     - Deletion, tombstones, ID reuse, compaction, and overlay mutation remain out of
       scope.
   non_goals: |
     No full mutable graph API, no deletion, no stale-handle mutation policy beyond
-    generation checks for borrowed caches, no cross-snapshot lineage, and no third-party
+    owned freeze/export boundaries, no cross-snapshot lineage, and no third-party
     exporters.
   rationale: |
     Python and downstream integrations need an ergonomic way to construct topology while
@@ -39,15 +40,16 @@ realization:
   - scheme: path
     value: crates/oxgraph-graph-build
     metadata:
-      summary: Append/update-only ordinary directed graph builder and owned frozen view.
+      summary: no_std + alloc graph builders split into unweighted/weighted cores with feature-gated CSR/property export helpers.
   - scheme: path
     value: crates/oxgraph-hyper-build
     metadata:
-      summary: Append/update-only directed hypergraph builder and owned frozen view.
+      summary: no_std + alloc hypergraph builders split into unweighted/weighted cores with feature-gated BCSR/property export helpers.
   role: primary
 amendment_log:
 - 9
 - 10
+- 12
 parents:
 - id: 16
   role: component

@@ -1,0 +1,23 @@
+id: 13
+name: Python facade blocked follow-up
+description: Python facade blocked follow-up
+targets:
+  shape_ids:
+  - 23
+  - 24
+status: proposed
+version_impact: major
+intent:
+  kind: amendment
+  summary: 'Defer the Python facade out of the current Rust merge stack until PR #1-#8 hardening lands.'
+  source: human
+  goals: |
+    - Remove the PyO3/Python crate from the active PR #1-#8 Rust merge path and keep the Rust workspace free of Python build requirements.
+    - Treat the Python facade as a blocked follow-up branch after CSR, BCSR, property, builder, PageRank, and umbrella contracts are corrected.
+    - Record the future Python acceptance criteria: standalone bindings/python package, explicit just python-* commands, isolated PyO3 unsafe allowance, string-label facade ownership, and a narrow first exposed surface.
+  non_goals: |
+    No Python property-layer classes in the current stack, no Python labels leaking into Rust topology IDs, no PyO3 in foundation crates, and no workspace-wide unsafe_code relaxation.
+  rationale: |
+    Python needs to wrap stable Rust substrate contracts, not drive them. Deferring the facade keeps review focus on the hardening stack and prevents Python dependencies or facade defaults from fossilizing Rust API choices.
+initiated_by:
+  type: human

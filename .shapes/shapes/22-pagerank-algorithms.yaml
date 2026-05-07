@@ -57,6 +57,7 @@ amendment_log:
 - 9
 - 10
 - 11
+- 12
 parents:
 - id: 9
   role: component
