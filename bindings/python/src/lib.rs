@@ -27,12 +27,15 @@ use oxgraph_algo::{
     hypergraph_pagerank_weighted, pagerank, pagerank_weighted,
 };
 use oxgraph_csr::CsrSnapshotGraph;
-use oxgraph_graph::GraphCounts;
+use oxgraph_graph::{EdgeEndpointGraph, GraphCounts, OutgoingGraph};
 use oxgraph_graph_build::{
     FrozenWeightedGraph, GraphBuildError, GraphEdgeId, GraphNodeId, WeightedGraphBuilder,
     export_weighted_csr_snapshot,
 };
-use oxgraph_hyper::HypergraphCounts;
+use oxgraph_hyper::{
+    DirectedHyperedgeIncidences, DirectedHyperedgeParticipants, DirectedVertexHyperedges,
+    HypergraphCounts,
+};
 use oxgraph_hyper_bcsr::{BcsrSnapshotHypergraph, BcsrValidation};
 use oxgraph_hyper_build::{
     FrozenWeightedHypergraph, HyperBuildError, HyperParticipantId, HyperVertexId, HyperedgeId,
@@ -41,8 +44,8 @@ use oxgraph_hyper_build::{
 use oxgraph_snapshot::Snapshot;
 use oxgraph_topology::{
     CanonicalElementIdentity, CanonicalRelationIdentity, ContainsElement, ContainsIncidence,
-    ContainsRelation, ElementWeight, IncidenceCounts, IncidenceWeight, LocalElementIdentity,
-    LocalRelationIdentity, RelationWeight,
+    ContainsRelation, ElementSuccessors, ElementWeight, IncidenceCounts, IncidenceWeight,
+    LocalElementIdentity, LocalRelationIdentity, RelationWeight,
 };
 use pyo3::{create_exception, exceptions::PyValueError, prelude::*};
 
@@ -147,7 +150,7 @@ impl PyGraphBuilder {
     }
 
     /// Returns the node ID for a Python label, if present.
-    fn node_for_label(&self, label: &str) -> Option<u32> {
+    fn node(&self, label: &str) -> Option<u32> {
         self.labels.get(label).copied()
     }
 
@@ -191,6 +194,22 @@ impl PyFrozenGraph {
         self.inner.edge_count()
     }
 
+    /// Returns local node IDs in dense builder order.
+    fn nodes(&self) -> Vec<u32> {
+        dense_ids(self.inner.node_count())
+    }
+
+    /// Returns `(edge_id, source_node, target_node)` tuples in dense builder order.
+    fn edges(&self) -> Vec<(u32, u32, u32)> {
+        dense_ids(self.inner.edge_count())
+            .into_iter()
+            .map(|edge| {
+                let (source, target) = self.inner.endpoints(GraphEdgeId(edge));
+                (edge, source.0, target.0)
+            })
+            .collect()
+    }
+
     /// Returns the element weight for a node.
     fn element_weight(&self, node: u32) -> PyResult<f64> {
         ensure_graph_node(&self.inner, node)?;
@@ -230,14 +249,44 @@ impl PyFrozenGraph {
     }
 
     /// Returns the node ID for a Python label, if present.
-    fn node_for_label(&self, label: &str) -> Option<u32> {
+    fn node(&self, label: &str) -> Option<u32> {
         self.labels.get(label).copied()
     }
 
     /// Returns the first Python label for a node, if present.
-    fn label_for_node(&self, node: u32) -> PyResult<Option<String>> {
+    fn node_label(&self, node: u32) -> PyResult<Option<String>> {
         ensure_graph_node(&self.inner, node)?;
         Ok(label_for_id(&self.labels, node))
+    }
+
+    /// Returns `(source_node, target_node)` for a local edge ID.
+    fn edge(&self, edge: u32) -> PyResult<(u32, u32)> {
+        ensure_graph_edge(&self.inner, edge)?;
+        let (source, target) = self.inner.endpoints(GraphEdgeId(edge));
+        Ok((source.0, target.0))
+    }
+
+    /// Returns `(edge_id, target_node)` tuples whose source is `node`.
+    fn out_edges(&self, node: u32) -> PyResult<Vec<(u32, u32)>> {
+        ensure_graph_node(&self.inner, node)?;
+        Ok(self
+            .inner
+            .outgoing_edges(GraphNodeId(node))
+            .map(|edge| {
+                let (_source, target) = self.inner.endpoints(edge);
+                (edge.0, target.0)
+            })
+            .collect())
+    }
+
+    /// Returns successor node IDs reached from `node`.
+    fn successors(&self, node: u32) -> PyResult<Vec<u32>> {
+        ensure_graph_node(&self.inner, node)?;
+        Ok(self
+            .inner
+            .element_successors(GraphNodeId(node))
+            .map(|node| node.0)
+            .collect())
     }
 
     /// Runs BFS from `start` and returns visited node IDs in traversal order.
@@ -401,7 +450,7 @@ impl PyHypergraphBuilder {
     }
 
     /// Returns the vertex ID for a Python label, if present.
-    fn vertex_for_label(&self, label: &str) -> Option<u32> {
+    fn vertex(&self, label: &str) -> Option<u32> {
         self.labels.get(label).copied()
     }
 
@@ -450,6 +499,23 @@ impl PyFrozenHypergraph {
         self.inner.incidence_count()
     }
 
+    /// Returns local vertex IDs in dense builder order.
+    fn vertices(&self) -> Vec<u32> {
+        dense_ids(self.inner.vertex_count())
+    }
+
+    /// Returns `(hyperedge_id, source_vertices, target_vertices)` tuples.
+    fn hyperedges(&self) -> Vec<(u32, Vec<u32>, Vec<u32>)> {
+        dense_ids(self.inner.hyperedge_count())
+            .into_iter()
+            .map(|hyperedge| {
+                let sources = self.hyperedge_source_vertices(hyperedge);
+                let targets = self.hyperedge_target_vertices(hyperedge);
+                (hyperedge, sources, targets)
+            })
+            .collect()
+    }
+
     /// Returns an element weight for a vertex.
     fn element_weight(&self, vertex: u32) -> PyResult<f64> {
         ensure_hyper_vertex(&self.inner, vertex)?;
@@ -495,14 +561,83 @@ impl PyFrozenHypergraph {
     }
 
     /// Returns the vertex ID for a Python label, if present.
-    fn vertex_for_label(&self, label: &str) -> Option<u32> {
+    fn vertex(&self, label: &str) -> Option<u32> {
         self.labels.get(label).copied()
     }
 
     /// Returns the first Python label for a vertex, if present.
-    fn label_for_vertex(&self, vertex: u32) -> PyResult<Option<String>> {
+    fn vertex_label(&self, vertex: u32) -> PyResult<Option<String>> {
         ensure_hyper_vertex(&self.inner, vertex)?;
         Ok(label_for_id(&self.labels, vertex))
+    }
+
+    /// Returns `(source_vertices, target_vertices)` for a local hyperedge ID.
+    fn hyperedge(&self, hyperedge: u32) -> PyResult<(Vec<u32>, Vec<u32>)> {
+        ensure_hyperedge(&self.inner, hyperedge)?;
+        Ok((
+            self.hyperedge_source_vertices(hyperedge),
+            self.hyperedge_target_vertices(hyperedge),
+        ))
+    }
+
+    /// Returns source-side vertex IDs for a hyperedge.
+    fn source_vertices(&self, hyperedge: u32) -> PyResult<Vec<u32>> {
+        ensure_hyperedge(&self.inner, hyperedge)?;
+        Ok(self
+            .inner
+            .source_participants(HyperedgeId(hyperedge))
+            .map(|vertex| vertex.0)
+            .collect())
+    }
+
+    /// Returns target-side vertex IDs for a hyperedge.
+    fn target_vertices(&self, hyperedge: u32) -> PyResult<Vec<u32>> {
+        ensure_hyperedge(&self.inner, hyperedge)?;
+        Ok(self
+            .inner
+            .target_participants(HyperedgeId(hyperedge))
+            .map(|vertex| vertex.0)
+            .collect())
+    }
+
+    /// Returns source-side incidence IDs for a hyperedge.
+    fn source_incidences(&self, hyperedge: u32) -> PyResult<Vec<u32>> {
+        ensure_hyperedge(&self.inner, hyperedge)?;
+        Ok(self
+            .inner
+            .source_incidences(HyperedgeId(hyperedge))
+            .map(|incidence| incidence.0)
+            .collect())
+    }
+
+    /// Returns target-side incidence IDs for a hyperedge.
+    fn target_incidences(&self, hyperedge: u32) -> PyResult<Vec<u32>> {
+        ensure_hyperedge(&self.inner, hyperedge)?;
+        Ok(self
+            .inner
+            .target_incidences(HyperedgeId(hyperedge))
+            .map(|incidence| incidence.0)
+            .collect())
+    }
+
+    /// Returns hyperedge IDs where `vertex` is source-side.
+    fn out_hyperedges(&self, vertex: u32) -> PyResult<Vec<u32>> {
+        ensure_hyper_vertex(&self.inner, vertex)?;
+        Ok(self
+            .inner
+            .outgoing_hyperedges(HyperVertexId(vertex))
+            .map(|hyperedge| hyperedge.0)
+            .collect())
+    }
+
+    /// Returns successor vertex IDs reached from `vertex`.
+    fn successors(&self, vertex: u32) -> PyResult<Vec<u32>> {
+        ensure_hyper_vertex(&self.inner, vertex)?;
+        Ok(self
+            .inner
+            .element_successors(HyperVertexId(vertex))
+            .map(|vertex| vertex.0)
+            .collect())
     }
 
     /// Runs BFS from `start` and returns visited vertex IDs in traversal order.
@@ -570,6 +705,24 @@ impl PyFrozenHypergraph {
     /// Serializes topology and identity sections into a BCSR snapshot byte vector.
     fn to_bcsr_snapshot(&self) -> PyResult<Vec<u8>> {
         export_weighted_bcsr_snapshot(&self.inner).map_err(py_hyper_error)
+    }
+}
+
+impl PyFrozenHypergraph {
+    /// Returns source-side vertex IDs for a known-valid hyperedge.
+    fn hyperedge_source_vertices(&self, hyperedge: u32) -> Vec<u32> {
+        self.inner
+            .source_participants(HyperedgeId(hyperedge))
+            .map(|vertex| vertex.0)
+            .collect()
+    }
+
+    /// Returns target-side vertex IDs for a known-valid hyperedge.
+    fn hyperedge_target_vertices(&self, hyperedge: u32) -> Vec<u32> {
+        self.inner
+            .target_participants(HyperedgeId(hyperedge))
+            .map(|vertex| vertex.0)
+            .collect()
     }
 }
 
@@ -760,23 +913,31 @@ fn ensure_hyper_incidence(hypergraph: &PythonFrozenHypergraph, incidence: u32) -
 
 /// Enumerates frozen graph elements by dense first-generation ID.
 fn graph_elements(graph: &PythonFrozenGraph) -> Vec<GraphNodeId<u32>> {
-    (0..graph.node_count())
-        .map(|index| GraphNodeId(dense_index_to_u32(index)))
+    dense_ids(graph.node_count())
+        .into_iter()
+        .map(GraphNodeId)
         .collect()
 }
 
 /// Enumerates frozen hypergraph elements by dense first-generation ID.
 fn hyper_elements(hypergraph: &PythonFrozenHypergraph) -> Vec<HyperVertexId<u32>> {
-    (0..hypergraph.vertex_count())
-        .map(|index| HyperVertexId(dense_index_to_u32(index)))
+    dense_ids(hypergraph.vertex_count())
+        .into_iter()
+        .map(HyperVertexId)
         .collect()
 }
 
 /// Enumerates frozen hypergraph relations by dense first-generation ID.
 fn hyper_relations(hypergraph: &PythonFrozenHypergraph) -> Vec<HyperedgeId<u32>> {
-    (0..hypergraph.hyperedge_count())
-        .map(|index| HyperedgeId(dense_index_to_u32(index)))
+    dense_ids(hypergraph.hyperedge_count())
+        .into_iter()
+        .map(HyperedgeId)
         .collect()
+}
+
+/// Enumerates dense Python local IDs.
+fn dense_ids(count: usize) -> Vec<u32> {
+    (0..count).map(dense_index_to_u32).collect()
 }
 
 /// Converts dense builder indexes into `u32`.

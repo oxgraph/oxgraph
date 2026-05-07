@@ -24,6 +24,14 @@ re-exports the native classes and helpers.
 
 Python-facing frozen graph and hypergraph objects own their Rust frozen views. They do not borrow from builders, so later builder edits cannot invalidate already-frozen Python objects.
 
+## Topology inspection
+
+Frozen graph and hypergraph inspection methods return local integer IDs and
+materialized Python lists or tuples through concise graph-family APIs such as
+`nodes`, `edges`, `out_edges`, `vertices`, `hyperedges`, and `out_hyperedges`.
+They wrap OxGraph traversal traits and do not expose borrowed Rust iterators,
+raw storage slices, legacy aliases, or third-party graph library objects.
+
 ## Stale views
 
 The first Python API exposes owned frozen views only. Borrowed generation-checked caches are not exposed through Python in this slice.

@@ -14,7 +14,8 @@ intent:
   goals: |
     - Add a standalone bindings/python PyO3 native module importable as oxgraph.
     - Expose graph and hypergraph builders, frozen owned views, BFS, PageRank, relation
-      weights, incidence weights, labels, snapshots, and local/canonical lookup.
+      weights, incidence weights, clean label lookup, topology iteration, snapshots,
+      and local/canonical lookup.
     - Keep Python float APIs as explicit boundary specializations over generic Rust builder and PageRank scalar APIs.
     - Translate typed Rust errors into Python exceptions without panicking across FFI.
     - Keep Python labels facade-owned and never interpreted by Rust algorithms.
@@ -26,7 +27,8 @@ intent:
   rationale: |
     Downstream Python users need OxGraph construction and algorithms, but the binding
     should expose the same substrate concepts Rust uses. Owned frozen views avoid Python
-    lifetime hazards while preserving the builder/freeze separation.
+    lifetime hazards while preserving the builder/freeze separation. Greenfield Python
+    APIs should use one clean name per operation rather than compatibility aliases.
 constraints:
 - 26
 - 28
@@ -36,7 +38,7 @@ realization:
   - scheme: path
     value: bindings/python
     metadata:
-      summary: Standalone PyO3 native module and thin Python package exposing builders, frozen views, BFS, PageRank, snapshots, labels, and identity.
+      summary: Standalone PyO3 native module and thin Python package exposing builders, frozen views, BFS, PageRank, snapshots, clean label lookup, topology iteration, and identity.
   - scheme: path
     value: bindings/python/SAFETY.md
     metadata:
@@ -48,6 +50,7 @@ amendment_log:
 - 11
 - 13
 - 14
+- 15
 parents:
 - id: 1
   role: component
