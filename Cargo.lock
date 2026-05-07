@@ -635,15 +635,33 @@ checksum = "d6790f58c7ff633d8771f42965289203411a5e5c68388703c06e14f24770b41e"
 [[package]]
 name = "oxgraph"
 version = "0.0.0"
+dependencies = [
+ "oxgraph-algo",
+ "oxgraph-csr",
+ "oxgraph-graph",
+ "oxgraph-graph-build",
+ "oxgraph-hyper",
+ "oxgraph-hyper-bcsr",
+ "oxgraph-hyper-build",
+ "oxgraph-property",
+ "oxgraph-snapshot",
+ "oxgraph-topology",
+]
 
 [[package]]
 name = "oxgraph-algo"
 version = "0.0.0"
 dependencies = [
+ "arrow-array",
+ "arrow-schema",
  "criterion",
  "oxgraph-csr",
+ "oxgraph-graph",
+ "oxgraph-graph-build",
  "oxgraph-hyper",
  "oxgraph-hyper-bcsr",
+ "oxgraph-hyper-build",
+ "oxgraph-property",
  "oxgraph-snapshot",
  "oxgraph-topology",
  "proptest",
@@ -699,6 +717,21 @@ version = "0.0.0"
 dependencies = [
  "criterion",
  "oxgraph-hyper",
+ "oxgraph-snapshot",
+ "proptest",
+ "zerocopy",
+]
+
+[[package]]
+name = "oxgraph-hyper-build"
+version = "0.0.0"
+dependencies = [
+ "arrow-array",
+ "arrow-schema",
+ "criterion",
+ "oxgraph-hyper",
+ "oxgraph-hyper-bcsr",
+ "oxgraph-property",
  "oxgraph-snapshot",
  "proptest",
  "zerocopy",
