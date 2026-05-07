@@ -1,11 +1,13 @@
 //! Substrate-agnostic graph algorithms over storage-agnostic topology traits.
 //!
 //! `oxgraph-algo` contains algorithms whose semantics generalize across
-//! ordinary binary graphs and hypergraphs. The algorithms depend on capability
-//! traits from `oxgraph-topology`, not on `oxgraph-graph` or `oxgraph-hyper`,
-//! so the same compiled BFS runs unchanged on `oxgraph-csr::CsrGraph` and
-//! `oxgraph-hyper-bcsr::BcsrHypergraph` (and any future view that exposes the
-//! required topology capabilities).
+//! ordinary binary graphs and hypergraphs. BFS binds only to capability traits
+//! from `oxgraph-topology`; `PageRank` additionally uses ordinary-graph and
+//! hypergraph vocabulary traits from `oxgraph-graph` and `oxgraph-hyper` while
+//! still avoiding concrete storage and Arrow/property dependencies. The same
+//! compiled algorithms run on `oxgraph-csr::CsrGraph`,
+//! `oxgraph-hyper-bcsr::BcsrHypergraph`, and any future view that exposes the
+//! required capabilities.
 //!
 //! The default APIs are allocation-free: callers provide reusable scratch
 //! storage for traversal state. Allocating convenience wrappers are available
@@ -51,6 +53,7 @@ extern crate alloc;
 extern crate std;
 
 pub mod bfs;
+pub mod pagerank;
 
 pub use bfs::{
     BfsEpochScratch, BfsError, BreadthFirstSearchEpochScratch, BreadthFirstSearchScratch,
@@ -70,4 +73,16 @@ pub use bfs::{
 pub use bfs::{
     HashBreadthFirstSearch, HashReverseBreadthFirstSearch, breadth_first_search_generic_hash,
     reverse_breadth_first_search_generic_hash,
+};
+pub use pagerank::{
+    HypergraphPageRankScratch, IntoPageRankScalar, PageRankConfig, PageRankError, PageRankReport,
+    PageRankScalar, PageRankScratch, hypergraph_pagerank_weighted_with_scratch,
+    hypergraph_pagerank_with_scratch, pagerank_weighted_with_scratch, pagerank_with_scratch,
+};
+#[cfg(feature = "alloc")]
+pub use pagerank::{
+    HypergraphPageRankWorkspace, PageRankWorkspace, hypergraph_pagerank,
+    hypergraph_pagerank_weighted, hypergraph_pagerank_weighted_with_workspace,
+    hypergraph_pagerank_with_workspace, pagerank, pagerank_weighted,
+    pagerank_weighted_with_workspace, pagerank_with_workspace,
 };
