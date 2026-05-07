@@ -1,95 +1,157 @@
 //! Snapshot section kind constants for bipartite-CSR hypergraph layouts.
 //!
-//! Each constant identifies one of the eight u32 little-endian sections that
-//! together form a valid bipartite-CSR snapshot. Section kinds in the
-//! `0x0010..=0x0017` range are reserved for the v1.0 (u32-offset) layout;
-//! `0x0018..=0x001F` is reserved for future u64-offset variants.
+//! Each constant identifies one fixed-width little-endian section. The width
+//! suffix is part of the wire contract; persisted BCSR snapshots do not have
+//! widthless topology section kinds and never use `usize`.
 
-/// Hyperedge-major head offsets section.
-///
-/// Payload is a sequence of unaligned little-endian `u32` words of length
-/// `hyperedge_count + 1`. Position `h` and `h + 1` enclose the contiguous
-/// range of vertex IDs in the head set of hyperedge `h`.
+/// Hyperedge-major head offsets, `u16` little-endian.
 ///
 /// # Performance
 ///
 /// `perf: unspecified`; this is a compile-time constant.
-pub const SNAPSHOT_KIND_BCSR_HEAD_OFFSETS: u32 = 0x0010;
-
-/// Hyperedge-major head participants section.
-///
-/// Payload is a sequence of unaligned little-endian `u32` words of length
-/// `P_head`, the total number of head-side participations across all
-/// hyperedges. Each value is a vertex ID in `0..vertex_count`.
+pub const SNAPSHOT_KIND_BCSR_HEAD_OFFSETS_U16: u32 = 0x0020;
+/// Hyperedge-major head offsets, `u32` little-endian.
 ///
 /// # Performance
 ///
 /// `perf: unspecified`; this is a compile-time constant.
-pub const SNAPSHOT_KIND_BCSR_HEAD_PARTICIPANTS: u32 = 0x0011;
-
-/// Hyperedge-major tail offsets section.
-///
-/// Payload is a sequence of unaligned little-endian `u32` words of length
-/// `hyperedge_count + 1`. Position `h` and `h + 1` enclose the contiguous
-/// range of vertex IDs in the tail set of hyperedge `h`.
+pub const SNAPSHOT_KIND_BCSR_HEAD_OFFSETS_U32: u32 = 0x0021;
+/// Hyperedge-major head offsets, `u64` little-endian.
 ///
 /// # Performance
 ///
 /// `perf: unspecified`; this is a compile-time constant.
-pub const SNAPSHOT_KIND_BCSR_TAIL_OFFSETS: u32 = 0x0012;
+pub const SNAPSHOT_KIND_BCSR_HEAD_OFFSETS_U64: u32 = 0x0022;
 
-/// Hyperedge-major tail participants section.
-///
-/// Payload is a sequence of unaligned little-endian `u32` words of length
-/// `P_tail`, the total number of tail-side participations across all
-/// hyperedges. Each value is a vertex ID in `0..vertex_count`.
+/// Hyperedge-major head participants, `u16` little-endian.
 ///
 /// # Performance
 ///
 /// `perf: unspecified`; this is a compile-time constant.
-pub const SNAPSHOT_KIND_BCSR_TAIL_PARTICIPANTS: u32 = 0x0013;
-
-/// Vertex-major outgoing offsets section.
-///
-/// Payload is a sequence of unaligned little-endian `u32` words of length
-/// `vertex_count + 1`. Position `v` and `v + 1` enclose the contiguous range
-/// of hyperedge IDs in which vertex `v` participates as a head.
+pub const SNAPSHOT_KIND_BCSR_HEAD_PARTICIPANTS_U16: u32 = 0x0023;
+/// Hyperedge-major head participants, `u32` little-endian.
 ///
 /// # Performance
 ///
 /// `perf: unspecified`; this is a compile-time constant.
-pub const SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_OFFSETS: u32 = 0x0014;
-
-/// Vertex-major outgoing hyperedge IDs section.
-///
-/// Payload is a sequence of unaligned little-endian `u32` words of length
-/// `P_outgoing`. Each value is a hyperedge ID in `0..hyperedge_count`. The
-/// total length must equal `P_head` (every head-side participation is
-/// recorded once on each side of the bipartite index).
+pub const SNAPSHOT_KIND_BCSR_HEAD_PARTICIPANTS_U32: u32 = 0x0024;
+/// Hyperedge-major head participants, `u64` little-endian.
 ///
 /// # Performance
 ///
 /// `perf: unspecified`; this is a compile-time constant.
-pub const SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_HYPEREDGES: u32 = 0x0015;
+pub const SNAPSHOT_KIND_BCSR_HEAD_PARTICIPANTS_U64: u32 = 0x0025;
 
-/// Vertex-major incoming offsets section.
-///
-/// Payload is a sequence of unaligned little-endian `u32` words of length
-/// `vertex_count + 1`. Position `v` and `v + 1` enclose the contiguous range
-/// of hyperedge IDs in which vertex `v` participates as a tail.
+/// Hyperedge-major tail offsets, `u16` little-endian.
 ///
 /// # Performance
 ///
 /// `perf: unspecified`; this is a compile-time constant.
-pub const SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_OFFSETS: u32 = 0x0016;
-
-/// Vertex-major incoming hyperedge IDs section.
-///
-/// Payload is a sequence of unaligned little-endian `u32` words of length
-/// `P_incoming`. Each value is a hyperedge ID in `0..hyperedge_count`. The
-/// total length must equal `P_tail`.
+pub const SNAPSHOT_KIND_BCSR_TAIL_OFFSETS_U16: u32 = 0x0026;
+/// Hyperedge-major tail offsets, `u32` little-endian.
 ///
 /// # Performance
 ///
 /// `perf: unspecified`; this is a compile-time constant.
-pub const SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_HYPEREDGES: u32 = 0x0017;
+pub const SNAPSHOT_KIND_BCSR_TAIL_OFFSETS_U32: u32 = 0x0027;
+/// Hyperedge-major tail offsets, `u64` little-endian.
+///
+/// # Performance
+///
+/// `perf: unspecified`; this is a compile-time constant.
+pub const SNAPSHOT_KIND_BCSR_TAIL_OFFSETS_U64: u32 = 0x0028;
+
+/// Hyperedge-major tail participants, `u16` little-endian.
+///
+/// # Performance
+///
+/// `perf: unspecified`; this is a compile-time constant.
+pub const SNAPSHOT_KIND_BCSR_TAIL_PARTICIPANTS_U16: u32 = 0x0029;
+/// Hyperedge-major tail participants, `u32` little-endian.
+///
+/// # Performance
+///
+/// `perf: unspecified`; this is a compile-time constant.
+pub const SNAPSHOT_KIND_BCSR_TAIL_PARTICIPANTS_U32: u32 = 0x002A;
+/// Hyperedge-major tail participants, `u64` little-endian.
+///
+/// # Performance
+///
+/// `perf: unspecified`; this is a compile-time constant.
+pub const SNAPSHOT_KIND_BCSR_TAIL_PARTICIPANTS_U64: u32 = 0x002B;
+
+/// Vertex-major outgoing offsets, `u16` little-endian.
+///
+/// # Performance
+///
+/// `perf: unspecified`; this is a compile-time constant.
+pub const SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_OFFSETS_U16: u32 = 0x002C;
+/// Vertex-major outgoing offsets, `u32` little-endian.
+///
+/// # Performance
+///
+/// `perf: unspecified`; this is a compile-time constant.
+pub const SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_OFFSETS_U32: u32 = 0x002D;
+/// Vertex-major outgoing offsets, `u64` little-endian.
+///
+/// # Performance
+///
+/// `perf: unspecified`; this is a compile-time constant.
+pub const SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_OFFSETS_U64: u32 = 0x002E;
+
+/// Vertex-major outgoing hyperedge IDs, `u16` little-endian.
+///
+/// # Performance
+///
+/// `perf: unspecified`; this is a compile-time constant.
+pub const SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_HYPEREDGES_U16: u32 = 0x002F;
+/// Vertex-major outgoing hyperedge IDs, `u32` little-endian.
+///
+/// # Performance
+///
+/// `perf: unspecified`; this is a compile-time constant.
+pub const SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_HYPEREDGES_U32: u32 = 0x0030;
+/// Vertex-major outgoing hyperedge IDs, `u64` little-endian.
+///
+/// # Performance
+///
+/// `perf: unspecified`; this is a compile-time constant.
+pub const SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_HYPEREDGES_U64: u32 = 0x0031;
+
+/// Vertex-major incoming offsets, `u16` little-endian.
+///
+/// # Performance
+///
+/// `perf: unspecified`; this is a compile-time constant.
+pub const SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_OFFSETS_U16: u32 = 0x0032;
+/// Vertex-major incoming offsets, `u32` little-endian.
+///
+/// # Performance
+///
+/// `perf: unspecified`; this is a compile-time constant.
+pub const SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_OFFSETS_U32: u32 = 0x0033;
+/// Vertex-major incoming offsets, `u64` little-endian.
+///
+/// # Performance
+///
+/// `perf: unspecified`; this is a compile-time constant.
+pub const SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_OFFSETS_U64: u32 = 0x0034;
+
+/// Vertex-major incoming hyperedge IDs, `u16` little-endian.
+///
+/// # Performance
+///
+/// `perf: unspecified`; this is a compile-time constant.
+pub const SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_HYPEREDGES_U16: u32 = 0x0035;
+/// Vertex-major incoming hyperedge IDs, `u32` little-endian.
+///
+/// # Performance
+///
+/// `perf: unspecified`; this is a compile-time constant.
+pub const SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_HYPEREDGES_U32: u32 = 0x0036;
+/// Vertex-major incoming hyperedge IDs, `u64` little-endian.
+///
+/// # Performance
+///
+/// `perf: unspecified`; this is a compile-time constant.
+pub const SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_HYPEREDGES_U64: u32 = 0x0037;

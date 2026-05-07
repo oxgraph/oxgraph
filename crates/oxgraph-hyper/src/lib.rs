@@ -739,8 +739,8 @@ pub trait DirectedHyperedgeIncidences: IncidenceBase {
 /// Capability for traversing source/target hyperedges incident to a vertex.
 ///
 /// This relation-level directed expansion is distinct from successor-vertex
-/// expansion. `PageRank`'s incidence/bipartite policy needs source vertex →
-/// relation transitions before relation → target vertex transitions.
+/// expansion. Directed traversal consumers can use source-to-relation
+/// transitions before relation-to-target expansion.
 ///
 /// # Performance
 ///

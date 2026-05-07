@@ -4,7 +4,7 @@ use core::fmt;
 
 /// Local vertex ID for [`BcsrHypergraph`](crate::BcsrHypergraph).
 ///
-/// Values are dense `u32` handles in `0..vertex_count` for one validated
+/// Values are dense handles in `0..vertex_count` for one validated
 /// view. They are layout-local IDs and are not stable across rebuilding or
 /// compaction unless a higher layer defines that contract.
 ///
@@ -12,9 +12,12 @@ use core::fmt;
 ///
 /// Copying, comparing, ordering, hashing, and debug-formatting are `O(1)`.
 #[derive(Clone, Copy, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct BcsrVertexId(pub u32);
+pub struct BcsrVertexId<VertexIndex>(pub VertexIndex);
 
-impl fmt::Debug for BcsrVertexId {
+impl<VertexIndex> fmt::Debug for BcsrVertexId<VertexIndex>
+where
+    VertexIndex: fmt::Debug,
+{
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_tuple("BcsrVertexId")
@@ -25,7 +28,7 @@ impl fmt::Debug for BcsrVertexId {
 
 /// Local hyperedge ID for [`BcsrHypergraph`](crate::BcsrHypergraph).
 ///
-/// Values are dense `u32` handles in `0..hyperedge_count` for one validated
+/// Values are dense handles in `0..hyperedge_count` for one validated
 /// view. They are layout-local IDs and are not stable across rebuilding or
 /// compaction unless a higher layer defines that contract.
 ///
@@ -33,9 +36,12 @@ impl fmt::Debug for BcsrVertexId {
 ///
 /// Copying, comparing, ordering, hashing, and debug-formatting are `O(1)`.
 #[derive(Clone, Copy, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct BcsrHyperedgeId(pub u32);
+pub struct BcsrHyperedgeId<RelationIndex>(pub RelationIndex);
 
-impl fmt::Debug for BcsrHyperedgeId {
+impl<RelationIndex> fmt::Debug for BcsrHyperedgeId<RelationIndex>
+where
+    RelationIndex: fmt::Debug,
+{
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_tuple("BcsrHyperedgeId")
@@ -60,9 +66,12 @@ impl fmt::Debug for BcsrHyperedgeId {
 ///
 /// Copying, comparing, ordering, hashing, and debug-formatting are `O(1)`.
 #[derive(Clone, Copy, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct BcsrParticipantId(pub u32);
+pub struct BcsrParticipantId<IncidenceIndex>(pub IncidenceIndex);
 
-impl fmt::Debug for BcsrParticipantId {
+impl<IncidenceIndex> fmt::Debug for BcsrParticipantId<IncidenceIndex>
+where
+    IncidenceIndex: fmt::Debug,
+{
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_tuple("BcsrParticipantId")

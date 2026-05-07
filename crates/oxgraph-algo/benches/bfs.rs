@@ -29,15 +29,15 @@ use oxgraph_algo::{
 };
 use oxgraph_csr::{CsrNativeGraph, CsrNodeId};
 use oxgraph_hyper_bcsr::{
-    BcsrHypergraph, BcsrVertexId, SNAPSHOT_KIND_BCSR_HEAD_OFFSETS,
-    SNAPSHOT_KIND_BCSR_HEAD_PARTICIPANTS, SNAPSHOT_KIND_BCSR_TAIL_OFFSETS,
-    SNAPSHOT_KIND_BCSR_TAIL_PARTICIPANTS, SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_HYPEREDGES,
-    SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_OFFSETS, SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_HYPEREDGES,
-    SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_OFFSETS,
+    BcsrSnapshotHypergraph, BcsrVertexId, SNAPSHOT_KIND_BCSR_HEAD_OFFSETS_U32,
+    SNAPSHOT_KIND_BCSR_HEAD_PARTICIPANTS_U32, SNAPSHOT_KIND_BCSR_TAIL_OFFSETS_U32,
+    SNAPSHOT_KIND_BCSR_TAIL_PARTICIPANTS_U32, SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_HYPEREDGES_U32,
+    SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_OFFSETS_U32,
+    SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_HYPEREDGES_U32,
+    SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_OFFSETS_U32,
 };
 use oxgraph_snapshot::{Snapshot, SnapshotBuilder};
 use oxgraph_topology::ElementIndex;
-use zerocopy::byteorder::{LE, U32};
 
 /// Fixed out-degree used by the synthetic regular graph.
 const DEGREE: u32 = 4;
@@ -446,42 +446,42 @@ fn bcsr_snapshot_bytes(node_count: u32, offsets: &[u32], targets: &[u32]) -> Vec
     };
     add(
         &mut builder,
-        SNAPSHOT_KIND_BCSR_HEAD_OFFSETS,
+        SNAPSHOT_KIND_BCSR_HEAD_OFFSETS_U32,
         &sections.head_offsets,
     );
     add(
         &mut builder,
-        SNAPSHOT_KIND_BCSR_HEAD_PARTICIPANTS,
+        SNAPSHOT_KIND_BCSR_HEAD_PARTICIPANTS_U32,
         &sections.head_participants,
     );
     add(
         &mut builder,
-        SNAPSHOT_KIND_BCSR_TAIL_OFFSETS,
+        SNAPSHOT_KIND_BCSR_TAIL_OFFSETS_U32,
         &sections.tail_offsets,
     );
     add(
         &mut builder,
-        SNAPSHOT_KIND_BCSR_TAIL_PARTICIPANTS,
+        SNAPSHOT_KIND_BCSR_TAIL_PARTICIPANTS_U32,
         &sections.tail_participants,
     );
     add(
         &mut builder,
-        SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_OFFSETS,
+        SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_OFFSETS_U32,
         &sections.vertex_outgoing_offsets,
     );
     add(
         &mut builder,
-        SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_HYPEREDGES,
+        SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_HYPEREDGES_U32,
         &sections.vertex_outgoing_hyperedges,
     );
     add(
         &mut builder,
-        SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_OFFSETS,
+        SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_OFFSETS_U32,
         &sections.vertex_incoming_offsets,
     );
     add(
         &mut builder,
-        SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_HYPEREDGES,
+        SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_HYPEREDGES_U32,
         &sections.vertex_incoming_hyperedges,
     );
 
@@ -493,9 +493,9 @@ fn bcsr_snapshot_bytes(node_count: u32, offsets: &[u32], targets: &[u32]) -> Vec
 
 /// Counts reachable vertices via forward BCSR scratch BFS.
 fn bcsr_forward_scratch_count(
-    view: &BcsrHypergraph<'_, U32<LE>>,
+    view: &BcsrSnapshotHypergraph<'_, u32, u32, u32>,
     visited: &mut [u8],
-    queue: &mut [BcsrVertexId],
+    queue: &mut [BcsrVertexId<u32>],
 ) -> usize {
     match breadth_first_search_with_scratch(view, BcsrVertexId(0), visited, queue) {
         Ok(traversal) => traversal.count(),
@@ -505,10 +505,10 @@ fn bcsr_forward_scratch_count(
 
 /// Counts reverse-reachable vertices via reverse BCSR scratch BFS.
 fn bcsr_reverse_scratch_count(
-    view: &BcsrHypergraph<'_, U32<LE>>,
-    start: BcsrVertexId,
+    view: &BcsrSnapshotHypergraph<'_, u32, u32, u32>,
+    start: BcsrVertexId<u32>,
     visited: &mut [u8],
-    queue: &mut [BcsrVertexId],
+    queue: &mut [BcsrVertexId<u32>],
 ) -> usize {
     match reverse_breadth_first_search_with_scratch(view, start, visited, queue) {
         Ok(traversal) => traversal.count(),
@@ -517,7 +517,7 @@ fn bcsr_reverse_scratch_count(
 }
 
 /// Counts reachable vertices via forward BCSR allocating indexed BFS.
-fn bcsr_forward_allocating_count(view: &BcsrHypergraph<'_, U32<LE>>) -> usize {
+fn bcsr_forward_allocating_count(view: &BcsrSnapshotHypergraph<'_, u32, u32, u32>) -> usize {
     match breadth_first_search(view, BcsrVertexId(0)) {
         Ok(traversal) => traversal.count(),
         Err(error) => panic!("BCSR forward allocating BFS invalid: {error:?}"),
@@ -525,7 +525,10 @@ fn bcsr_forward_allocating_count(view: &BcsrHypergraph<'_, U32<LE>>) -> usize {
 }
 
 /// Counts reverse-reachable vertices via reverse BCSR allocating indexed BFS.
-fn bcsr_reverse_allocating_count(view: &BcsrHypergraph<'_, U32<LE>>, start: BcsrVertexId) -> usize {
+fn bcsr_reverse_allocating_count(
+    view: &BcsrSnapshotHypergraph<'_, u32, u32, u32>,
+    start: BcsrVertexId<u32>,
+) -> usize {
     match reverse_breadth_first_search(view, start) {
         Ok(traversal) => traversal.count(),
         Err(error) => panic!("BCSR reverse allocating BFS invalid: {error:?}"),
@@ -534,8 +537,8 @@ fn bcsr_reverse_allocating_count(view: &BcsrHypergraph<'_, U32<LE>>, start: Bcsr
 
 /// Counts reachable vertices via forward BCSR workspace BFS.
 fn bcsr_forward_workspace_count<'view>(
-    view: &BcsrHypergraph<'view, U32<LE>>,
-    workspace: &mut BfsWorkspace<BcsrHypergraph<'view, U32<LE>>>,
+    view: &BcsrSnapshotHypergraph<'view, u32, u32, u32>,
+    workspace: &mut BfsWorkspace<BcsrSnapshotHypergraph<'view, u32, u32, u32>>,
 ) -> usize {
     match breadth_first_search_with_workspace(view, BcsrVertexId(0), workspace) {
         Ok(traversal) => traversal.count(),
@@ -545,9 +548,9 @@ fn bcsr_forward_workspace_count<'view>(
 
 /// Counts reverse-reachable vertices via reverse BCSR workspace BFS.
 fn bcsr_reverse_workspace_count<'view>(
-    view: &BcsrHypergraph<'view, U32<LE>>,
-    start: BcsrVertexId,
-    workspace: &mut BfsWorkspace<BcsrHypergraph<'view, U32<LE>>>,
+    view: &BcsrSnapshotHypergraph<'view, u32, u32, u32>,
+    start: BcsrVertexId<u32>,
+    workspace: &mut BfsWorkspace<BcsrSnapshotHypergraph<'view, u32, u32, u32>>,
 ) -> usize {
     match reverse_breadth_first_search_with_workspace(view, start, workspace) {
         Ok(traversal) => traversal.count(),
@@ -560,15 +563,15 @@ struct BcsrBenchState<'state> {
     /// Forward scratch byte-flag visited buffer.
     forward_visited: &'state mut [u8],
     /// Forward scratch queue buffer.
-    forward_queue: &'state mut [BcsrVertexId],
+    forward_queue: &'state mut [BcsrVertexId<u32>],
     /// Reverse scratch byte-flag visited buffer.
     reverse_visited: &'state mut [u8],
     /// Reverse scratch queue buffer.
-    reverse_queue: &'state mut [BcsrVertexId],
+    reverse_queue: &'state mut [BcsrVertexId<u32>],
     /// Forward reusable workspace.
-    forward_workspace: &'state mut BfsWorkspace<BcsrHypergraph<'state, U32<LE>>>,
+    forward_workspace: &'state mut BfsWorkspace<BcsrSnapshotHypergraph<'state, u32, u32, u32>>,
     /// Reverse reusable workspace.
-    reverse_workspace: &'state mut BfsWorkspace<BcsrHypergraph<'state, U32<LE>>>,
+    reverse_workspace: &'state mut BfsWorkspace<BcsrSnapshotHypergraph<'state, u32, u32, u32>>,
 }
 
 /// Registers all six (3 storage tiers × 2 directions) BCSR BFS lanes for one
@@ -576,7 +579,7 @@ struct BcsrBenchState<'state> {
 fn register_bcsr_lanes<'view>(
     group: &mut BenchmarkGroup<'_, WallTime>,
     node_count: u32,
-    view: &'view BcsrHypergraph<'view, U32<LE>>,
+    view: &'view BcsrSnapshotHypergraph<'view, u32, u32, u32>,
     state: &mut BcsrBenchState<'view>,
 ) {
     // Reverse BFS starts from the last vertex so chain / sparse fixtures
@@ -661,7 +664,7 @@ fn bench_bcsr_fixture(
             Ok(opened) => opened,
             Err(error) => panic!("BCSR benchmark snapshot invalid: {error:?}"),
         };
-        let view = match BcsrHypergraph::<U32<LE>>::from_snapshot(&snapshot) {
+        let view = match BcsrSnapshotHypergraph::<u32, u32, u32>::from_snapshot(&snapshot) {
             Ok(view) => view,
             Err(error) => panic!("BCSR benchmark adaptor invalid: {error:?}"),
         };
@@ -671,9 +674,9 @@ fn bench_bcsr_fixture(
         let mut reverse_visited = vec![0u8; bound];
         let mut reverse_queue = vec![BcsrVertexId(0); bound];
         let mut forward_workspace =
-            BfsWorkspace::<BcsrHypergraph<'_, U32<LE>>>::with_element_bound(bound);
+            BfsWorkspace::<BcsrSnapshotHypergraph<'_, u32, u32, u32>>::with_element_bound(bound);
         let mut reverse_workspace =
-            BfsWorkspace::<BcsrHypergraph<'_, U32<LE>>>::with_element_bound(bound);
+            BfsWorkspace::<BcsrSnapshotHypergraph<'_, u32, u32, u32>>::with_element_bound(bound);
 
         group.throughput(Throughput::Elements(u64::from(*node_count)));
 

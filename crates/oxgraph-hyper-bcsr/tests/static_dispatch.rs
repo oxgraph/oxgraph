@@ -8,12 +8,12 @@ use oxgraph_hyper::{
     IncidentHyperedges, RelationIncidenceCount, RelationIncidences, RelationIndex, TopologyBase,
 };
 use oxgraph_hyper_bcsr::{
-    BcsrError, BcsrHyperedgeId, BcsrHypergraph, BcsrParticipantId, BcsrRole, BcsrSections,
-    BcsrVertexId,
+    BcsrError, BcsrHyperedgeId, BcsrHypergraph, BcsrNativeHypergraph, BcsrParticipantId, BcsrRole,
+    BcsrSections, BcsrVertexId,
 };
 
 /// Hand-built canonical fixture (same layout as `tests/bcsr.rs`).
-fn canonical_sections() -> BcsrSections<'static, u32> {
+fn canonical_sections() -> BcsrSections<'static, u32, u32, u32> {
     static HEAD_OFFSETS: &[u32] = &[0, 1, 2];
     static HEAD_PARTICIPANTS: &[u32] = &[0, 1];
     static TAIL_OFFSETS: &[u32] = &[0, 2, 3];
@@ -239,7 +239,7 @@ fn generic_consumers_resolve_incidences() -> Result<(), BcsrError> {
 #[test]
 fn generic_consumers_check_membership() -> Result<(), BcsrError> {
     let view = BcsrHypergraph::open(canonical_sections())?;
-    assert_membership::<_, BcsrVertexId, BcsrHyperedgeId, BcsrParticipantId>(
+    assert_membership::<_, BcsrVertexId<u32>, BcsrHyperedgeId<u32>, BcsrParticipantId<u32>>(
         &view,
         BcsrVertexId(0),
         BcsrHyperedgeId(0),
@@ -251,5 +251,5 @@ fn generic_consumers_check_membership() -> Result<(), BcsrError> {
 #[test]
 fn topology_base_associated_types() {
     fn check<H: TopologyBase + IncidenceBase>() {}
-    check::<BcsrHypergraph<'_, u32>>();
+    check::<BcsrNativeHypergraph<'_, u32, u32, u32>>();
 }
