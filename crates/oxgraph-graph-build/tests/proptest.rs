@@ -7,16 +7,18 @@ use arrow_schema::{DataType, Field};
 use oxgraph_graph::{
     ContainsElement, ContainsRelation, GraphCounts, LocalElementIdentity, LocalRelationIdentity,
 };
-use oxgraph_graph_build::{GraphBuildError, GraphBuilder, GraphNodeId};
+use oxgraph_graph_build::{
+    GraphBuildError, GraphBuilder, GraphEdgeId, GraphNodeId, export_csr_snapshot_with_properties,
+};
 use oxgraph_property::{
-    IdFamily, LayerId, LayerRole, PropertyLayer, PropertyLayerDescriptor, StorageMode,
-    validate_identity_snapshot, validate_property_snapshot,
+    GraphPropertyLayers, IdFamily, LayerId, LayerRole, PropertyLayer, PropertyLayerDescriptor,
+    StorageMode, validate_identity_snapshot, validate_property_snapshot,
 };
 use oxgraph_snapshot::Snapshot;
 use proptest::{prelude::*, test_runner::TestCaseError};
 
 /// Converts graph build results into proptest failures.
-fn prop_graph<T>(result: Result<T, GraphBuildError>) -> Result<T, TestCaseError> {
+fn prop_graph<T>(result: Result<T, GraphBuildError<u32, u32>>) -> Result<T, TestCaseError> {
     result.map_err(|error| TestCaseError::fail(error.to_string()))
 }
 
@@ -34,7 +36,7 @@ proptest! {
         node_count in 1_u32..32,
         edges in prop::collection::vec((0_u32..32, 0_u32..32), 0..128),
     ) {
-        let mut builder = GraphBuilder::new(0_i16, 1_u32);
+        let mut builder = GraphBuilder::<u32, u32>::new();
         for _ in 0..node_count {
             prop_graph(builder.add_node())?;
         }
@@ -45,7 +47,7 @@ proptest! {
         }
         let relation_values = vec![7_i32; builder.edge_count()];
         let descriptor = prop_property(PropertyLayerDescriptor::try_new(
-            LayerId(10),
+            LayerId(10_u32),
             "relation_marker",
             IdFamily::Relation,
             LayerRole::Property,
@@ -56,7 +58,6 @@ proptest! {
             descriptor,
             Arc::new(Int32Array::from(relation_values)),
         ))?;
-        prop_graph(builder.add_property_layer(layer))?;
         let frozen = prop_graph(builder.freeze())?;
         for node in 0..node_count {
             let id = GraphNodeId(node);
@@ -66,18 +67,25 @@ proptest! {
         let edge_count = u32::try_from(frozen.edge_count())
             .map_err(|error| TestCaseError::fail(error.to_string()))?;
         for edge in 0..edge_count {
-            prop_assert!(frozen.contains_relation(oxgraph_graph_build::GraphEdgeId(edge)));
+            prop_assert!(frozen.contains_relation(GraphEdgeId(edge)));
             prop_assert_eq!(
-                frozen.local_relation_id(oxgraph_graph_build::GraphEdgeId(edge)),
-                Some(oxgraph_graph_build::GraphEdgeId(edge))
+                frozen.local_relation_id(GraphEdgeId(edge)),
+                Some(GraphEdgeId(edge))
             );
         }
-        let bytes = prop_graph(frozen.to_csr_snapshot())?;
+        let relation_layers = [layer];
+        let bytes = prop_graph(export_csr_snapshot_with_properties(
+            &frozen,
+            GraphPropertyLayers {
+                element: &[],
+                relation: &relation_layers,
+            },
+        ))?;
         let snapshot = Snapshot::open(&bytes)
             .map_err(|error| TestCaseError::fail(error.to_string()))?;
-        let _identity = validate_identity_snapshot(&snapshot)
+        let _identity = validate_identity_snapshot::<u32>(&snapshot)
             .map_err(|error| TestCaseError::fail(error.to_string()))?;
-        let _property = validate_property_snapshot(&snapshot)
+        let _property = validate_property_snapshot::<u32>(&snapshot)
             .map_err(|error| TestCaseError::fail(error.to_string()))?;
     }
 }
