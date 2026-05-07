@@ -52,11 +52,17 @@ fn index_to_u32(index: usize) -> u32 {
         .unwrap_or_else(|error| panic!("benchmark relation count should fit u32: {error}"))
 }
 
+/// Converts a benchmark index to `u64`.
+fn index_to_u64(index: usize) -> u64 {
+    u64::try_from(index)
+        .unwrap_or_else(|error| panic!("benchmark relation count should fit u64: {error}"))
+}
+
 /// Benchmarks dense and sparse selected relation-weight lookups.
 fn property_lookup(c: &mut Criterion) {
     let topology = BenchTopology { relations: 10_000 };
     let dense_descriptor = PropertyLayerDescriptor::try_new(
-        LayerId(1),
+        LayerId(1_u64),
         "dense_weight",
         IdFamily::Relation,
         LayerRole::Weight,
@@ -69,11 +75,11 @@ fn property_lookup(c: &mut Criterion) {
     ));
     let dense = PropertyLayer::try_new_dense(dense_descriptor, dense_values)
         .unwrap_or_else(|error| panic!("benchmark layer should be valid: {error}"));
-    let dense_weights = DenseRelationWeights::<_, Float32Type>::new(&topology, &dense)
+    let dense_weights = DenseRelationWeights::<_, u64, u64, Float32Type>::new(&topology, &dense)
         .unwrap_or_else(|error| panic!("benchmark selection should be valid: {error}"));
 
     let sparse_descriptor = PropertyLayerDescriptor::try_new(
-        LayerId(2),
+        LayerId(2_u64),
         "sparse_weight",
         IdFamily::Relation,
         LayerRole::Weight,
@@ -87,9 +93,7 @@ fn property_lookup(c: &mut Criterion) {
         sparse_descriptor,
         topology.relations,
         Arc::new(UInt64Array::from_iter_values(
-            (0..topology.relations)
-                .step_by(10)
-                .map(|value| value as u64),
+            (0..topology.relations).step_by(10).map(index_to_u64),
         )),
         Arc::new(Float32Array::from_iter_values(
             (0..topology.relations).step_by(10).map(index_to_f32),
@@ -97,7 +101,7 @@ fn property_lookup(c: &mut Criterion) {
         Some(Arc::new(Float32Array::from(vec![1.0_f32]))),
     )
     .unwrap_or_else(|error| panic!("benchmark sparse layer should be valid: {error}"));
-    let sparse_weights = SparseRelationWeights::<_, Float32Type>::new(&topology, &sparse)
+    let sparse_weights = SparseRelationWeights::<_, u64, u64, Float32Type>::new(&topology, &sparse)
         .unwrap_or_else(|error| panic!("benchmark sparse selection should be valid: {error}"));
 
     c.bench_function("dense_relation_weight_lookup_f32", |b| {

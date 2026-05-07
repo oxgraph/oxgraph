@@ -17,22 +17,21 @@ use std::{
     vec::Vec,
 };
 
-use arrow_array::{
-    Array, ArrayRef, PrimitiveArray, RecordBatch, UInt64Array, types::ArrowPrimitiveType,
-};
+use arrow_array::{Array, ArrayRef, PrimitiveArray, RecordBatch, types::ArrowPrimitiveType};
 use arrow_ipc::{reader::StreamReader, writer::StreamWriter};
 use arrow_schema::{DataType, Field, Schema};
+use arrow_select::take::take;
 use oxgraph_snapshot::{SectionViewError, Snapshot};
 use oxgraph_topology::{
     ElementIndex, ElementWeight, IncidenceBase, IncidenceIndex, IncidenceWeight, RelationIndex,
     RelationWeight, TopologyBase,
 };
 use zerocopy::{
-    FromBytes, Immutable, IntoBytes, KnownLayout,
-    byteorder::{LE, U32, U64},
+    FromBytes, Immutable, IntoBytes, KnownLayout, Unaligned,
+    byteorder::{LE, U16, U32, U64},
 };
 
-/// Snapshot section kind reserved for property-layer descriptors.
+/// Snapshot section kind reserved for `u16` property-layer descriptors.
 ///
 /// The payload format is owned by this crate and remains an OxGraph-internal
 /// ABI candidate while snapshot v1 bytes are not stable.
@@ -40,42 +39,126 @@ use zerocopy::{
 /// # Performance
 ///
 /// `perf: unspecified`; this is a compile-time constant.
-pub const SNAPSHOT_KIND_PROPERTY_DESCRIPTORS: u32 = 0x0100;
+pub const SNAPSHOT_KIND_PROPERTY_DESCRIPTORS_U16: u32 = 0x0100;
 
-/// Snapshot section kind reserved for Arrow IPC property-layer payloads.
+/// Snapshot section kind reserved for `u16` Arrow IPC property-layer payloads.
 ///
 /// # Performance
 ///
 /// `perf: unspecified`; this is a compile-time constant.
-pub const SNAPSHOT_KIND_PROPERTY_DATA: u32 = 0x0101;
+pub const SNAPSHOT_KIND_PROPERTY_DATA_U16: u32 = 0x0101;
 
-/// Snapshot section kind for identity-mode metadata records.
+/// Snapshot section kind reserved for `u32` property-layer descriptors.
 ///
 /// # Performance
 ///
 /// `perf: unspecified`; this is a compile-time constant.
-pub const SNAPSHOT_KIND_IDENTITY_MODES: u32 = 0x0102;
+pub const SNAPSHOT_KIND_PROPERTY_DESCRIPTORS_U32: u32 = 0x0102;
+
+/// Snapshot section kind reserved for `u32` Arrow IPC property-layer payloads.
+///
+/// # Performance
+///
+/// `perf: unspecified`; this is a compile-time constant.
+pub const SNAPSHOT_KIND_PROPERTY_DATA_U32: u32 = 0x0103;
+
+/// Snapshot section kind reserved for `u64` property-layer descriptors.
+///
+/// # Performance
+///
+/// `perf: unspecified`; this is a compile-time constant.
+pub const SNAPSHOT_KIND_PROPERTY_DESCRIPTORS_U64: u32 = 0x0104;
+
+/// Snapshot section kind reserved for `u64` Arrow IPC property-layer payloads.
+///
+/// # Performance
+///
+/// `perf: unspecified`; this is a compile-time constant.
+pub const SNAPSHOT_KIND_PROPERTY_DATA_U64: u32 = 0x0105;
+
+/// Snapshot section kind for `u16` identity-mode metadata records.
+///
+/// # Performance
+///
+/// `perf: unspecified`; this is a compile-time constant.
+pub const SNAPSHOT_KIND_IDENTITY_MODES_U16: u32 = 0x0110;
+
+/// Snapshot section kind for `u32` identity-mode metadata records.
+///
+/// # Performance
+///
+/// `perf: unspecified`; this is a compile-time constant.
+pub const SNAPSHOT_KIND_IDENTITY_MODES_U32: u32 = 0x0111;
+
+/// Snapshot section kind for `u64` identity-mode metadata records.
+///
+/// # Performance
+///
+/// `perf: unspecified`; this is a compile-time constant.
+pub const SNAPSHOT_KIND_IDENTITY_MODES_U64: u32 = 0x0112;
+
+/// Snapshot section kind for element local-to-canonical `u16` maps.
+///
+/// # Performance
+///
+/// `perf: unspecified`; this is a compile-time constant.
+pub const SNAPSHOT_KIND_ELEMENT_IDENTITY_MAP_U16: u32 = 0x0113;
 
 /// Snapshot section kind for element local-to-canonical `u32` maps.
 ///
 /// # Performance
 ///
 /// `perf: unspecified`; this is a compile-time constant.
-pub const SNAPSHOT_KIND_ELEMENT_IDENTITY_MAP_U32: u32 = 0x0103;
+pub const SNAPSHOT_KIND_ELEMENT_IDENTITY_MAP_U32: u32 = 0x0114;
+
+/// Snapshot section kind for element local-to-canonical `u64` maps.
+///
+/// # Performance
+///
+/// `perf: unspecified`; this is a compile-time constant.
+pub const SNAPSHOT_KIND_ELEMENT_IDENTITY_MAP_U64: u32 = 0x0115;
+
+/// Snapshot section kind for relation local-to-canonical `u16` maps.
+///
+/// # Performance
+///
+/// `perf: unspecified`; this is a compile-time constant.
+pub const SNAPSHOT_KIND_RELATION_IDENTITY_MAP_U16: u32 = 0x0116;
 
 /// Snapshot section kind for relation local-to-canonical `u32` maps.
 ///
 /// # Performance
 ///
 /// `perf: unspecified`; this is a compile-time constant.
-pub const SNAPSHOT_KIND_RELATION_IDENTITY_MAP_U32: u32 = 0x0104;
+pub const SNAPSHOT_KIND_RELATION_IDENTITY_MAP_U32: u32 = 0x0117;
+
+/// Snapshot section kind for relation local-to-canonical `u64` maps.
+///
+/// # Performance
+///
+/// `perf: unspecified`; this is a compile-time constant.
+pub const SNAPSHOT_KIND_RELATION_IDENTITY_MAP_U64: u32 = 0x0118;
+
+/// Snapshot section kind for incidence local-to-canonical `u16` maps.
+///
+/// # Performance
+///
+/// `perf: unspecified`; this is a compile-time constant.
+pub const SNAPSHOT_KIND_INCIDENCE_IDENTITY_MAP_U16: u32 = 0x0119;
 
 /// Snapshot section kind for incidence local-to-canonical `u32` maps.
 ///
 /// # Performance
 ///
 /// `perf: unspecified`; this is a compile-time constant.
-pub const SNAPSHOT_KIND_INCIDENCE_IDENTITY_MAP_U32: u32 = 0x0105;
+pub const SNAPSHOT_KIND_INCIDENCE_IDENTITY_MAP_U32: u32 = 0x011A;
+
+/// Snapshot section kind for incidence local-to-canonical `u64` maps.
+///
+/// # Performance
+///
+/// `perf: unspecified`; this is a compile-time constant.
+pub const SNAPSHOT_KIND_INCIDENCE_IDENTITY_MAP_U64: u32 = 0x011B;
 
 /// Internal property/identity snapshot section version.
 ///
@@ -90,7 +173,200 @@ pub const SNAPSHOT_PROPERTY_VERSION: u32 = 1;
 ///
 /// Copying, comparing, ordering, hashing, and debug-formatting are `O(1)`.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct LayerId(pub u64);
+pub struct LayerId<Id>(pub Id);
+
+/// Sealed trait modules for property width contracts.
+mod sealed {
+    /// Seals [`super::PropertyIndex`] to supported unsigned sparse widths.
+    pub trait PropertyIndex {}
+
+    /// Seals [`super::PropertySnapshotMetaWord`] to supported metadata widths.
+    pub trait PropertySnapshotMetaWord {}
+}
+
+/// Unsigned index width usable for sparse property indexes.
+///
+/// # Performance
+///
+/// Implementations perform checked conversions in `O(1)`.
+pub trait PropertyIndex: sealed::PropertyIndex + Copy + Ord {
+    /// Arrow unsigned primitive type for sparse index arrays.
+    type ArrowType: ArrowPrimitiveType<Native = Self> + 'static;
+
+    /// Little-endian word used when this width appears in snapshots.
+    type LittleEndianWord: FromBytes + Immutable + IntoBytes + KnownLayout + Unaligned + Copy;
+
+    /// Returns `self` as `usize`, or `None` if the target platform cannot hold it.
+    ///
+    /// # Performance
+    ///
+    /// This function is `O(1)`.
+    fn to_usize(self) -> Option<usize>;
+
+    /// Converts `value` into this index width if it fits.
+    ///
+    /// # Performance
+    ///
+    /// This function is `O(1)`.
+    fn from_usize(value: usize) -> Option<Self>;
+
+    /// Converts `value` into this index width if it fits.
+    ///
+    /// # Performance
+    ///
+    /// This function is `O(1)`.
+    fn from_u64(value: u64) -> Option<Self>;
+
+    /// Returns `self` as `u64` for diagnostics.
+    ///
+    /// # Performance
+    ///
+    /// This function is `O(1)`.
+    fn to_u64(self) -> u64;
+
+    /// Encodes `self` as a little-endian snapshot word.
+    ///
+    /// # Performance
+    ///
+    /// This function is `O(1)`.
+    fn to_le_word(self) -> Self::LittleEndianWord;
+
+    /// Decodes a little-endian snapshot word.
+    ///
+    /// # Performance
+    ///
+    /// This function is `O(1)`.
+    fn from_le_word(word: Self::LittleEndianWord) -> Self;
+
+    /// Builds an Arrow primitive array from native index values.
+    ///
+    /// # Performance
+    ///
+    /// This function is `O(values.len())`.
+    fn primitive_array(values: Vec<Self>) -> PrimitiveArray<Self::ArrowType>;
+}
+
+/// Metadata/canonical-ID word width for property and identity snapshot sections.
+///
+/// # Performance
+///
+/// Implementations perform checked conversions in `O(1)`.
+pub trait PropertySnapshotMetaWord: sealed::PropertySnapshotMetaWord + PropertyIndex {
+    /// Property descriptor section kind for this metadata width.
+    const PROPERTY_DESCRIPTORS_KIND: u32;
+
+    /// Property data section kind for this metadata width.
+    const PROPERTY_DATA_KIND: u32;
+
+    /// Identity mode section kind for this metadata width.
+    const IDENTITY_MODES_KIND: u32;
+
+    /// Element identity map section kind for this metadata width.
+    const ELEMENT_IDENTITY_MAP_KIND: u32;
+
+    /// Relation identity map section kind for this metadata width.
+    const RELATION_IDENTITY_MAP_KIND: u32;
+
+    /// Incidence identity map section kind for this metadata width.
+    const INCIDENCE_IDENTITY_MAP_KIND: u32;
+}
+
+/// Implements property width traits for one unsigned integer.
+macro_rules! impl_property_width {
+    (
+        $index:ty,
+        $arrow:ty,
+        $word:ty,
+        $descriptor_kind:expr,
+        $data_kind:expr,
+        $identity_kind:expr,
+        $element_kind:expr,
+        $relation_kind:expr,
+        $incidence_kind:expr
+    ) => {
+        impl sealed::PropertyIndex for $index {}
+
+        impl PropertyIndex for $index {
+            type ArrowType = $arrow;
+            type LittleEndianWord = $word;
+
+            fn to_usize(self) -> Option<usize> {
+                usize::try_from(self).ok()
+            }
+
+            fn from_usize(value: usize) -> Option<Self> {
+                <$index>::try_from(value).ok()
+            }
+
+            fn from_u64(value: u64) -> Option<Self> {
+                <$index>::try_from(value).ok()
+            }
+
+            fn to_u64(self) -> u64 {
+                u64::from(self)
+            }
+
+            fn to_le_word(self) -> Self::LittleEndianWord {
+                <$word>::new(self)
+            }
+
+            fn from_le_word(word: Self::LittleEndianWord) -> Self {
+                word.get()
+            }
+
+            fn primitive_array(values: Vec<Self>) -> PrimitiveArray<Self::ArrowType> {
+                PrimitiveArray::<$arrow>::from(values)
+            }
+        }
+
+        impl sealed::PropertySnapshotMetaWord for $index {}
+
+        impl PropertySnapshotMetaWord for $index {
+            const PROPERTY_DESCRIPTORS_KIND: u32 = $descriptor_kind;
+            const PROPERTY_DATA_KIND: u32 = $data_kind;
+            const IDENTITY_MODES_KIND: u32 = $identity_kind;
+            const ELEMENT_IDENTITY_MAP_KIND: u32 = $element_kind;
+            const RELATION_IDENTITY_MAP_KIND: u32 = $relation_kind;
+            const INCIDENCE_IDENTITY_MAP_KIND: u32 = $incidence_kind;
+        }
+    };
+}
+
+impl_property_width!(
+    u16,
+    arrow_array::types::UInt16Type,
+    U16<LE>,
+    SNAPSHOT_KIND_PROPERTY_DESCRIPTORS_U16,
+    SNAPSHOT_KIND_PROPERTY_DATA_U16,
+    SNAPSHOT_KIND_IDENTITY_MODES_U16,
+    SNAPSHOT_KIND_ELEMENT_IDENTITY_MAP_U16,
+    SNAPSHOT_KIND_RELATION_IDENTITY_MAP_U16,
+    SNAPSHOT_KIND_INCIDENCE_IDENTITY_MAP_U16
+);
+
+impl_property_width!(
+    u32,
+    arrow_array::types::UInt32Type,
+    U32<LE>,
+    SNAPSHOT_KIND_PROPERTY_DESCRIPTORS_U32,
+    SNAPSHOT_KIND_PROPERTY_DATA_U32,
+    SNAPSHOT_KIND_IDENTITY_MODES_U32,
+    SNAPSHOT_KIND_ELEMENT_IDENTITY_MAP_U32,
+    SNAPSHOT_KIND_RELATION_IDENTITY_MAP_U32,
+    SNAPSHOT_KIND_INCIDENCE_IDENTITY_MAP_U32
+);
+
+impl_property_width!(
+    u64,
+    arrow_array::types::UInt64Type,
+    U64<LE>,
+    SNAPSHOT_KIND_PROPERTY_DESCRIPTORS_U64,
+    SNAPSHOT_KIND_PROPERTY_DATA_U64,
+    SNAPSHOT_KIND_IDENTITY_MODES_U64,
+    SNAPSHOT_KIND_ELEMENT_IDENTITY_MAP_U64,
+    SNAPSHOT_KIND_RELATION_IDENTITY_MAP_U64,
+    SNAPSHOT_KIND_INCIDENCE_IDENTITY_MAP_U64
+);
 
 /// Human-facing property layer name.
 ///
@@ -169,148 +445,6 @@ pub enum LayerRole {
     Property,
 }
 
-/// Coarse Arrow value family recorded by descriptors and snapshot metadata.
-///
-/// Full Arrow type fidelity lives in the Arrow schema encoded in the property
-/// data section. This enum is review metadata and quick validation context.
-///
-/// # Performance
-///
-/// Copying, comparing, and debug-formatting are `O(1)`.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-#[non_exhaustive]
-pub enum ArrowValueFamily {
-    /// Arrow null type.
-    Null,
-    /// Boolean values.
-    Boolean,
-    /// Signed integer values.
-    SignedInteger,
-    /// Unsigned integer values.
-    UnsignedInteger,
-    /// Floating-point values.
-    Floating,
-    /// Decimal numeric values.
-    Decimal,
-    /// Date, time, duration, or interval values.
-    Temporal,
-    /// UTF-8 string values.
-    Utf8,
-    /// Binary values.
-    Binary,
-    /// Dictionary/categorical values.
-    Dictionary,
-    /// List-like values.
-    List,
-    /// Struct/grouped values.
-    Struct,
-    /// Map values.
-    Map,
-    /// Union values.
-    Union,
-    /// Run-end encoded values.
-    RunEndEncoded,
-}
-
-impl ArrowValueFamily {
-    /// Classifies an Arrow data type into an `OxGraph` property value family.
-    ///
-    /// # Performance
-    ///
-    /// This function is `O(1)` except for following dictionary child metadata.
-    #[must_use]
-    pub const fn from_data_type(data_type: &DataType) -> Self {
-        match data_type {
-            DataType::Null => Self::Null,
-            DataType::Boolean => Self::Boolean,
-            DataType::Int8 | DataType::Int16 | DataType::Int32 | DataType::Int64 => {
-                Self::SignedInteger
-            }
-            DataType::UInt8 | DataType::UInt16 | DataType::UInt32 | DataType::UInt64 => {
-                Self::UnsignedInteger
-            }
-            DataType::Float16 | DataType::Float32 | DataType::Float64 => Self::Floating,
-            DataType::Decimal32(_, _)
-            | DataType::Decimal64(_, _)
-            | DataType::Decimal128(_, _)
-            | DataType::Decimal256(_, _) => Self::Decimal,
-            DataType::Timestamp(_, _)
-            | DataType::Date32
-            | DataType::Date64
-            | DataType::Time32(_)
-            | DataType::Time64(_)
-            | DataType::Duration(_)
-            | DataType::Interval(_) => Self::Temporal,
-            DataType::Utf8 | DataType::LargeUtf8 | DataType::Utf8View => Self::Utf8,
-            DataType::Binary
-            | DataType::FixedSizeBinary(_)
-            | DataType::LargeBinary
-            | DataType::BinaryView => Self::Binary,
-            DataType::Dictionary(_, _) => Self::Dictionary,
-            DataType::List(_)
-            | DataType::ListView(_)
-            | DataType::FixedSizeList(_, _)
-            | DataType::LargeList(_)
-            | DataType::LargeListView(_) => Self::List,
-            DataType::Struct(_) => Self::Struct,
-            DataType::Map(_, _) => Self::Map,
-            DataType::Union(_, _) => Self::Union,
-            DataType::RunEndEncoded(_, _) => Self::RunEndEncoded,
-        }
-    }
-
-    /// Returns the snapshot tag for this value family.
-    ///
-    /// # Performance
-    ///
-    /// This function is `O(1)`.
-    const fn tag(self) -> u32 {
-        match self {
-            Self::Null => 0,
-            Self::Boolean => 1,
-            Self::SignedInteger => 2,
-            Self::UnsignedInteger => 3,
-            Self::Floating => 4,
-            Self::Decimal => 5,
-            Self::Temporal => 6,
-            Self::Utf8 => 7,
-            Self::Binary => 8,
-            Self::Dictionary => 9,
-            Self::List => 10,
-            Self::Struct => 11,
-            Self::Map => 12,
-            Self::Union => 13,
-            Self::RunEndEncoded => 14,
-        }
-    }
-
-    /// Decodes a snapshot value-family tag.
-    ///
-    /// # Performance
-    ///
-    /// This function is `O(1)`.
-    const fn from_tag(tag: u32) -> Option<Self> {
-        match tag {
-            0 => Some(Self::Null),
-            1 => Some(Self::Boolean),
-            2 => Some(Self::SignedInteger),
-            3 => Some(Self::UnsignedInteger),
-            4 => Some(Self::Floating),
-            5 => Some(Self::Decimal),
-            6 => Some(Self::Temporal),
-            7 => Some(Self::Utf8),
-            8 => Some(Self::Binary),
-            9 => Some(Self::Dictionary),
-            10 => Some(Self::List),
-            11 => Some(Self::Struct),
-            12 => Some(Self::Map),
-            13 => Some(Self::Union),
-            14 => Some(Self::RunEndEncoded),
-            _ => None,
-        }
-    }
-}
-
 /// Missing-value policy for sparse property layers.
 ///
 /// The actual default scalar, when present, is stored in Arrow data for the
@@ -352,9 +486,12 @@ pub enum StorageMode {
 /// Cloning is `O(name.len() + arrow field clone cost)`.
 #[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
-pub struct PropertyLayerDescriptor {
+pub struct PropertyLayerDescriptor<Id, I>
+where
+    I: PropertyIndex,
+{
     /// Stable layer identifier.
-    pub layer_id: LayerId,
+    pub layer_id: LayerId<Id>,
     /// Human-facing layer name.
     pub name: LayerName,
     /// Topology ID family keyed by this layer.
@@ -365,9 +502,14 @@ pub struct PropertyLayerDescriptor {
     pub storage: StorageMode,
     /// Arrow schema field for stored values.
     pub arrow_field: Field,
+    /// Sparse/logical index width selected for this layer.
+    index_width: core::marker::PhantomData<I>,
 }
 
-impl PropertyLayerDescriptor {
+impl<Id, I> PropertyLayerDescriptor<Id, I>
+where
+    I: PropertyIndex,
+{
     /// Constructs a descriptor and validates the layer name.
     ///
     /// # Errors
@@ -382,7 +524,7 @@ impl PropertyLayerDescriptor {
         reason = "descriptor constructor mirrors the six-field descriptor contract"
     )]
     pub fn try_new(
-        layer_id: LayerId,
+        layer_id: LayerId<Id>,
         name: &str,
         id_family: IdFamily,
         role: LayerRole,
@@ -396,17 +538,8 @@ impl PropertyLayerDescriptor {
             role,
             storage,
             arrow_field,
+            index_width: core::marker::PhantomData,
         })
-    }
-
-    /// Returns the coarse Arrow value family described by this layer.
-    ///
-    /// # Performance
-    ///
-    /// This function is `O(1)` except for following dictionary child metadata.
-    #[must_use]
-    pub const fn value_family(&self) -> ArrowValueFamily {
-        ArrowValueFamily::from_data_type(self.arrow_field.data_type())
     }
 }
 
@@ -493,7 +626,7 @@ pub enum PropertyError {
     /// A layer ID was reused within one descriptor set.
     DuplicateLayerId {
         /// Duplicate layer ID.
-        layer_id: LayerId,
+        layer_id: u64,
     },
     /// A snapshot section was missing.
     MissingSnapshotSection {
@@ -728,9 +861,11 @@ impl Error for PropertyError {}
 /// # Performance
 ///
 /// Cloning is `O(1)` because Arrow arrays are reference-counted.
-#[derive(Clone, Debug)]
 #[non_exhaustive]
-pub enum PropertyLayerData {
+pub enum PropertyLayerData<I>
+where
+    I: PropertyIndex,
+{
     /// Dense Arrow array with one slot per ID index.
     Dense {
         /// Dense values.
@@ -739,12 +874,58 @@ pub enum PropertyLayerData {
     /// Sparse Arrow array keyed by explicit indexes.
     Sparse {
         /// Strictly ascending sparse indexes.
-        indices: Arc<UInt64Array>,
+        indices: Arc<PrimitiveArray<I::ArrowType>>,
         /// Values aligned with `indices`.
         values: ArrayRef,
         /// Optional Arrow scalar default encoded as a length-one array.
         default: Option<ArrayRef>,
     },
+}
+
+impl<I> Clone for PropertyLayerData<I>
+where
+    I: PropertyIndex,
+{
+    fn clone(&self) -> Self {
+        match self {
+            Self::Dense { values } => Self::Dense {
+                values: Arc::clone(values),
+            },
+            Self::Sparse {
+                indices,
+                values,
+                default,
+            } => Self::Sparse {
+                indices: Arc::clone(indices),
+                values: Arc::clone(values),
+                default: default.clone(),
+            },
+        }
+    }
+}
+
+impl<I> fmt::Debug for PropertyLayerData<I>
+where
+    I: PropertyIndex,
+{
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Dense { values } => formatter
+                .debug_struct("Dense")
+                .field("len", &values.len())
+                .finish(),
+            Self::Sparse {
+                indices,
+                values,
+                default,
+            } => formatter
+                .debug_struct("Sparse")
+                .field("indices", &indices.len())
+                .field("values", &values.len())
+                .field("has_default", &default.is_some())
+                .finish(),
+        }
+    }
 }
 
 /// Arrow-backed property layer.
@@ -754,16 +935,22 @@ pub enum PropertyLayerData {
 /// Cloning is `O(1)` for Arrow buffers plus descriptor clone cost.
 #[derive(Clone, Debug)]
 #[must_use]
-pub struct PropertyLayer {
+pub struct PropertyLayer<Id, I>
+where
+    I: PropertyIndex,
+{
     /// Layer descriptor.
-    descriptor: PropertyLayerDescriptor,
+    descriptor: PropertyLayerDescriptor<Id, I>,
     /// Logical layer length.
     len: usize,
     /// Layer data.
-    data: PropertyLayerData,
+    data: PropertyLayerData<I>,
 }
 
-impl PropertyLayer {
+impl<Id, I> PropertyLayer<Id, I>
+where
+    I: PropertyIndex,
+{
     /// Builds a dense Arrow-backed property layer.
     ///
     /// # Errors
@@ -774,7 +961,7 @@ impl PropertyLayer {
     ///
     /// Validation is `O(values.len())` only when nullability must be checked.
     pub fn try_new_dense(
-        descriptor: PropertyLayerDescriptor,
+        descriptor: PropertyLayerDescriptor<Id, I>,
         values: ArrayRef,
     ) -> Result<Self, PropertyError> {
         if descriptor.storage != StorageMode::Dense {
@@ -805,9 +992,9 @@ impl PropertyLayer {
     ///
     /// Validation is `O(indices.len() + default length)`.
     pub fn try_new_sparse(
-        descriptor: PropertyLayerDescriptor,
+        descriptor: PropertyLayerDescriptor<Id, I>,
         len: usize,
-        indices: Arc<UInt64Array>,
+        indices: Arc<PrimitiveArray<I::ArrowType>>,
         values: ArrayRef,
         default: Option<ArrayRef>,
     ) -> Result<Self, PropertyError> {
@@ -828,7 +1015,7 @@ impl PropertyLayer {
         if !descriptor.arrow_field.is_nullable() {
             ensure_no_nulls(values.as_ref())?;
         }
-        validate_sparse_indices(indices.as_ref(), len)?;
+        validate_sparse_indices::<I>(indices.as_ref(), len)?;
         Ok(Self {
             descriptor,
             len,
@@ -846,7 +1033,7 @@ impl PropertyLayer {
     ///
     /// This function is `O(1)`.
     #[must_use]
-    pub const fn descriptor(&self) -> &PropertyLayerDescriptor {
+    pub const fn descriptor(&self) -> &PropertyLayerDescriptor<Id, I> {
         &self.descriptor
     }
 
@@ -856,7 +1043,7 @@ impl PropertyLayer {
     ///
     /// This function is `O(1)`.
     #[must_use]
-    pub const fn data(&self) -> &PropertyLayerData {
+    pub const fn data(&self) -> &PropertyLayerData<I> {
         &self.data
     }
 
@@ -881,19 +1068,68 @@ impl PropertyLayer {
     }
 }
 
+/// Borrowed graph property layers partitioned by topology ID family.
+///
+/// # Performance
+///
+/// Copying this struct is `O(1)`.
+#[derive(Clone, Copy, Debug)]
+pub struct GraphPropertyLayers<'view, Id, NodeIndex, EdgeIndex>
+where
+    NodeIndex: PropertyIndex,
+    EdgeIndex: PropertyIndex,
+{
+    /// Element/node-keyed property layers.
+    pub element: &'view [PropertyLayer<Id, NodeIndex>],
+    /// Relation/edge-keyed property layers.
+    pub relation: &'view [PropertyLayer<Id, EdgeIndex>],
+}
+
+/// Borrowed hypergraph property layers partitioned by topology ID family.
+///
+/// # Performance
+///
+/// Copying this struct is `O(1)`.
+#[derive(Clone, Copy, Debug)]
+pub struct HyperPropertyLayers<'view, Id, VertexIndex, RelationIndex, IncidenceIndex>
+where
+    VertexIndex: PropertyIndex,
+    RelationIndex: PropertyIndex,
+    IncidenceIndex: PropertyIndex,
+{
+    /// Element/vertex-keyed property layers.
+    pub element: &'view [PropertyLayer<Id, VertexIndex>],
+    /// Relation/hyperedge-keyed property layers.
+    pub relation: &'view [PropertyLayer<Id, RelationIndex>],
+    /// Incidence/participant-keyed property layers.
+    pub incidence: &'view [PropertyLayer<Id, IncidenceIndex>],
+}
+
 /// Selected dense primitive element weights for a topology view.
 ///
 /// # Performance
 ///
 /// Weight lookup is `O(1)`.
-pub struct DenseElementWeights<'view, T: ElementIndex, P: ArrowPrimitiveType> {
+pub struct DenseElementWeights<'view, T, Id, I, P>
+where
+    T: ElementIndex,
+    I: PropertyIndex,
+    P: ArrowPrimitiveType,
+{
     /// Topology view that supplies ID-to-index mapping.
     topology: &'view T,
     /// Primitive values.
     values: &'view PrimitiveArray<P>,
+    /// Property ID/index marker.
+    property: core::marker::PhantomData<(Id, I)>,
 }
 
-impl<'view, T: ElementIndex, P: ArrowPrimitiveType> DenseElementWeights<'view, T, P> {
+impl<'view, T, Id, I, P> DenseElementWeights<'view, T, Id, I, P>
+where
+    T: ElementIndex,
+    I: PropertyIndex,
+    P: ArrowPrimitiveType,
+{
     /// Selects a dense primitive layer as element weights for `topology`.
     ///
     /// # Errors
@@ -904,23 +1140,38 @@ impl<'view, T: ElementIndex, P: ArrowPrimitiveType> DenseElementWeights<'view, T
     /// # Performance
     ///
     /// Validation is `O(layer.len())` for the null check.
-    pub fn new(topology: &'view T, layer: &'view PropertyLayer) -> Result<Self, PropertyError> {
-        let values = validate_dense_primitive_selection::<P>(
+    pub fn new(
+        topology: &'view T,
+        layer: &'view PropertyLayer<Id, I>,
+    ) -> Result<Self, PropertyError> {
+        let values = validate_dense_primitive_selection::<Id, I, P>(
             layer,
             IdFamily::Element,
             topology.element_bound(),
         )?;
-        Ok(Self { topology, values })
+        Ok(Self {
+            topology,
+            values,
+            property: core::marker::PhantomData,
+        })
     }
 }
 
-impl<T: ElementIndex, P: ArrowPrimitiveType> TopologyBase for DenseElementWeights<'_, T, P> {
+impl<T, Id, I, P> TopologyBase for DenseElementWeights<'_, T, Id, I, P>
+where
+    T: ElementIndex,
+    I: PropertyIndex,
+    P: ArrowPrimitiveType,
+{
     type ElementId = T::ElementId;
     type RelationId = T::RelationId;
 }
 
-impl<T: ElementIndex, P: ArrowPrimitiveType> ElementWeight for DenseElementWeights<'_, T, P>
+impl<T, Id, I, P> ElementWeight for DenseElementWeights<'_, T, Id, I, P>
 where
+    T: ElementIndex,
+    I: PropertyIndex,
+    P: ArrowPrimitiveType,
     P::Native: Copy,
 {
     type Weight = P::Native;
@@ -935,14 +1186,26 @@ where
 /// # Performance
 ///
 /// Weight lookup is `O(1)`.
-pub struct DenseRelationWeights<'view, T: RelationIndex, P: ArrowPrimitiveType> {
+pub struct DenseRelationWeights<'view, T, Id, I, P>
+where
+    T: RelationIndex,
+    I: PropertyIndex,
+    P: ArrowPrimitiveType,
+{
     /// Topology view that supplies ID-to-index mapping.
     topology: &'view T,
     /// Primitive values.
     values: &'view PrimitiveArray<P>,
+    /// Property ID/index marker.
+    property: core::marker::PhantomData<(Id, I)>,
 }
 
-impl<'view, T: RelationIndex, P: ArrowPrimitiveType> DenseRelationWeights<'view, T, P> {
+impl<'view, T, Id, I, P> DenseRelationWeights<'view, T, Id, I, P>
+where
+    T: RelationIndex,
+    I: PropertyIndex,
+    P: ArrowPrimitiveType,
+{
     /// Selects a dense primitive layer as relation weights for `topology`.
     ///
     /// # Errors
@@ -952,23 +1215,38 @@ impl<'view, T: RelationIndex, P: ArrowPrimitiveType> DenseRelationWeights<'view,
     /// # Performance
     ///
     /// Validation is `O(layer.len())` for the null check.
-    pub fn new(topology: &'view T, layer: &'view PropertyLayer) -> Result<Self, PropertyError> {
-        let values = validate_dense_primitive_selection::<P>(
+    pub fn new(
+        topology: &'view T,
+        layer: &'view PropertyLayer<Id, I>,
+    ) -> Result<Self, PropertyError> {
+        let values = validate_dense_primitive_selection::<Id, I, P>(
             layer,
             IdFamily::Relation,
             topology.relation_bound(),
         )?;
-        Ok(Self { topology, values })
+        Ok(Self {
+            topology,
+            values,
+            property: core::marker::PhantomData,
+        })
     }
 }
 
-impl<T: RelationIndex, P: ArrowPrimitiveType> TopologyBase for DenseRelationWeights<'_, T, P> {
+impl<T, Id, I, P> TopologyBase for DenseRelationWeights<'_, T, Id, I, P>
+where
+    T: RelationIndex,
+    I: PropertyIndex,
+    P: ArrowPrimitiveType,
+{
     type ElementId = T::ElementId;
     type RelationId = T::RelationId;
 }
 
-impl<T: RelationIndex, P: ArrowPrimitiveType> RelationWeight for DenseRelationWeights<'_, T, P>
+impl<T, Id, I, P> RelationWeight for DenseRelationWeights<'_, T, Id, I, P>
 where
+    T: RelationIndex,
+    I: PropertyIndex,
+    P: ArrowPrimitiveType,
     P::Native: Copy,
 {
     type Weight = P::Native;
@@ -983,14 +1261,26 @@ where
 /// # Performance
 ///
 /// Weight lookup is `O(1)`.
-pub struct DenseIncidenceWeights<'view, T: IncidenceIndex, P: ArrowPrimitiveType> {
+pub struct DenseIncidenceWeights<'view, T, Id, I, P>
+where
+    T: IncidenceIndex,
+    I: PropertyIndex,
+    P: ArrowPrimitiveType,
+{
     /// Topology view that supplies ID-to-index mapping.
     topology: &'view T,
     /// Primitive values.
     values: &'view PrimitiveArray<P>,
+    /// Property ID/index marker.
+    property: core::marker::PhantomData<(Id, I)>,
 }
 
-impl<'view, T: IncidenceIndex, P: ArrowPrimitiveType> DenseIncidenceWeights<'view, T, P> {
+impl<'view, T, Id, I, P> DenseIncidenceWeights<'view, T, Id, I, P>
+where
+    T: IncidenceIndex,
+    I: PropertyIndex,
+    P: ArrowPrimitiveType,
+{
     /// Selects a dense primitive layer as incidence weights for `topology`.
     ///
     /// # Errors
@@ -1000,28 +1290,48 @@ impl<'view, T: IncidenceIndex, P: ArrowPrimitiveType> DenseIncidenceWeights<'vie
     /// # Performance
     ///
     /// Validation is `O(layer.len())` for the null check.
-    pub fn new(topology: &'view T, layer: &'view PropertyLayer) -> Result<Self, PropertyError> {
-        let values = validate_dense_primitive_selection::<P>(
+    pub fn new(
+        topology: &'view T,
+        layer: &'view PropertyLayer<Id, I>,
+    ) -> Result<Self, PropertyError> {
+        let values = validate_dense_primitive_selection::<Id, I, P>(
             layer,
             IdFamily::Incidence,
             topology.incidence_bound(),
         )?;
-        Ok(Self { topology, values })
+        Ok(Self {
+            topology,
+            values,
+            property: core::marker::PhantomData,
+        })
     }
 }
 
-impl<T: IncidenceIndex, P: ArrowPrimitiveType> TopologyBase for DenseIncidenceWeights<'_, T, P> {
+impl<T, Id, I, P> TopologyBase for DenseIncidenceWeights<'_, T, Id, I, P>
+where
+    T: IncidenceIndex,
+    I: PropertyIndex,
+    P: ArrowPrimitiveType,
+{
     type ElementId = T::ElementId;
     type RelationId = T::RelationId;
 }
 
-impl<T: IncidenceIndex, P: ArrowPrimitiveType> IncidenceBase for DenseIncidenceWeights<'_, T, P> {
+impl<T, Id, I, P> IncidenceBase for DenseIncidenceWeights<'_, T, Id, I, P>
+where
+    T: IncidenceIndex,
+    I: PropertyIndex,
+    P: ArrowPrimitiveType,
+{
     type IncidenceId = T::IncidenceId;
     type Role = T::Role;
 }
 
-impl<T: IncidenceIndex, P: ArrowPrimitiveType> IncidenceWeight for DenseIncidenceWeights<'_, T, P>
+impl<T, Id, I, P> IncidenceWeight for DenseIncidenceWeights<'_, T, Id, I, P>
 where
+    T: IncidenceIndex,
+    I: PropertyIndex,
+    P: ArrowPrimitiveType,
     P::Native: Copy,
 {
     type Weight = P::Native;
@@ -1036,19 +1346,29 @@ where
 /// # Performance
 ///
 /// Weight lookup is `O(log k)` for `k` explicitly stored values.
-pub struct SparseElementWeights<'view, T: ElementIndex, P: ArrowPrimitiveType> {
+pub struct SparseElementWeights<'view, T, Id, I, P>
+where
+    T: ElementIndex,
+    I: PropertyIndex,
+    P: ArrowPrimitiveType,
+{
     /// Topology view that supplies ID-to-index mapping.
     topology: &'view T,
     /// Sparse indexes.
-    indices: &'view UInt64Array,
+    indices: &'view PrimitiveArray<I::ArrowType>,
     /// Sparse values.
     values: &'view PrimitiveArray<P>,
     /// Totalizing default value.
     default: P::Native,
+    /// Property ID marker.
+    property: core::marker::PhantomData<Id>,
 }
 
-impl<'view, T: ElementIndex, P: ArrowPrimitiveType> SparseElementWeights<'view, T, P>
+impl<'view, T, Id, I, P> SparseElementWeights<'view, T, Id, I, P>
 where
+    T: ElementIndex,
+    I: PropertyIndex,
+    P: ArrowPrimitiveType,
     P::Native: Copy,
 {
     /// Selects a sparse primitive layer as total element weights.
@@ -1060,8 +1380,11 @@ where
     /// # Performance
     ///
     /// Validation is `O(1)` plus default downcast.
-    pub fn new(topology: &'view T, layer: &'view PropertyLayer) -> Result<Self, PropertyError> {
-        let (indices, values, default) = validate_sparse_primitive_selection::<P>(
+    pub fn new(
+        topology: &'view T,
+        layer: &'view PropertyLayer<Id, I>,
+    ) -> Result<Self, PropertyError> {
+        let (indices, values, default) = validate_sparse_primitive_selection::<I, P, Id>(
             layer,
             IdFamily::Element,
             topology.element_bound(),
@@ -1071,23 +1394,32 @@ where
             indices,
             values,
             default,
+            property: core::marker::PhantomData,
         })
     }
 }
 
-impl<T: ElementIndex, P: ArrowPrimitiveType> TopologyBase for SparseElementWeights<'_, T, P> {
+impl<T, Id, I, P> TopologyBase for SparseElementWeights<'_, T, Id, I, P>
+where
+    T: ElementIndex,
+    I: PropertyIndex,
+    P: ArrowPrimitiveType,
+{
     type ElementId = T::ElementId;
     type RelationId = T::RelationId;
 }
 
-impl<T: ElementIndex, P: ArrowPrimitiveType> ElementWeight for SparseElementWeights<'_, T, P>
+impl<T, Id, I, P> ElementWeight for SparseElementWeights<'_, T, Id, I, P>
 where
+    T: ElementIndex,
+    I: PropertyIndex,
+    P: ArrowPrimitiveType,
     P::Native: Copy,
 {
     type Weight = P::Native;
 
     fn element_weight(&self, element: Self::ElementId) -> Self::Weight {
-        sparse_value(
+        sparse_value::<I, P>(
             self.indices,
             self.values,
             self.default,
@@ -1101,19 +1433,29 @@ where
 /// # Performance
 ///
 /// Weight lookup is `O(log k)` for `k` explicitly stored values.
-pub struct SparseRelationWeights<'view, T: RelationIndex, P: ArrowPrimitiveType> {
+pub struct SparseRelationWeights<'view, T, Id, I, P>
+where
+    T: RelationIndex,
+    I: PropertyIndex,
+    P: ArrowPrimitiveType,
+{
     /// Topology view that supplies ID-to-index mapping.
     topology: &'view T,
     /// Sparse indexes.
-    indices: &'view UInt64Array,
+    indices: &'view PrimitiveArray<I::ArrowType>,
     /// Sparse values.
     values: &'view PrimitiveArray<P>,
     /// Totalizing default value.
     default: P::Native,
+    /// Property ID marker.
+    property: core::marker::PhantomData<Id>,
 }
 
-impl<'view, T: RelationIndex, P: ArrowPrimitiveType> SparseRelationWeights<'view, T, P>
+impl<'view, T, Id, I, P> SparseRelationWeights<'view, T, Id, I, P>
 where
+    T: RelationIndex,
+    I: PropertyIndex,
+    P: ArrowPrimitiveType,
     P::Native: Copy,
 {
     /// Selects a sparse primitive layer as total relation weights.
@@ -1125,8 +1467,11 @@ where
     /// # Performance
     ///
     /// Validation is `O(1)` plus default downcast.
-    pub fn new(topology: &'view T, layer: &'view PropertyLayer) -> Result<Self, PropertyError> {
-        let (indices, values, default) = validate_sparse_primitive_selection::<P>(
+    pub fn new(
+        topology: &'view T,
+        layer: &'view PropertyLayer<Id, I>,
+    ) -> Result<Self, PropertyError> {
+        let (indices, values, default) = validate_sparse_primitive_selection::<I, P, Id>(
             layer,
             IdFamily::Relation,
             topology.relation_bound(),
@@ -1136,23 +1481,32 @@ where
             indices,
             values,
             default,
+            property: core::marker::PhantomData,
         })
     }
 }
 
-impl<T: RelationIndex, P: ArrowPrimitiveType> TopologyBase for SparseRelationWeights<'_, T, P> {
+impl<T, Id, I, P> TopologyBase for SparseRelationWeights<'_, T, Id, I, P>
+where
+    T: RelationIndex,
+    I: PropertyIndex,
+    P: ArrowPrimitiveType,
+{
     type ElementId = T::ElementId;
     type RelationId = T::RelationId;
 }
 
-impl<T: RelationIndex, P: ArrowPrimitiveType> RelationWeight for SparseRelationWeights<'_, T, P>
+impl<T, Id, I, P> RelationWeight for SparseRelationWeights<'_, T, Id, I, P>
 where
+    T: RelationIndex,
+    I: PropertyIndex,
+    P: ArrowPrimitiveType,
     P::Native: Copy,
 {
     type Weight = P::Native;
 
     fn relation_weight(&self, relation: Self::RelationId) -> Self::Weight {
-        sparse_value(
+        sparse_value::<I, P>(
             self.indices,
             self.values,
             self.default,
@@ -1166,19 +1520,29 @@ where
 /// # Performance
 ///
 /// Weight lookup is `O(log k)` for `k` explicitly stored values.
-pub struct SparseIncidenceWeights<'view, T: IncidenceIndex, P: ArrowPrimitiveType> {
+pub struct SparseIncidenceWeights<'view, T, Id, I, P>
+where
+    T: IncidenceIndex,
+    I: PropertyIndex,
+    P: ArrowPrimitiveType,
+{
     /// Topology view that supplies ID-to-index mapping.
     topology: &'view T,
     /// Sparse indexes.
-    indices: &'view UInt64Array,
+    indices: &'view PrimitiveArray<I::ArrowType>,
     /// Sparse values.
     values: &'view PrimitiveArray<P>,
     /// Totalizing default value.
     default: P::Native,
+    /// Property ID marker.
+    property: core::marker::PhantomData<Id>,
 }
 
-impl<'view, T: IncidenceIndex, P: ArrowPrimitiveType> SparseIncidenceWeights<'view, T, P>
+impl<'view, T, Id, I, P> SparseIncidenceWeights<'view, T, Id, I, P>
 where
+    T: IncidenceIndex,
+    I: PropertyIndex,
+    P: ArrowPrimitiveType,
     P::Native: Copy,
 {
     /// Selects a sparse primitive layer as total incidence weights.
@@ -1190,8 +1554,11 @@ where
     /// # Performance
     ///
     /// Validation is `O(1)` plus default downcast.
-    pub fn new(topology: &'view T, layer: &'view PropertyLayer) -> Result<Self, PropertyError> {
-        let (indices, values, default) = validate_sparse_primitive_selection::<P>(
+    pub fn new(
+        topology: &'view T,
+        layer: &'view PropertyLayer<Id, I>,
+    ) -> Result<Self, PropertyError> {
+        let (indices, values, default) = validate_sparse_primitive_selection::<I, P, Id>(
             layer,
             IdFamily::Incidence,
             topology.incidence_bound(),
@@ -1201,28 +1568,42 @@ where
             indices,
             values,
             default,
+            property: core::marker::PhantomData,
         })
     }
 }
 
-impl<T: IncidenceIndex, P: ArrowPrimitiveType> TopologyBase for SparseIncidenceWeights<'_, T, P> {
+impl<T, Id, I, P> TopologyBase for SparseIncidenceWeights<'_, T, Id, I, P>
+where
+    T: IncidenceIndex,
+    I: PropertyIndex,
+    P: ArrowPrimitiveType,
+{
     type ElementId = T::ElementId;
     type RelationId = T::RelationId;
 }
 
-impl<T: IncidenceIndex, P: ArrowPrimitiveType> IncidenceBase for SparseIncidenceWeights<'_, T, P> {
+impl<T, Id, I, P> IncidenceBase for SparseIncidenceWeights<'_, T, Id, I, P>
+where
+    T: IncidenceIndex,
+    I: PropertyIndex,
+    P: ArrowPrimitiveType,
+{
     type IncidenceId = T::IncidenceId;
     type Role = T::Role;
 }
 
-impl<T: IncidenceIndex, P: ArrowPrimitiveType> IncidenceWeight for SparseIncidenceWeights<'_, T, P>
+impl<T, Id, I, P> IncidenceWeight for SparseIncidenceWeights<'_, T, Id, I, P>
 where
+    T: IncidenceIndex,
+    I: PropertyIndex,
+    P: ArrowPrimitiveType,
     P::Native: Copy,
 {
     type Weight = P::Native;
 
     fn incidence_weight(&self, incidence: Self::IncidenceId) -> Self::Weight {
-        sparse_value(
+        sparse_value::<I, P>(
             self.indices,
             self.values,
             self.default,
@@ -1240,9 +1621,13 @@ where
 /// # Performance
 ///
 /// This function is `O(n log n + total name length)` for `n` descriptors.
-pub fn validate_unique_names<'descriptor, I>(descriptors: I) -> Result<(), PropertyError>
+pub fn validate_unique_names<'descriptor, Id, Index, Descriptors>(
+    descriptors: Descriptors,
+) -> Result<(), PropertyError>
 where
-    I: IntoIterator<Item = &'descriptor PropertyLayerDescriptor>,
+    Id: 'descriptor,
+    Index: PropertyIndex + 'descriptor,
+    Descriptors: IntoIterator<Item = &'descriptor PropertyLayerDescriptor<Id, Index>>,
 {
     let mut seen: BTreeSet<(IdFamily, &str)> = BTreeSet::new();
     for descriptor in descriptors {
@@ -1266,19 +1651,138 @@ where
 /// # Performance
 ///
 /// This function is `O(n log n)` for `n` descriptors.
-pub fn validate_unique_layer_ids<'descriptor, I>(descriptors: I) -> Result<(), PropertyError>
+pub fn validate_unique_layer_ids<'descriptor, Id, Index, Descriptors>(
+    descriptors: Descriptors,
+) -> Result<(), PropertyError>
 where
-    I: IntoIterator<Item = &'descriptor PropertyLayerDescriptor>,
+    Id: Copy + Into<u64> + Ord + 'descriptor,
+    Index: PropertyIndex + 'descriptor,
+    Descriptors: IntoIterator<Item = &'descriptor PropertyLayerDescriptor<Id, Index>>,
 {
-    let mut seen: BTreeSet<LayerId> = BTreeSet::new();
+    let mut seen: BTreeSet<LayerId<Id>> = BTreeSet::new();
     for descriptor in descriptors {
         if !seen.insert(descriptor.layer_id) {
             return Err(PropertyError::DuplicateLayerId {
-                layer_id: descriptor.layer_id,
+                layer_id: descriptor.layer_id.0.into(),
             });
         }
     }
     Ok(())
+}
+
+/// Rekeys a property layer from canonical order into snapshot-local order.
+///
+/// `local_to_canonical[local]` names the canonical index that should appear at
+/// `local` in the returned layer.
+///
+/// # Errors
+///
+/// Returns [`PropertyError`] if a mapping index is out of bounds, a sparse
+/// explicit index is not present in `local_to_canonical`, or Arrow take fails.
+///
+/// # Performance
+///
+/// Dense rekeying is `O(local_to_canonical.len())`; sparse rekeying is
+/// `O(layer.len() + k log k)` for `k` explicit sparse values.
+#[expect(
+    clippy::too_many_lines,
+    reason = "rekeying keeps dense and sparse Arrow remapping in one contract path"
+)]
+pub fn rekey_layer_to_local<Id, I>(
+    layer: &PropertyLayer<Id, I>,
+    local_to_canonical: &[I],
+) -> Result<PropertyLayer<Id, I>, PropertyError>
+where
+    Id: Clone,
+    I: PropertyIndex,
+{
+    let descriptor = layer.descriptor().clone();
+    match layer.data() {
+        PropertyLayerData::Dense { values } => {
+            let take_indices = I::primitive_array(local_to_canonical.to_vec());
+            let values = take(values.as_ref(), &take_indices, None).map_err(map_arrow_error)?;
+            PropertyLayer::try_new_dense(descriptor, values)
+        }
+        PropertyLayerData::Sparse {
+            indices,
+            values,
+            default,
+        } => {
+            let mut canonical_to_local = vec![None; layer.len()];
+            for (local, canonical) in local_to_canonical.iter().copied().enumerate() {
+                let Some(canonical) = canonical.to_usize() else {
+                    return Err(PropertyError::SparseIndexOutOfBounds {
+                        index: canonical.to_u64(),
+                        len: layer.len(),
+                    });
+                };
+                if canonical >= layer.len() {
+                    return Err(PropertyError::SparseIndexOutOfBounds {
+                        index: canonical as u64,
+                        len: layer.len(),
+                    });
+                }
+                canonical_to_local[canonical] = Some(I::from_usize(local).ok_or(
+                    PropertyError::SparseIndexOutOfBounds {
+                        index: local as u64,
+                        len: local_to_canonical.len(),
+                    },
+                )?);
+            }
+            let mut remapped = Vec::with_capacity(indices.len());
+            for position in 0..indices.len() {
+                let canonical = indices.value(position);
+                let Some(canonical_usize) = canonical.to_usize() else {
+                    return Err(PropertyError::SparseIndexOutOfBounds {
+                        index: canonical.to_u64(),
+                        len: layer.len(),
+                    });
+                };
+                if canonical_usize >= canonical_to_local.len() {
+                    return Err(PropertyError::SparseIndexOutOfBounds {
+                        index: canonical.to_u64(),
+                        len: layer.len(),
+                    });
+                }
+                let Some(local) = canonical_to_local[canonical_usize] else {
+                    return Err(PropertyError::SparseIndexOutOfBounds {
+                        index: canonical.to_u64(),
+                        len: layer.len(),
+                    });
+                };
+                let take_position =
+                    I::from_usize(position).ok_or(PropertyError::SparseIndexOutOfBounds {
+                        index: position as u64,
+                        len: indices.len(),
+                    })?;
+                remapped.push((local, take_position));
+            }
+            remapped.sort_by_key(|(local, _position)| *local);
+            let new_indices = I::primitive_array(
+                remapped
+                    .iter()
+                    .map(|(local, _position)| *local)
+                    .collect::<Vec<_>>(),
+            );
+            let take_indices = I::primitive_array(
+                remapped
+                    .iter()
+                    .map(|(_local, position)| *position)
+                    .collect::<Vec<_>>(),
+            );
+            let values = take(values.as_ref(), &take_indices, None).map_err(map_arrow_error)?;
+            if let Some(default) = default {
+                ensure_arrow_type(&descriptor, default.as_ref())?;
+            }
+            PropertyLayer::try_new_sparse(
+                descriptor,
+                local_to_canonical.len(),
+                Arc::new(new_indices),
+                values,
+                default.clone(),
+            )
+        }
+    }
 }
 
 /// Identity snapshot map mode.
@@ -1291,8 +1795,8 @@ where
 pub enum IdentityMapMode {
     /// Local IDs are identical to canonical IDs for this family.
     LocalEqualsCanonical,
-    /// The snapshot stores an explicit `u32` local-to-canonical map section.
-    ExplicitU32Map,
+    /// The snapshot stores an explicit local-to-canonical map section.
+    ExplicitMap,
 }
 
 impl IdentityMapMode {
@@ -1304,7 +1808,7 @@ impl IdentityMapMode {
     const fn tag(self) -> u32 {
         match self {
             Self::LocalEqualsCanonical => 0,
-            Self::ExplicitU32Map => 1,
+            Self::ExplicitMap => 1,
         }
     }
 
@@ -1316,7 +1820,7 @@ impl IdentityMapMode {
     const fn from_tag(tag: u32) -> Option<Self> {
         match tag {
             0 => Some(Self::LocalEqualsCanonical),
-            1 => Some(Self::ExplicitU32Map),
+            1 => Some(Self::ExplicitMap),
             _ => None,
         }
     }
@@ -1329,48 +1833,73 @@ impl IdentityMapMode {
 /// Copying and reading fields are `O(1)`.
 #[derive(Clone, Copy, Debug, Eq, FromBytes, Immutable, IntoBytes, KnownLayout, PartialEq)]
 #[repr(C)]
-pub struct IdentityModeRecord {
+pub struct IdentityModeRecord<W>
+where
+    W: PropertySnapshotMetaWord,
+{
     /// ID-family tag.
-    id_family: U32<LE>,
+    id_family: W::LittleEndianWord,
     /// Map-mode tag.
-    mode: U32<LE>,
+    mode: W::LittleEndianWord,
     /// Number of local IDs covered by the mode.
-    local_len: U64<LE>,
+    local_len: W::LittleEndianWord,
 }
 
-impl IdentityModeRecord {
+impl<W> IdentityModeRecord<W>
+where
+    W: PropertySnapshotMetaWord,
+{
     /// Builds a local-equals-canonical identity mode record.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PropertyError`] when `local_len` cannot be represented by the
+    /// selected metadata width.
     ///
     /// # Performance
     ///
     /// This function is `O(1)`.
-    #[must_use]
-    pub const fn local_equals_canonical(id_family: IdFamily, local_len: usize) -> Self {
+    pub fn local_equals_canonical(
+        id_family: IdFamily,
+        local_len: usize,
+    ) -> Result<Self, PropertyError> {
         Self::new(id_family, IdentityMapMode::LocalEqualsCanonical, local_len)
     }
 
-    /// Builds an explicit-`u32`-map identity mode record.
+    /// Builds an explicit-map identity mode record.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PropertyError`] when `local_len` cannot be represented by the
+    /// selected metadata width.
     ///
     /// # Performance
     ///
     /// This function is `O(1)`.
-    #[must_use]
-    pub const fn explicit_u32_map(id_family: IdFamily, local_len: usize) -> Self {
-        Self::new(id_family, IdentityMapMode::ExplicitU32Map, local_len)
+    pub fn explicit_map(id_family: IdFamily, local_len: usize) -> Result<Self, PropertyError> {
+        Self::new(id_family, IdentityMapMode::ExplicitMap, local_len)
     }
 
     /// Builds an identity mode record.
     ///
+    /// # Errors
+    ///
+    /// Returns [`PropertyError`] when `local_len` cannot be represented by the
+    /// selected metadata width.
+    ///
     /// # Performance
     ///
     /// This function is `O(1)`.
-    #[must_use]
-    pub const fn new(id_family: IdFamily, mode: IdentityMapMode, local_len: usize) -> Self {
-        Self {
-            id_family: U32::new(id_family_tag(id_family)),
-            mode: U32::new(mode.tag()),
-            local_len: U64::new(local_len as u64),
-        }
+    pub fn new(
+        id_family: IdFamily,
+        mode: IdentityMapMode,
+        local_len: usize,
+    ) -> Result<Self, PropertyError> {
+        Ok(Self {
+            id_family: le_word::<W>(id_family_tag(id_family) as usize)?,
+            mode: le_word::<W>(mode.tag() as usize)?,
+            local_len: le_word::<W>(local_len)?,
+        })
     }
 
     /// Returns this record's ID family.
@@ -1382,8 +1911,8 @@ impl IdentityModeRecord {
     /// # Performance
     ///
     /// This function is `O(1)`.
-    pub const fn id_family(&self) -> Result<IdFamily, PropertyError> {
-        id_family_from_tag(self.id_family.get())
+    pub fn id_family(&self) -> Result<IdFamily, PropertyError> {
+        id_family_from_tag(le_word_to_u32::<W>(self.id_family)?)
     }
 
     /// Returns this record's identity map mode.
@@ -1396,11 +1925,8 @@ impl IdentityModeRecord {
     ///
     /// This function is `O(1)`.
     pub fn mode(&self) -> Result<IdentityMapMode, PropertyError> {
-        IdentityMapMode::from_tag(self.mode.get()).ok_or_else(|| {
-            PropertyError::UnknownIdentityModeTag {
-                tag: self.mode.get(),
-            }
-        })
+        let tag = le_word_to_u32::<W>(self.mode)?;
+        IdentityMapMode::from_tag(tag).ok_or(PropertyError::UnknownIdentityModeTag { tag })
     }
 
     /// Returns the local ID count covered by this mode.
@@ -1411,10 +1937,7 @@ impl IdentityModeRecord {
     /// above `usize::MAX` saturate to `usize::MAX` for validation errors.
     #[must_use]
     pub fn local_len(&self) -> usize {
-        match usize::try_from(self.local_len.get()) {
-            Ok(value) => value,
-            Err(_error) => usize::MAX,
-        }
+        le_word_to_usize::<W>(self.local_len).unwrap_or(usize::MAX)
     }
 }
 
@@ -1427,7 +1950,22 @@ impl IdentityModeRecord {
 #[must_use]
 pub struct IdentitySnapshotSummary {
     /// Validated identity records.
-    pub records: Vec<IdentityModeRecord>,
+    pub records: Vec<IdentityModeSummary>,
+}
+
+/// Decoded identity mode summary.
+///
+/// # Performance
+///
+/// Copying is `O(1)`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct IdentityModeSummary {
+    /// ID family covered by this record.
+    pub id_family: IdFamily,
+    /// Identity map mode.
+    pub mode: IdentityMapMode,
+    /// Number of local IDs covered.
+    pub local_len: usize,
 }
 
 /// Validates identity mode and explicit map sections in a snapshot.
@@ -1441,31 +1979,33 @@ pub struct IdentitySnapshotSummary {
 ///
 /// This function is `O(s + f)` for snapshot section count `s` and identity
 /// family count `f`.
-pub fn validate_identity_snapshot(
+pub fn validate_identity_snapshot<W>(
     snapshot: &Snapshot<'_>,
-) -> Result<IdentitySnapshotSummary, PropertyError> {
-    let section = snapshot.section(SNAPSHOT_KIND_IDENTITY_MODES).ok_or(
-        PropertyError::MissingSnapshotSection {
-            kind: SNAPSHOT_KIND_IDENTITY_MODES,
-        },
-    )?;
+) -> Result<IdentitySnapshotSummary, PropertyError>
+where
+    W: PropertySnapshotMetaWord,
+{
+    let section =
+        snapshot
+            .section(W::IDENTITY_MODES_KIND)
+            .ok_or(PropertyError::MissingSnapshotSection {
+                kind: W::IDENTITY_MODES_KIND,
+            })?;
     if section.version() != SNAPSHOT_PROPERTY_VERSION {
         return Err(PropertyError::SnapshotSectionVersion {
-            kind: SNAPSHOT_KIND_IDENTITY_MODES,
+            kind: W::IDENTITY_MODES_KIND,
             version: section.version(),
         });
     }
-    let records: &[IdentityModeRecord] =
+    let records: &[IdentityModeRecord<W>] =
         section
             .try_as_slice()
             .map_err(|error| PropertyError::SnapshotSectionView {
-                kind: SNAPSHOT_KIND_IDENTITY_MODES,
+                kind: W::IDENTITY_MODES_KIND,
                 error,
             })?;
-    validate_identity_records(snapshot, records)?;
-    Ok(IdentitySnapshotSummary {
-        records: records.to_vec(),
-    })
+    let records = validate_identity_records::<W>(snapshot, records)?;
+    Ok(IdentitySnapshotSummary { records })
 }
 
 /// Encoded property descriptor and Arrow IPC data payloads.
@@ -1476,9 +2016,9 @@ pub fn validate_identity_snapshot(
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[must_use]
 pub struct EncodedPropertySnapshot {
-    /// Payload for [`SNAPSHOT_KIND_PROPERTY_DESCRIPTORS`].
+    /// Payload for the selected property descriptor section kind.
     pub descriptors: Vec<u8>,
-    /// Payload for [`SNAPSHOT_KIND_PROPERTY_DATA`].
+    /// Payload for the selected property data section kind.
     pub data: Vec<u8>,
 }
 
@@ -1507,41 +2047,40 @@ struct PropertySnapshotHeader {
 }
 
 /// Wire descriptor record for one property layer.
-#[derive(Clone, Copy, Debug, FromBytes, Immutable, IntoBytes, KnownLayout)]
+#[derive(Clone, Copy, Debug, Eq, FromBytes, Immutable, IntoBytes, KnownLayout, PartialEq)]
 #[repr(C)]
-struct PropertySnapshotRecord {
+pub struct PropertySnapshotRecord<W>
+where
+    W: PropertySnapshotMetaWord,
+{
     /// Stable layer ID.
-    layer_id: U64<LE>,
+    layer_id: W::LittleEndianWord,
     /// Offset of layer name in descriptor string table.
-    name_offset: U32<LE>,
+    name_offset: W::LittleEndianWord,
     /// Length of layer name in descriptor string table.
-    name_len: U32<LE>,
-    /// Offset of Arrow field name in descriptor string table.
-    field_name_offset: U32<LE>,
-    /// Length of Arrow field name in descriptor string table.
-    field_name_len: U32<LE>,
+    name_len: W::LittleEndianWord,
     /// ID-family tag.
-    id_family: U32<LE>,
+    id_family: W::LittleEndianWord,
     /// Layer-role tag.
-    role: U32<LE>,
+    role: W::LittleEndianWord,
     /// Storage tag.
-    storage: U32<LE>,
+    storage: W::LittleEndianWord,
     /// Missing-policy tag.
-    missing_policy: U32<LE>,
-    /// Arrow value-family tag.
-    arrow_family: U32<LE>,
-    /// Arrow field nullable flag.
-    nullable: U32<LE>,
+    missing_policy: W::LittleEndianWord,
     /// Logical layer length.
-    logical_len: U64<LE>,
-    /// Offset in property data section.
-    data_offset: U64<LE>,
-    /// Byte length in property data section.
-    data_len: U64<LE>,
+    logical_len: W::LittleEndianWord,
     /// Explicit sparse value count, or dense value count.
-    value_count: U64<LE>,
+    value_count: W::LittleEndianWord,
+    /// Offset of the value Arrow IPC stream in the property data section.
+    value_data_offset: W::LittleEndianWord,
+    /// Byte length of the value Arrow IPC stream in the property data section.
+    value_data_len: W::LittleEndianWord,
+    /// Offset of the sparse-default Arrow IPC stream in the property data section.
+    default_data_offset: W::LittleEndianWord,
+    /// Byte length of the sparse-default Arrow IPC stream in the property data section.
+    default_data_len: W::LittleEndianWord,
     /// Reserved for future descriptor flags.
-    reserved: U64<LE>,
+    reserved: W::LittleEndianWord,
 }
 
 /// Encodes property descriptor and Arrow IPC data sections.
@@ -1554,45 +2093,228 @@ struct PropertySnapshotRecord {
 /// # Performance
 ///
 /// This function is `O(l + total values + total name bytes)` for `l` layers.
-pub fn encode_property_snapshot(
-    layers: &[PropertyLayer],
-) -> Result<EncodedPropertySnapshot, PropertyError> {
-    validate_unique_names(layers.iter().map(PropertyLayer::descriptor))?;
-    validate_unique_layer_ids(layers.iter().map(PropertyLayer::descriptor))?;
-
+pub fn encode_property_snapshot<W, Id, I>(
+    layers: &[PropertyLayer<Id, I>],
+) -> Result<EncodedPropertySnapshot, PropertyError>
+where
+    W: PropertySnapshotMetaWord,
+    Id: Copy + Into<u64> + Ord + TryInto<W>,
+    I: PropertyIndex,
+{
     let mut data = Vec::new();
     let mut strings = Vec::new();
     let mut records = Vec::with_capacity(layers.len());
+    let mut names = BTreeSet::new();
+    let mut ids = BTreeSet::new();
     for layer in layers {
-        let descriptor = layer.descriptor();
-        let name_offset = append_string(&mut strings, descriptor.name.as_str())?;
-        let field_name_offset = append_string(&mut strings, descriptor.arrow_field.name())?;
-        let data_offset = data.len();
-        let layer_data = encode_layer_ipc(layer)?;
-        let data_len = layer_data.len();
-        data.extend_from_slice(&layer_data);
-        records.push(PropertySnapshotRecord {
-            layer_id: U64::new(descriptor.layer_id.0),
-            name_offset: U32::new(name_offset),
-            name_len: U32::new(str_len_u32(descriptor.name.as_str())?),
-            field_name_offset: U32::new(field_name_offset),
-            field_name_len: U32::new(str_len_u32(descriptor.arrow_field.name())?),
-            id_family: U32::new(id_family_tag(descriptor.id_family)),
-            role: U32::new(layer_role_tag(descriptor.role)),
-            storage: U32::new(storage_tag(descriptor.storage)),
-            missing_policy: U32::new(missing_policy_tag(descriptor.storage)),
-            arrow_family: U32::new(descriptor.value_family().tag()),
-            nullable: U32::new(u32::from(descriptor.arrow_field.is_nullable())),
-            logical_len: U64::new(usize_to_u64(layer.len())?),
-            data_offset: U64::new(usize_to_u64(data_offset)?),
-            data_len: U64::new(usize_to_u64(data_len)?),
-            value_count: U64::new(usize_to_u64(layer_value_count(layer))?),
-            reserved: U64::new(0),
+        append_property_layer::<W, Id, I>(
+            layer,
+            &mut names,
+            &mut ids,
+            &mut data,
+            &mut strings,
+            &mut records,
+        )?;
+    }
+    finish_property_snapshot::<W>(&records, &strings, data)
+}
+
+/// Encodes graph property layers into descriptor/data payloads.
+///
+/// # Errors
+///
+/// Returns [`PropertyError`] if any layer metadata or Arrow payload is invalid.
+///
+/// # Performance
+///
+/// This function is `O(l + total values + total name bytes)`.
+pub fn encode_graph_property_snapshot<W, Id, NodeIndex, EdgeIndex>(
+    layers: GraphPropertyLayers<'_, Id, NodeIndex, EdgeIndex>,
+) -> Result<EncodedPropertySnapshot, PropertyError>
+where
+    W: PropertySnapshotMetaWord,
+    Id: Copy + Into<u64> + Ord + TryInto<W>,
+    NodeIndex: PropertyIndex,
+    EdgeIndex: PropertyIndex,
+{
+    let capacity = layers.element.len().saturating_add(layers.relation.len());
+    let mut data = Vec::new();
+    let mut strings = Vec::new();
+    let mut records = Vec::with_capacity(capacity);
+    let mut names = BTreeSet::new();
+    let mut ids = BTreeSet::new();
+    for layer in layers.element {
+        append_property_layer::<W, Id, NodeIndex>(
+            layer,
+            &mut names,
+            &mut ids,
+            &mut data,
+            &mut strings,
+            &mut records,
+        )?;
+    }
+    for layer in layers.relation {
+        append_property_layer::<W, Id, EdgeIndex>(
+            layer,
+            &mut names,
+            &mut ids,
+            &mut data,
+            &mut strings,
+            &mut records,
+        )?;
+    }
+    finish_property_snapshot::<W>(&records, &strings, data)
+}
+
+/// Encodes hypergraph property layers into descriptor/data payloads.
+///
+/// # Errors
+///
+/// Returns [`PropertyError`] if any layer metadata or Arrow payload is invalid.
+///
+/// # Performance
+///
+/// This function is `O(l + total values + total name bytes)`.
+pub fn encode_hyper_property_snapshot<W, Id, VertexIndex, RelationIndex, IncidenceIndex>(
+    layers: HyperPropertyLayers<'_, Id, VertexIndex, RelationIndex, IncidenceIndex>,
+) -> Result<EncodedPropertySnapshot, PropertyError>
+where
+    W: PropertySnapshotMetaWord,
+    Id: Copy + Into<u64> + Ord + TryInto<W>,
+    VertexIndex: PropertyIndex,
+    RelationIndex: PropertyIndex,
+    IncidenceIndex: PropertyIndex,
+{
+    let capacity = layers
+        .element
+        .len()
+        .saturating_add(layers.relation.len())
+        .saturating_add(layers.incidence.len());
+    let mut data = Vec::new();
+    let mut strings = Vec::new();
+    let mut records = Vec::with_capacity(capacity);
+    let mut names = BTreeSet::new();
+    let mut ids = BTreeSet::new();
+    for layer in layers.element {
+        append_property_layer::<W, Id, VertexIndex>(
+            layer,
+            &mut names,
+            &mut ids,
+            &mut data,
+            &mut strings,
+            &mut records,
+        )?;
+    }
+    for layer in layers.relation {
+        append_property_layer::<W, Id, RelationIndex>(
+            layer,
+            &mut names,
+            &mut ids,
+            &mut data,
+            &mut strings,
+            &mut records,
+        )?;
+    }
+    for layer in layers.incidence {
+        append_property_layer::<W, Id, IncidenceIndex>(
+            layer,
+            &mut names,
+            &mut ids,
+            &mut data,
+            &mut strings,
+            &mut records,
+        )?;
+    }
+    finish_property_snapshot::<W>(&records, &strings, data)
+}
+
+/// Appends one layer's metadata and Arrow payloads to an in-progress snapshot.
+///
+/// # Performance
+///
+/// This function is `O(layer values + layer name length)`.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "layer encoding writes distinct snapshot accumulators without bundling mutable aliases"
+)]
+fn append_property_layer<W, Id, I>(
+    layer: &PropertyLayer<Id, I>,
+    names: &mut BTreeSet<(IdFamily, LayerName)>,
+    ids: &mut BTreeSet<u64>,
+    data: &mut Vec<u8>,
+    strings: &mut Vec<u8>,
+    records: &mut Vec<PropertySnapshotRecord<W>>,
+) -> Result<(), PropertyError>
+where
+    W: PropertySnapshotMetaWord,
+    Id: Copy + Into<u64> + TryInto<W>,
+    I: PropertyIndex,
+{
+    let descriptor = layer.descriptor();
+    if !names.insert((descriptor.id_family, descriptor.name.clone())) {
+        return Err(PropertyError::DuplicateName {
+            id_family: descriptor.id_family,
+            name: descriptor.name.clone(),
         });
     }
+    let diagnostic_layer_id = descriptor.layer_id.0.into();
+    if !ids.insert(diagnostic_layer_id) {
+        return Err(PropertyError::DuplicateLayerId {
+            layer_id: diagnostic_layer_id,
+        });
+    }
+    let name_offset = append_string(strings, descriptor.name.as_str());
+    let value_data_offset = data.len();
+    let layer_data = encode_layer_value_ipc(layer)?;
+    let value_data_len = layer_data.len();
+    data.extend_from_slice(&layer_data);
+    let (default_data_offset, default_data_len) =
+        encode_layer_default_ipc(layer)?.map_or((0, 0), |default_data| {
+            let offset = data.len();
+            let len = default_data.len();
+            data.extend_from_slice(&default_data);
+            (offset, len)
+        });
+    let layer_id = descriptor.layer_id.0.try_into().map_err(|_error| {
+        PropertyError::SnapshotDescriptorMismatch {
+            reason: "layer ID does not fit selected metadata width",
+        }
+    })?;
+    records.push(PropertySnapshotRecord::<W> {
+        layer_id: layer_id.to_le_word(),
+        name_offset: le_word::<W>(name_offset)?,
+        name_len: le_word::<W>(descriptor.name.as_str().len())?,
+        id_family: le_word::<W>(id_family_tag(descriptor.id_family) as usize)?,
+        role: le_word::<W>(layer_role_tag(descriptor.role) as usize)?,
+        storage: le_word::<W>(storage_tag(descriptor.storage) as usize)?,
+        missing_policy: le_word::<W>(missing_policy_tag(descriptor.storage) as usize)?,
+        logical_len: le_word::<W>(layer.len())?,
+        value_count: le_word::<W>(layer_value_count(layer))?,
+        value_data_offset: le_word::<W>(value_data_offset)?,
+        value_data_len: le_word::<W>(value_data_len)?,
+        default_data_offset: le_word::<W>(default_data_offset)?,
+        default_data_len: le_word::<W>(default_data_len)?,
+        reserved: le_word::<W>(0)?,
+    });
+    Ok(())
+}
+
+/// Finishes descriptor/data bytes after all records have been appended.
+///
+/// # Performance
+///
+/// This function is `O(record bytes + string bytes)`.
+fn finish_property_snapshot<W>(
+    records: &[PropertySnapshotRecord<W>],
+    strings: &[u8],
+    data: Vec<u8>,
+) -> Result<EncodedPropertySnapshot, PropertyError>
+where
+    W: PropertySnapshotMetaWord,
+{
     let record_bytes = records
         .len()
-        .checked_mul(core::mem::size_of::<PropertySnapshotRecord>())
+        .checked_mul(core::mem::size_of::<PropertySnapshotRecord<W>>())
         .ok_or(PropertyError::SnapshotDescriptorMismatch {
             reason: "record byte length overflow",
         })?;
@@ -1604,12 +2326,39 @@ pub fn encode_property_snapshot(
         core::mem::size_of::<PropertySnapshotHeader>() + record_bytes + strings.len(),
     );
     descriptor_bytes.extend_from_slice(header.as_bytes());
-    descriptor_bytes.extend_from_slice(records.as_bytes());
-    descriptor_bytes.extend_from_slice(&strings);
+    for record in records {
+        append_property_record_bytes(&mut descriptor_bytes, record);
+    }
+    descriptor_bytes.extend_from_slice(strings);
     Ok(EncodedPropertySnapshot {
         descriptors: descriptor_bytes,
         data,
     })
+}
+
+/// Appends one property record using its fixed little-endian field order.
+///
+/// # Performance
+///
+/// This function is `O(size_of::<PropertySnapshotRecord<W>>())`.
+fn append_property_record_bytes<W>(out: &mut Vec<u8>, record: &PropertySnapshotRecord<W>)
+where
+    W: PropertySnapshotMetaWord,
+{
+    out.extend_from_slice(record.layer_id.as_bytes());
+    out.extend_from_slice(record.name_offset.as_bytes());
+    out.extend_from_slice(record.name_len.as_bytes());
+    out.extend_from_slice(record.id_family.as_bytes());
+    out.extend_from_slice(record.role.as_bytes());
+    out.extend_from_slice(record.storage.as_bytes());
+    out.extend_from_slice(record.missing_policy.as_bytes());
+    out.extend_from_slice(record.logical_len.as_bytes());
+    out.extend_from_slice(record.value_count.as_bytes());
+    out.extend_from_slice(record.value_data_offset.as_bytes());
+    out.extend_from_slice(record.value_data_len.as_bytes());
+    out.extend_from_slice(record.default_data_offset.as_bytes());
+    out.extend_from_slice(record.default_data_len.as_bytes());
+    out.extend_from_slice(record.reserved.as_bytes());
 }
 
 /// Validates property descriptor/data sections in a snapshot.
@@ -1623,32 +2372,36 @@ pub fn encode_property_snapshot(
 ///
 /// This function is `O(s + l log l + total name bytes)` for snapshot section
 /// count `s` and property layer count `l`.
-pub fn validate_property_snapshot(
+pub fn validate_property_snapshot<W>(
     snapshot: &Snapshot<'_>,
-) -> Result<PropertySnapshotSummary, PropertyError> {
-    let descriptor_section = snapshot.section(SNAPSHOT_KIND_PROPERTY_DESCRIPTORS).ok_or(
+) -> Result<PropertySnapshotSummary, PropertyError>
+where
+    W: PropertySnapshotMetaWord,
+{
+    let descriptor_section = snapshot.section(W::PROPERTY_DESCRIPTORS_KIND).ok_or(
         PropertyError::MissingSnapshotSection {
-            kind: SNAPSHOT_KIND_PROPERTY_DESCRIPTORS,
+            kind: W::PROPERTY_DESCRIPTORS_KIND,
         },
     )?;
-    let data_section = snapshot.section(SNAPSHOT_KIND_PROPERTY_DATA).ok_or(
-        PropertyError::MissingSnapshotSection {
-            kind: SNAPSHOT_KIND_PROPERTY_DATA,
-        },
-    )?;
+    let data_section =
+        snapshot
+            .section(W::PROPERTY_DATA_KIND)
+            .ok_or(PropertyError::MissingSnapshotSection {
+                kind: W::PROPERTY_DATA_KIND,
+            })?;
     if descriptor_section.version() != SNAPSHOT_PROPERTY_VERSION {
         return Err(PropertyError::SnapshotSectionVersion {
-            kind: SNAPSHOT_KIND_PROPERTY_DESCRIPTORS,
+            kind: W::PROPERTY_DESCRIPTORS_KIND,
             version: descriptor_section.version(),
         });
     }
     if data_section.version() != SNAPSHOT_PROPERTY_VERSION {
         return Err(PropertyError::SnapshotSectionVersion {
-            kind: SNAPSHOT_KIND_PROPERTY_DATA,
+            kind: W::PROPERTY_DATA_KIND,
             version: data_section.version(),
         });
     }
-    validate_property_sections(descriptor_section.bytes(), data_section.bytes())
+    validate_property_sections::<W>(descriptor_section.bytes(), data_section.bytes())
 }
 
 /// Validates raw property descriptor and data section payloads.
@@ -1660,14 +2413,13 @@ pub fn validate_property_snapshot(
 /// # Performance
 ///
 /// This function is `O(l log l + total name bytes + Arrow IPC validation)`.
-#[expect(
-    clippy::too_many_lines,
-    reason = "property descriptor/data validation keeps the binary section checks in one straight-line pass"
-)]
-pub fn validate_property_sections(
+pub fn validate_property_sections<W>(
     descriptor_bytes: &[u8],
     data_bytes: &[u8],
-) -> Result<PropertySnapshotSummary, PropertyError> {
+) -> Result<PropertySnapshotSummary, PropertyError>
+where
+    W: PropertySnapshotMetaWord,
+{
     let header_len = core::mem::size_of::<PropertySnapshotHeader>();
     if descriptor_bytes.len() < header_len {
         return Err(PropertyError::SnapshotDataLength {
@@ -1679,7 +2431,7 @@ pub fn validate_property_sections(
     let record_count_usize = u64_to_usize(record_count)?;
     let record_bytes_usize = u64_to_usize(record_bytes)?;
     let expected_record_bytes = record_count_usize
-        .checked_mul(core::mem::size_of::<PropertySnapshotRecord>())
+        .checked_mul(core::mem::size_of::<PropertySnapshotRecord<W>>())
         .ok_or(PropertyError::SnapshotDescriptorMismatch {
             reason: "record byte length overflow",
         })?;
@@ -1702,34 +2454,26 @@ pub fn validate_property_sections(
     let record_bytes_slice = &descriptor_bytes[record_start..string_start];
     let string_bytes = &descriptor_bytes[string_start..];
     let mut names: BTreeSet<(IdFamily, &str)> = BTreeSet::new();
-    let mut ids: BTreeSet<LayerId> = BTreeSet::new();
+    let mut ids: BTreeSet<u64> = BTreeSet::new();
     let mut ranges = Vec::with_capacity(record_count_usize);
     let mut total_logical_values = 0_usize;
     for position in 0..record_count_usize {
-        let start = position * core::mem::size_of::<PropertySnapshotRecord>();
-        let record = parse_property_record(&record_bytes_slice[start..])?;
-        let id_family = id_family_from_tag(record.id_family.get())?;
-        let _role = layer_role_from_tag(record.role.get())?;
-        let storage = storage_from_tags(record.storage.get(), record.missing_policy.get())?;
-        let family = ArrowValueFamily::from_tag(record.arrow_family.get()).ok_or_else(|| {
-            PropertyError::UnknownArrowFamilyTag {
-                tag: record.arrow_family.get(),
-            }
-        })?;
+        let start = position * core::mem::size_of::<PropertySnapshotRecord<W>>();
+        let record = parse_property_record::<W>(&record_bytes_slice[start..])?;
+        let id_family = id_family_from_tag(le_word_to_u32::<W>(record.id_family)?)?;
+        let _role = layer_role_from_tag(le_word_to_u32::<W>(record.role)?)?;
+        let storage = storage_from_tags(
+            le_word_to_u32::<W>(record.storage)?,
+            le_word_to_u32::<W>(record.missing_policy)?,
+        )?;
         let name = read_snapshot_str(
             string_bytes,
-            record.name_offset.get(),
-            record.name_len.get(),
+            le_word_to_usize::<W>(record.name_offset)?,
+            le_word_to_usize::<W>(record.name_len)?,
         )?;
-        let field_name = read_snapshot_str(
-            string_bytes,
-            record.field_name_offset.get(),
-            record.field_name_len.get(),
-        )?;
-        if !ids.insert(LayerId(record.layer_id.get())) {
-            return Err(PropertyError::DuplicateLayerId {
-                layer_id: LayerId(record.layer_id.get()),
-            });
+        let layer_id = le_word_to_u64::<W>(record.layer_id);
+        if !ids.insert(layer_id) {
+            return Err(PropertyError::DuplicateLayerId { layer_id });
         }
         if !names.insert((id_family, name)) {
             return Err(PropertyError::DuplicateName {
@@ -1737,11 +2481,10 @@ pub fn validate_property_sections(
                 name: LayerName::try_new(name)?,
             });
         }
-        let range =
-            validate_property_record_data(&record, storage, family, field_name, data_bytes)?;
-        ranges.push(range);
+        let layer_ranges = validate_property_record_data::<W>(&record, storage, data_bytes)?;
+        ranges.extend(layer_ranges);
         total_logical_values = total_logical_values
-            .checked_add(u64_to_usize(record.logical_len.get())?)
+            .checked_add(le_word_to_usize::<W>(record.logical_len)?)
             .ok_or(PropertyError::SnapshotDescriptorMismatch {
                 reason: "logical value total overflow",
             })?;
@@ -1758,11 +2501,15 @@ pub fn validate_property_sections(
 /// # Performance
 ///
 /// This function is `O(f)` for `f` records.
-fn validate_identity_records(
+fn validate_identity_records<W>(
     snapshot: &Snapshot<'_>,
-    records: &[IdentityModeRecord],
-) -> Result<(), PropertyError> {
+    records: &[IdentityModeRecord<W>],
+) -> Result<Vec<IdentityModeSummary>, PropertyError>
+where
+    W: PropertySnapshotMetaWord,
+{
     let mut seen = BTreeSet::new();
+    let mut summaries = Vec::with_capacity(records.len());
     for record in records {
         let family = record.id_family()?;
         if !seen.insert(family) {
@@ -1770,14 +2517,21 @@ fn validate_identity_records(
                 reason: "duplicate identity family mode record",
             });
         }
-        match record.mode()? {
+        let mode = record.mode()?;
+        let local_len = record.local_len();
+        match mode {
             IdentityMapMode::LocalEqualsCanonical => {}
-            IdentityMapMode::ExplicitU32Map => {
-                validate_identity_map_section(snapshot, family, record.local_len())?;
+            IdentityMapMode::ExplicitMap => {
+                validate_identity_map_section::<W>(snapshot, family, local_len)?;
             }
         }
+        summaries.push(IdentityModeSummary {
+            id_family: family,
+            mode,
+            local_len,
+        });
     }
-    Ok(())
+    Ok(summaries)
 }
 
 /// Validates one explicit identity-map section.
@@ -1785,12 +2539,15 @@ fn validate_identity_records(
 /// # Performance
 ///
 /// This function is `O(s)` for snapshot section count `s`.
-fn validate_identity_map_section(
+fn validate_identity_map_section<W>(
     snapshot: &Snapshot<'_>,
     id_family: IdFamily,
     required: usize,
-) -> Result<(), PropertyError> {
-    let kind = identity_map_kind(id_family);
+) -> Result<(), PropertyError>
+where
+    W: PropertySnapshotMetaWord,
+{
+    let kind = identity_map_kind::<W>(id_family);
     let section = snapshot
         .section(kind)
         .ok_or(PropertyError::MissingIdentityMap { id_family })?;
@@ -1800,7 +2557,7 @@ fn validate_identity_map_section(
             version: section.version(),
         });
     }
-    let map: &[U32<LE>] = section
+    let map: &[W::LittleEndianWord] = section
         .try_as_slice()
         .map_err(|error| PropertyError::SnapshotSectionView { kind, error })?;
     if map.len() != required {
@@ -1818,11 +2575,14 @@ fn validate_identity_map_section(
 /// # Performance
 ///
 /// This function is `O(1)`.
-const fn identity_map_kind(id_family: IdFamily) -> u32 {
+const fn identity_map_kind<W>(id_family: IdFamily) -> u32
+where
+    W: PropertySnapshotMetaWord,
+{
     match id_family {
-        IdFamily::Element => SNAPSHOT_KIND_ELEMENT_IDENTITY_MAP_U32,
-        IdFamily::Relation => SNAPSHOT_KIND_RELATION_IDENTITY_MAP_U32,
-        IdFamily::Incidence => SNAPSHOT_KIND_INCIDENCE_IDENTITY_MAP_U32,
+        IdFamily::Element => W::ELEMENT_IDENTITY_MAP_KIND,
+        IdFamily::Relation => W::RELATION_IDENTITY_MAP_KIND,
+        IdFamily::Incidence => W::INCIDENCE_IDENTITY_MAP_KIND,
     }
 }
 
@@ -1831,25 +2591,10 @@ const fn identity_map_kind(id_family: IdFamily) -> u32 {
 /// # Performance
 ///
 /// This function is `O(value.len())`.
-fn append_string(strings: &mut Vec<u8>, value: &str) -> Result<u32, PropertyError> {
-    let offset = u32::try_from(strings.len()).map_err(|_error| {
-        PropertyError::SnapshotDescriptorMismatch {
-            reason: "string table offset overflow",
-        }
-    })?;
+fn append_string(strings: &mut Vec<u8>, value: &str) -> usize {
+    let offset = strings.len();
     strings.extend_from_slice(value.as_bytes());
-    Ok(offset)
-}
-
-/// Returns a string length as `u32`.
-///
-/// # Performance
-///
-/// This function is `O(1)`.
-fn str_len_u32(value: &str) -> Result<u32, PropertyError> {
-    u32::try_from(value.len()).map_err(|_error| PropertyError::SnapshotDescriptorMismatch {
-        reason: "string length overflow",
-    })
+    offset
 }
 
 /// Returns the number of value slots encoded for a layer.
@@ -1857,19 +2602,25 @@ fn str_len_u32(value: &str) -> Result<u32, PropertyError> {
 /// # Performance
 ///
 /// This function is `O(1)`.
-fn layer_value_count(layer: &PropertyLayer) -> usize {
+fn layer_value_count<Id, I>(layer: &PropertyLayer<Id, I>) -> usize
+where
+    I: PropertyIndex,
+{
     match layer.data() {
         PropertyLayerData::Dense { values } => values.len(),
         PropertyLayerData::Sparse { indices, .. } => indices.len(),
     }
 }
 
-/// Encodes one property layer as an Arrow IPC stream.
+/// Encodes one property layer's value stream as Arrow IPC.
 ///
 /// # Performance
 ///
 /// This function is `O(layer payload bytes)`.
-fn encode_layer_ipc(layer: &PropertyLayer) -> Result<Vec<u8>, PropertyError> {
+fn encode_layer_value_ipc<Id, I>(layer: &PropertyLayer<Id, I>) -> Result<Vec<u8>, PropertyError>
+where
+    I: PropertyIndex,
+{
     let (schema, columns) = match layer.data() {
         PropertyLayerData::Dense { values } => {
             let schema = Arc::new(Schema::new(vec![layer.descriptor().arrow_field.clone()]));
@@ -1878,20 +2629,51 @@ fn encode_layer_ipc(layer: &PropertyLayer) -> Result<Vec<u8>, PropertyError> {
         PropertyLayerData::Sparse {
             indices,
             values,
-            default,
+            default: _,
         } => {
-            let mut fields = vec![Field::new("index", DataType::UInt64, false)];
-            fields.push(layer.descriptor().arrow_field.clone());
-            let mut columns: Vec<ArrayRef> =
-                vec![Arc::clone(indices) as ArrayRef, Arc::clone(values)];
-            if let Some(default_value) = default {
-                fields.push(Field::new("default", values.data_type().clone(), false));
-                columns.push(Arc::clone(default_value));
-            }
+            let fields = vec![
+                Field::new("index", index_data_type::<I>(), false),
+                layer.descriptor().arrow_field.clone(),
+            ];
+            let columns: Vec<ArrayRef> = vec![Arc::clone(indices) as ArrayRef, Arc::clone(values)];
             (Arc::new(Schema::new(fields)), columns)
         }
     };
-    let batch = RecordBatch::try_new(Arc::clone(&schema), columns).map_err(map_arrow_error)?;
+    write_one_ipc_batch(&schema, columns)
+}
+
+/// Encodes one sparse-default layer's default stream as Arrow IPC.
+///
+/// # Performance
+///
+/// This function is `O(default payload bytes)`.
+fn encode_layer_default_ipc<Id, I>(
+    layer: &PropertyLayer<Id, I>,
+) -> Result<Option<Vec<u8>>, PropertyError>
+where
+    I: PropertyIndex,
+{
+    let PropertyLayerData::Sparse {
+        default: Some(default),
+        ..
+    } = layer.data()
+    else {
+        return Ok(None);
+    };
+    let schema = Arc::new(Schema::new(vec![layer.descriptor().arrow_field.clone()]));
+    write_one_ipc_batch(&schema, vec![Arc::clone(default)]).map(Some)
+}
+
+/// Writes one Arrow IPC stream with a single record batch.
+///
+/// # Performance
+///
+/// This function is `O(payload bytes)`.
+fn write_one_ipc_batch(
+    schema: &Arc<Schema>,
+    columns: Vec<ArrayRef>,
+) -> Result<Vec<u8>, PropertyError> {
+    let batch = RecordBatch::try_new(Arc::clone(schema), columns).map_err(map_arrow_error)?;
     let mut out = Vec::new();
     {
         let mut writer =
@@ -1907,58 +2689,36 @@ fn encode_layer_ipc(layer: &PropertyLayer) -> Result<Vec<u8>, PropertyError> {
 /// # Performance
 ///
 /// This function is `O(1)`.
-fn parse_property_record(bytes: &[u8]) -> Result<PropertySnapshotRecord, PropertyError> {
-    let need = core::mem::size_of::<PropertySnapshotRecord>();
+fn parse_property_record<W>(bytes: &[u8]) -> Result<PropertySnapshotRecord<W>, PropertyError>
+where
+    W: PropertySnapshotMetaWord,
+{
+    let need = core::mem::size_of::<PropertySnapshotRecord<W>>();
     if bytes.len() < need {
         return Err(PropertyError::SnapshotDataLength {
             reason: "property record is truncated",
         });
     }
-    let mut words = [0_u64; 11];
-    for (slot, chunk) in bytes[..need].chunks_exact(8).enumerate() {
-        words[slot] = read_u64_le(chunk)?;
+    let word_len = core::mem::size_of::<W::LittleEndianWord>();
+    let mut words = [0_u64; 14];
+    for (slot, chunk) in bytes[..need].chunks_exact(word_len).enumerate() {
+        words[slot] = read_meta_word(chunk)?;
     }
-    Ok(PropertySnapshotRecord {
-        layer_id: U64::new(words[0]),
-        name_offset: U32::new(low_u32(words[1])?),
-        name_len: U32::new(high_u32(words[1])?),
-        field_name_offset: U32::new(low_u32(words[2])?),
-        field_name_len: U32::new(high_u32(words[2])?),
-        id_family: U32::new(low_u32(words[3])?),
-        role: U32::new(high_u32(words[3])?),
-        storage: U32::new(low_u32(words[4])?),
-        missing_policy: U32::new(high_u32(words[4])?),
-        arrow_family: U32::new(low_u32(words[5])?),
-        nullable: U32::new(high_u32(words[5])?),
-        logical_len: U64::new(words[6]),
-        data_offset: U64::new(words[7]),
-        data_len: U64::new(words[8]),
-        value_count: U64::new(words[9]),
-        reserved: U64::new(words[10]),
-    })
-}
-
-/// Returns the low 32 bits of a packed u64 record word.
-///
-/// # Performance
-///
-/// This function is `O(1)`.
-fn low_u32(word: u64) -> Result<u32, PropertyError> {
-    u32::try_from(word & u64::from(u32::MAX)).map_err(|_error| {
-        PropertyError::SnapshotDescriptorMismatch {
-            reason: "packed low u32 did not fit",
-        }
-    })
-}
-
-/// Returns the high 32 bits of a packed u64 record word.
-///
-/// # Performance
-///
-/// This function is `O(1)`.
-fn high_u32(word: u64) -> Result<u32, PropertyError> {
-    u32::try_from(word >> 32).map_err(|_error| PropertyError::SnapshotDescriptorMismatch {
-        reason: "packed high u32 did not fit",
+    Ok(PropertySnapshotRecord::<W> {
+        layer_id: le_word_from_u64::<W>(words[0])?,
+        name_offset: le_word_from_u64::<W>(words[1])?,
+        name_len: le_word_from_u64::<W>(words[2])?,
+        id_family: le_word_from_u64::<W>(words[3])?,
+        role: le_word_from_u64::<W>(words[4])?,
+        storage: le_word_from_u64::<W>(words[5])?,
+        missing_policy: le_word_from_u64::<W>(words[6])?,
+        logical_len: le_word_from_u64::<W>(words[7])?,
+        value_count: le_word_from_u64::<W>(words[8])?,
+        value_data_offset: le_word_from_u64::<W>(words[9])?,
+        value_data_len: le_word_from_u64::<W>(words[10])?,
+        default_data_offset: le_word_from_u64::<W>(words[11])?,
+        default_data_len: le_word_from_u64::<W>(words[12])?,
+        reserved: le_word_from_u64::<W>(words[13])?,
     })
 }
 
@@ -1967,29 +2727,50 @@ fn high_u32(word: u64) -> Result<u32, PropertyError> {
 /// # Performance
 ///
 /// This function is `O(Arrow IPC payload validation)`.
-fn validate_property_record_data(
-    record: &PropertySnapshotRecord,
+fn validate_property_record_data<W>(
+    record: &PropertySnapshotRecord<W>,
     storage: StorageMode,
-    family: ArrowValueFamily,
-    field_name: &str,
     data: &[u8],
-) -> Result<core::ops::Range<usize>, PropertyError> {
-    if record.reserved.get() != 0 {
+) -> Result<Vec<core::ops::Range<usize>>, PropertyError>
+where
+    W: PropertySnapshotMetaWord,
+{
+    if le_word_to_u64::<W>(record.reserved) != 0 {
         return Err(PropertyError::SnapshotDescriptorMismatch {
             reason: "property descriptor reserved word must be zero",
         });
     }
-    let offset = u64_to_usize(record.data_offset.get())?;
-    let len = u64_to_usize(record.data_len.get())?;
+    let offset = le_word_to_usize::<W>(record.value_data_offset)?;
+    let len = le_word_to_usize::<W>(record.value_data_len)?;
     let end = checked_end(offset, len, data.len())?;
-    let batch = read_one_ipc_batch(&data[offset..end])?;
+    let value_batch = read_one_ipc_batch(&data[offset..end])?;
+    let default_offset = le_word_to_usize::<W>(record.default_data_offset)?;
+    let default_len = le_word_to_usize::<W>(record.default_data_len)?;
+    let default_batch = if default_len == 0 {
+        None
+    } else {
+        let default_end = checked_end(default_offset, default_len, data.len())?;
+        Some(read_one_ipc_batch(&data[default_offset..default_end])?)
+    };
     match storage {
-        StorageMode::Dense => validate_dense_batch(record, family, field_name, &batch)?,
+        StorageMode::Dense => {
+            if default_len != 0 {
+                return Err(PropertyError::SnapshotDescriptorMismatch {
+                    reason: "dense property must not declare a default stream",
+                });
+            }
+            validate_dense_batch::<W>(record, &value_batch)?;
+        }
         StorageMode::Sparse { missing } => {
-            validate_sparse_batch(record, family, field_name, missing, &batch)?;
+            validate_sparse_batch::<W>(record, missing, &value_batch, default_batch.as_ref())?;
         }
     }
-    Ok(offset..end)
+    let mut ranges = Vec::with_capacity(2);
+    ranges.push(offset..end);
+    if default_len != 0 {
+        ranges.push(default_offset..default_offset + default_len);
+    }
+    Ok(ranges)
 }
 
 /// Reads exactly one Arrow IPC record batch.
@@ -2020,26 +2801,27 @@ fn read_one_ipc_batch(bytes: &[u8]) -> Result<RecordBatch, PropertyError> {
 /// # Performance
 ///
 /// This function is `O(1)`.
-fn validate_dense_batch(
-    record: &PropertySnapshotRecord,
-    family: ArrowValueFamily,
-    field_name: &str,
+fn validate_dense_batch<W>(
+    record: &PropertySnapshotRecord<W>,
     batch: &RecordBatch,
-) -> Result<(), PropertyError> {
+) -> Result<(), PropertyError>
+where
+    W: PropertySnapshotMetaWord,
+{
     if batch.num_columns() != 1 {
         return Err(PropertyError::SnapshotDescriptorMismatch {
             reason: "dense property batch must contain one column",
         });
     }
     let values = batch.column(0);
-    if values.len() != u64_to_usize(record.logical_len.get())?
-        || values.len() != u64_to_usize(record.value_count.get())?
+    if values.len() != le_word_to_usize::<W>(record.logical_len)?
+        || values.len() != le_word_to_usize::<W>(record.value_count)?
     {
         return Err(PropertyError::SnapshotDataLength {
             reason: "dense property Arrow length does not match descriptor",
         });
     }
-    validate_value_column(record, family, field_name, values.as_ref())
+    validate_value_column(values.as_ref())
 }
 
 /// Validates one sparse Arrow IPC batch.
@@ -2047,43 +2829,54 @@ fn validate_dense_batch(
 /// # Performance
 ///
 /// This function is `O(value_count)` for sparse index validation.
-fn validate_sparse_batch(
-    record: &PropertySnapshotRecord,
-    family: ArrowValueFamily,
-    field_name: &str,
+fn validate_sparse_batch<W>(
+    record: &PropertySnapshotRecord<W>,
     missing: MissingPolicy,
-    batch: &RecordBatch,
-) -> Result<(), PropertyError> {
-    let expected_columns = match missing {
-        MissingPolicy::Null => 2,
-        MissingPolicy::Default => 3,
-    };
-    if batch.num_columns() != expected_columns {
+    value_batch: &RecordBatch,
+    default_batch: Option<&RecordBatch>,
+) -> Result<(), PropertyError>
+where
+    W: PropertySnapshotMetaWord,
+{
+    if value_batch.num_columns() != 2 {
         return Err(PropertyError::SnapshotDescriptorMismatch {
-            reason: "sparse property batch column count does not match missing policy",
+            reason: "sparse property value stream must contain index and value columns",
         });
     }
-    let indexes = batch
-        .column(0)
-        .as_any()
-        .downcast_ref::<UInt64Array>()
-        .ok_or(PropertyError::SnapshotDescriptorMismatch {
-            reason: "sparse property index column is not UInt64",
-        })?;
-    let values = batch.column(1);
-    let value_count = u64_to_usize(record.value_count.get())?;
+    let indexes = value_batch.column(0);
+    let values = value_batch.column(1);
+    let value_count = le_word_to_usize::<W>(record.value_count)?;
     if indexes.len() != value_count || values.len() != value_count {
         return Err(PropertyError::SnapshotDataLength {
             reason: "sparse property Arrow value count does not match descriptor",
         });
     }
-    validate_value_column(record, family, field_name, values.as_ref())?;
-    validate_sparse_indices(indexes, u64_to_usize(record.logical_len.get())?)?;
-    if missing == MissingPolicy::Default {
-        let default = batch.column(2);
-        if default.len() != 1 || default.data_type() != values.data_type() || default.is_null(0) {
+    validate_value_column(values.as_ref())?;
+    validate_sparse_indices_dyn(indexes.as_ref(), le_word_to_usize::<W>(record.logical_len)?)?;
+    match (missing, default_batch) {
+        (MissingPolicy::Null, None) => {}
+        (MissingPolicy::Null, Some(_)) => {
             return Err(PropertyError::SnapshotDescriptorMismatch {
-                reason: "sparse property default column is not a non-null matching scalar",
+                reason: "sparse-null property must not declare a default stream",
+            });
+        }
+        (MissingPolicy::Default, Some(default_batch)) => {
+            if default_batch.num_columns() != 1 {
+                return Err(PropertyError::SnapshotDescriptorMismatch {
+                    reason: "sparse default stream must contain one column",
+                });
+            }
+            let default = default_batch.column(0);
+            if default.len() != 1 || default.data_type() != values.data_type() || default.is_null(0)
+            {
+                return Err(PropertyError::SnapshotDescriptorMismatch {
+                    reason: "sparse property default column is not a non-null matching scalar",
+                });
+            }
+        }
+        (MissingPolicy::Default, None) => {
+            return Err(PropertyError::SnapshotDescriptorMismatch {
+                reason: "sparse-default property is missing its default stream",
             });
         }
     }
@@ -2095,24 +2888,10 @@ fn validate_sparse_batch(
 /// # Performance
 ///
 /// This function is `O(1)`.
-fn validate_value_column(
-    record: &PropertySnapshotRecord,
-    family: ArrowValueFamily,
-    field_name: &str,
-    values: &dyn Array,
-) -> Result<(), PropertyError> {
-    if ArrowValueFamily::from_data_type(values.data_type()) != family {
+fn validate_value_column(values: &dyn Array) -> Result<(), PropertyError> {
+    if values.null_count() > values.len() {
         return Err(PropertyError::SnapshotDescriptorMismatch {
-            reason: "Arrow value family does not match descriptor",
-        });
-    }
-    let nullable = record.nullable.get() != 0;
-    if !nullable && values.null_count() != 0 {
-        return Err(PropertyError::UnexpectedNull { index: 0 });
-    }
-    if field_name.is_empty() {
-        return Err(PropertyError::SnapshotDescriptorMismatch {
-            reason: "Arrow field name must not be empty",
+            reason: "Arrow value column has invalid null accounting",
         });
     }
     Ok(())
@@ -2150,12 +2929,10 @@ fn validate_data_coverage(
 /// # Performance
 ///
 /// This function is `O(len)` for UTF-8 validation.
-fn read_snapshot_str(bytes: &[u8], offset: u32, len: u32) -> Result<&str, PropertyError> {
-    let start = offset as usize;
-    let len_usize = len as usize;
-    let end = checked_end(start, len_usize, bytes.len())?;
-    core::str::from_utf8(&bytes[start..end])
-        .map_err(|_error| PropertyError::SnapshotInvalidUtf8 { offset: start })
+fn read_snapshot_str(bytes: &[u8], offset: usize, len: usize) -> Result<&str, PropertyError> {
+    let end = checked_end(offset, len, bytes.len())?;
+    core::str::from_utf8(&bytes[offset..end])
+        .map_err(|_error| PropertyError::SnapshotInvalidUtf8 { offset })
 }
 
 /// Checks a byte range against an available length.
@@ -2196,6 +2973,107 @@ fn read_u64_le(bytes: &[u8]) -> Result<u64, PropertyError> {
     let mut array = [0_u8; 8];
     array.copy_from_slice(&bytes[..8]);
     Ok(u64::from_le_bytes(array))
+}
+
+/// Reads one little-endian metadata word into `u64`.
+///
+/// # Performance
+///
+/// This function is `O(1)`.
+fn read_meta_word(bytes: &[u8]) -> Result<u64, PropertyError> {
+    match bytes.len() {
+        2 => {
+            let mut array = [0_u8; 2];
+            array.copy_from_slice(bytes);
+            Ok(u64::from(u16::from_le_bytes(array)))
+        }
+        4 => {
+            let mut array = [0_u8; 4];
+            array.copy_from_slice(bytes);
+            Ok(u64::from(u32::from_le_bytes(array)))
+        }
+        8 => read_u64_le(bytes),
+        _ => Err(PropertyError::SnapshotDataLength {
+            reason: "metadata word has unsupported width",
+        }),
+    }
+}
+
+/// Converts `value` into a little-endian metadata word.
+///
+/// # Performance
+///
+/// This function is `O(1)`.
+fn le_word<W>(value: usize) -> Result<W::LittleEndianWord, PropertyError>
+where
+    W: PropertySnapshotMetaWord,
+{
+    let Some(value) = W::from_usize(value) else {
+        return Err(PropertyError::SnapshotDescriptorMismatch {
+            reason: "value does not fit selected metadata width",
+        });
+    };
+    Ok(value.to_le_word())
+}
+
+/// Converts `value` into a little-endian metadata word.
+///
+/// # Performance
+///
+/// This function is `O(1)`.
+fn le_word_from_u64<W>(value: u64) -> Result<W::LittleEndianWord, PropertyError>
+where
+    W: PropertySnapshotMetaWord,
+{
+    let Some(value) = W::from_u64(value) else {
+        return Err(PropertyError::SnapshotDescriptorMismatch {
+            reason: "value does not fit selected metadata width",
+        });
+    };
+    Ok(value.to_le_word())
+}
+
+/// Decodes a little-endian metadata word as `usize`.
+///
+/// # Performance
+///
+/// This function is `O(1)`.
+fn le_word_to_usize<W>(word: W::LittleEndianWord) -> Result<usize, PropertyError>
+where
+    W: PropertySnapshotMetaWord,
+{
+    W::from_le_word(word)
+        .to_usize()
+        .ok_or(PropertyError::SnapshotDescriptorMismatch {
+            reason: "metadata word does not fit usize",
+        })
+}
+
+/// Decodes a little-endian metadata word as `u64`.
+///
+/// # Performance
+///
+/// This function is `O(1)`.
+fn le_word_to_u64<W>(word: W::LittleEndianWord) -> u64
+where
+    W: PropertySnapshotMetaWord,
+{
+    W::from_le_word(word).to_u64()
+}
+
+/// Decodes a little-endian metadata word as `u32`.
+///
+/// # Performance
+///
+/// This function is `O(1)`.
+fn le_word_to_u32<W>(word: W::LittleEndianWord) -> Result<u32, PropertyError>
+where
+    W: PropertySnapshotMetaWord,
+{
+    let value = le_word_to_u64::<W>(word);
+    u32::try_from(value).map_err(|_error| PropertyError::SnapshotDescriptorMismatch {
+        reason: "metadata word does not fit u32 tag",
+    })
 }
 
 /// Converts `u64` to `usize` for snapshot lengths.
@@ -2323,10 +3201,13 @@ const fn storage_from_tags(storage: u32, missing: u32) -> Result<StorageMode, Pr
 /// # Performance
 ///
 /// This function is `O(1)`.
-fn ensure_arrow_type(
-    descriptor: &PropertyLayerDescriptor,
+fn ensure_arrow_type<Id, I>(
+    descriptor: &PropertyLayerDescriptor<Id, I>,
     values: &dyn Array,
-) -> Result<(), PropertyError> {
+) -> Result<(), PropertyError>
+where
+    I: PropertyIndex,
+{
     if descriptor.arrow_field.data_type() == values.data_type() {
         Ok(())
     } else {
@@ -2341,11 +3222,14 @@ fn ensure_arrow_type(
 /// # Performance
 ///
 /// This function is `O(1)`.
-fn validate_default_policy(
-    descriptor: &PropertyLayerDescriptor,
+fn validate_default_policy<Id, I>(
+    descriptor: &PropertyLayerDescriptor<Id, I>,
     missing: MissingPolicy,
     default: Option<&ArrayRef>,
-) -> Result<(), PropertyError> {
+) -> Result<(), PropertyError>
+where
+    I: PropertyIndex,
+{
     match (missing, default) {
         (MissingPolicy::Null, None) => Ok(()),
         (MissingPolicy::Default, Some(array)) => {
@@ -2385,13 +3269,27 @@ fn ensure_no_nulls(array: &dyn Array) -> Result<(), PropertyError> {
 /// # Performance
 ///
 /// This function is `O(indices.len())`.
-fn validate_sparse_indices(indices: &UInt64Array, len: usize) -> Result<(), PropertyError> {
-    let len_u64 = usize_to_u64(len)?;
+fn validate_sparse_indices<I>(
+    indices: &PrimitiveArray<I::ArrowType>,
+    len: usize,
+) -> Result<(), PropertyError>
+where
+    I: PropertyIndex,
+{
     let mut previous = None;
     for position in 0..indices.len() {
         let index = indices.value(position);
-        if index >= len_u64 {
-            return Err(PropertyError::SparseIndexOutOfBounds { index, len });
+        let Some(index_usize) = index.to_usize() else {
+            return Err(PropertyError::SparseIndexOutOfBounds {
+                index: index.to_u64(),
+                len,
+            });
+        };
+        if index_usize >= len {
+            return Err(PropertyError::SparseIndexOutOfBounds {
+                index: index.to_u64(),
+                len,
+            });
         }
         if let Some(prior) = previous
             && index <= prior
@@ -2403,16 +3301,67 @@ fn validate_sparse_indices(indices: &UInt64Array, len: usize) -> Result<(), Prop
     Ok(())
 }
 
+/// Validates sparse index ordering and bounds for a dynamic unsigned Arrow array.
+///
+/// # Performance
+///
+/// This function is `O(indices.len())`.
+fn validate_sparse_indices_dyn(indices: &dyn Array, len: usize) -> Result<(), PropertyError> {
+    if let Some(indices) = indices
+        .as_any()
+        .downcast_ref::<PrimitiveArray<arrow_array::types::UInt16Type>>()
+    {
+        return validate_sparse_indices::<u16>(indices, len);
+    }
+    if let Some(indices) = indices
+        .as_any()
+        .downcast_ref::<PrimitiveArray<arrow_array::types::UInt32Type>>()
+    {
+        return validate_sparse_indices::<u32>(indices, len);
+    }
+    if let Some(indices) = indices
+        .as_any()
+        .downcast_ref::<PrimitiveArray<arrow_array::types::UInt64Type>>()
+    {
+        return validate_sparse_indices::<u64>(indices, len);
+    }
+    Err(PropertyError::SnapshotDescriptorMismatch {
+        reason: "sparse property index column is not UInt16, UInt32, or UInt64",
+    })
+}
+
+/// Returns the Arrow data type for a property index width.
+///
+/// # Performance
+///
+/// This function is `O(1)`.
+const fn index_data_type<I>() -> DataType
+where
+    I: PropertyIndex,
+{
+    if core::mem::size_of::<I>() == core::mem::size_of::<u16>() {
+        DataType::UInt16
+    } else if core::mem::size_of::<I>() == core::mem::size_of::<u32>() {
+        DataType::UInt32
+    } else {
+        DataType::UInt64
+    }
+}
+
 /// Validates a dense primitive layer selection.
 ///
 /// # Performance
 ///
 /// This function is `O(layer.len())` for the null check.
-fn validate_dense_primitive_selection<P: ArrowPrimitiveType>(
-    layer: &PropertyLayer,
+fn validate_dense_primitive_selection<Id, I, P>(
+    layer: &PropertyLayer<Id, I>,
     expected: IdFamily,
     required: usize,
-) -> Result<&PrimitiveArray<P>, PropertyError> {
+) -> Result<&PrimitiveArray<P>, PropertyError>
+where
+    I: PropertyIndex,
+    P: ArrowPrimitiveType,
+{
     if layer.descriptor.id_family != expected {
         return Err(PropertyError::IdFamilyMismatch {
             expected,
@@ -2441,8 +3390,8 @@ fn validate_dense_primitive_selection<P: ArrowPrimitiveType>(
 }
 
 /// Borrowed sparse primitive selection parts.
-type SparsePrimitiveSelection<'layer, P> = (
-    &'layer UInt64Array,
+type SparsePrimitiveSelection<'layer, I, P> = (
+    &'layer PrimitiveArray<<I as PropertyIndex>::ArrowType>,
     &'layer PrimitiveArray<P>,
     <P as ArrowPrimitiveType>::Native,
 );
@@ -2452,12 +3401,14 @@ type SparsePrimitiveSelection<'layer, P> = (
 /// # Performance
 ///
 /// This function is `O(1)` plus default downcast.
-fn validate_sparse_primitive_selection<P: ArrowPrimitiveType>(
-    layer: &PropertyLayer,
+fn validate_sparse_primitive_selection<I, P, Id>(
+    layer: &PropertyLayer<Id, I>,
     expected: IdFamily,
     required: usize,
-) -> Result<SparsePrimitiveSelection<'_, P>, PropertyError>
+) -> Result<SparsePrimitiveSelection<'_, I, P>, PropertyError>
 where
+    I: PropertyIndex,
+    P: ArrowPrimitiveType,
     P::Native: Copy,
 {
     if layer.descriptor.id_family != expected {
@@ -2493,6 +3444,7 @@ where
         .ok_or_else(|| PropertyError::ArrowTypeMismatch {
             name: layer.descriptor.name.clone(),
         })?;
+    ensure_no_nulls(primitive)?;
     let default_primitive = default_array
         .as_any()
         .downcast_ref::<PrimitiveArray<P>>()
@@ -2512,16 +3464,18 @@ where
 /// # Performance
 ///
 /// This function is `O(log k)` for `k` sparse indexes.
-fn sparse_value<P: ArrowPrimitiveType>(
-    indices: &UInt64Array,
+fn sparse_value<I, P>(
+    indices: &PrimitiveArray<I::ArrowType>,
     values: &PrimitiveArray<P>,
     default: P::Native,
     index: usize,
 ) -> P::Native
 where
+    I: PropertyIndex,
+    P: ArrowPrimitiveType,
     P::Native: Copy,
 {
-    let Ok(target) = u64::try_from(index) else {
+    let Some(target) = I::from_usize(index) else {
         return default;
     };
     let mut low = 0_usize;
@@ -2562,7 +3516,8 @@ mod tests {
     //! Unit tests for generic property descriptor and selected weight validation.
 
     use arrow_array::{
-        Float32Array, Int32Array, UInt32Array,
+        BooleanArray, Float32Array, Float64Array, Int32Array, StringArray, UInt32Array,
+        UInt64Array,
         types::{Float32Type, Int32Type},
     };
     use oxgraph_snapshot::{Snapshot, SnapshotBuilder};
@@ -2600,8 +3555,8 @@ mod tests {
     /// Dense relation layers can be selected by relation index without f64.
     #[test]
     fn dense_relation_layer_selects_i32_weight() -> Result<(), PropertyError> {
-        let descriptor = PropertyLayerDescriptor::try_new(
-            LayerId(1),
+        let descriptor = PropertyLayerDescriptor::<u32, u32>::try_new(
+            LayerId(1_u32),
             "count",
             IdFamily::Relation,
             LayerRole::Weight,
@@ -2610,7 +3565,7 @@ mod tests {
         )?;
         let layer =
             PropertyLayer::try_new_dense(descriptor, Arc::new(Int32Array::from(vec![2, 7])))?;
-        let selected = DenseRelationWeights::<_, Int32Type>::new(&Topology, &layer)?;
+        let selected = DenseRelationWeights::<_, u32, u32, Int32Type>::new(&Topology, &layer)?;
         assert_eq!(selected.relation_weight(1), 7);
         Ok(())
     }
@@ -2618,8 +3573,8 @@ mod tests {
     /// Sparse relation layers can totalize with an Arrow default scalar.
     #[test]
     fn sparse_relation_layer_totalizes_with_default() -> Result<(), PropertyError> {
-        let descriptor = PropertyLayerDescriptor::try_new(
-            LayerId(2),
+        let descriptor = PropertyLayerDescriptor::<u32, u32>::try_new(
+            LayerId(2_u32),
             "capacity",
             IdFamily::Relation,
             LayerRole::Weight,
@@ -2631,37 +3586,120 @@ mod tests {
         let layer = PropertyLayer::try_new_sparse(
             descriptor,
             4,
-            Arc::new(UInt64Array::from(vec![1_u64])),
+            Arc::new(UInt32Array::from(vec![1_u32])),
             Arc::new(Float32Array::from(vec![3.5_f32])),
             Some(Arc::new(Float32Array::from(vec![1.25_f32]))),
         )?;
-        let selected = SparseRelationWeights::<_, Float32Type>::new(&Topology, &layer)?;
+        let selected = SparseRelationWeights::<_, u32, u32, Float32Type>::new(&Topology, &layer)?;
         assert!((selected.relation_weight(0) - 1.25).abs() < f32::EPSILON);
         assert!((selected.relation_weight(1) - 3.5).abs() < f32::EPSILON);
+        Ok(())
+    }
+
+    /// Dense and sparse property layers support every explicit sparse-index width.
+    #[test]
+    fn property_layers_support_u16_u32_and_u64_indexes() -> Result<(), PropertyError> {
+        let dense_u16 = PropertyLayer::try_new_dense(
+            PropertyLayerDescriptor::<u16, u16>::try_new(
+                LayerId(1_u16),
+                "dense_u16",
+                IdFamily::Element,
+                LayerRole::Property,
+                StorageMode::Dense,
+                field("dense_u16", DataType::Int32),
+            )?,
+            Arc::new(Int32Array::from(vec![1, 2])),
+        )?;
+        assert_eq!(dense_u16.len(), 2);
+
+        let sparse_u32 = PropertyLayer::try_new_sparse(
+            PropertyLayerDescriptor::<u32, u32>::try_new(
+                LayerId(2_u32),
+                "sparse_u32",
+                IdFamily::Relation,
+                LayerRole::Weight,
+                StorageMode::Sparse {
+                    missing: MissingPolicy::Default,
+                },
+                field("sparse_u32", DataType::Float32),
+            )?,
+            8,
+            Arc::new(UInt32Array::from(vec![1_u32, 7])),
+            Arc::new(Float32Array::from(vec![2.0_f32, 4.0])),
+            Some(Arc::new(Float32Array::from(vec![1.0_f32]))),
+        )?;
+        assert_eq!(sparse_u32.len(), 8);
+
+        let sparse_u64 = PropertyLayer::try_new_sparse(
+            PropertyLayerDescriptor::<u64, u64>::try_new(
+                LayerId(3_u64),
+                "sparse_u64",
+                IdFamily::Relation,
+                LayerRole::Weight,
+                StorageMode::Sparse {
+                    missing: MissingPolicy::Null,
+                },
+                field("sparse_u64", DataType::Int32),
+            )?,
+            9,
+            Arc::new(UInt64Array::from(vec![0_u64, 8])),
+            Arc::new(Int32Array::from(vec![5_i32, 6])),
+            None,
+        )?;
+        assert_eq!(sparse_u64.len(), 9);
+        Ok(())
+    }
+
+    /// Nullable sparse properties can be valid properties but invalid total weights.
+    #[test]
+    fn sparse_selected_weights_reject_explicit_nulls() -> Result<(), PropertyError> {
+        let descriptor = PropertyLayerDescriptor::<u32, u32>::try_new(
+            LayerId(4_u32),
+            "nullable_weight",
+            IdFamily::Relation,
+            LayerRole::Weight,
+            StorageMode::Sparse {
+                missing: MissingPolicy::Default,
+            },
+            Field::new("nullable_weight", DataType::Float32, true),
+        )?;
+        let values = Float32Array::from(vec![Some(3.0_f32), None]);
+        let layer = PropertyLayer::try_new_sparse(
+            descriptor,
+            3,
+            Arc::new(UInt32Array::from(vec![0_u32, 2])),
+            Arc::new(values),
+            Some(Arc::new(Float32Array::from(vec![1.0_f32]))),
+        )?;
+
+        assert!(matches!(
+            SparseRelationWeights::<_, u32, u32, Float32Type>::new(&Topology, &layer),
+            Err(PropertyError::UnexpectedNull { index: 1 })
+        ));
         Ok(())
     }
 
     /// Duplicate names are rejected only within the same ID family.
     #[test]
     fn duplicate_names_are_family_scoped() -> Result<(), PropertyError> {
-        let first = PropertyLayerDescriptor::try_new(
-            LayerId(1),
+        let first = PropertyLayerDescriptor::<u32, u32>::try_new(
+            LayerId(1_u32),
             "weight",
             IdFamily::Relation,
             LayerRole::Weight,
             StorageMode::Dense,
             field("weight", DataType::UInt32),
         )?;
-        let second = PropertyLayerDescriptor::try_new(
-            LayerId(2),
+        let second = PropertyLayerDescriptor::<u32, u32>::try_new(
+            LayerId(2_u32),
             "weight",
             IdFamily::Element,
             LayerRole::Weight,
             StorageMode::Dense,
             field("weight", DataType::UInt32),
         )?;
-        let duplicate = PropertyLayerDescriptor::try_new(
-            LayerId(3),
+        let duplicate = PropertyLayerDescriptor::<u32, u32>::try_new(
+            LayerId(3_u32),
             "weight",
             IdFamily::Relation,
             LayerRole::Property,
@@ -2676,35 +3714,35 @@ mod tests {
         Ok(())
     }
 
-    /// Descriptor value-family classification covers non-floating Arrow properties.
+    /// Descriptors preserve exact Arrow fields for non-floating Arrow properties.
     #[test]
-    fn descriptor_classifies_generic_arrow_families() -> Result<(), PropertyError> {
-        let boolean = PropertyLayerDescriptor::try_new(
-            LayerId(1),
+    fn descriptor_preserves_generic_arrow_fields() -> Result<(), PropertyError> {
+        let boolean = PropertyLayerDescriptor::<u32, u32>::try_new(
+            LayerId(1_u32),
             "flag",
             IdFamily::Element,
             LayerRole::Property,
             StorageMode::Dense,
             Field::new("flag", DataType::Boolean, false),
         )?;
-        let utf8 = PropertyLayerDescriptor::try_new(
-            LayerId(2),
+        let utf8 = PropertyLayerDescriptor::<u32, u32>::try_new(
+            LayerId(2_u32),
             "label",
             IdFamily::Element,
             LayerRole::Property,
             StorageMode::Dense,
             Field::new("label", DataType::Utf8, true),
         )?;
-        assert_eq!(boolean.value_family(), ArrowValueFamily::Boolean);
-        assert_eq!(utf8.value_family(), ArrowValueFamily::Utf8);
+        assert_eq!(boolean.arrow_field.data_type(), &DataType::Boolean);
+        assert_eq!(utf8.arrow_field.data_type(), &DataType::Utf8);
         Ok(())
     }
 
     /// Property descriptor/data sections roundtrip through Arrow IPC payloads.
     #[test]
     fn property_snapshot_sections_validate() -> Result<(), Box<dyn Error>> {
-        let dense_descriptor = PropertyLayerDescriptor::try_new(
-            LayerId(10),
+        let dense_descriptor = PropertyLayerDescriptor::<u32, u32>::try_new(
+            LayerId(10_u32),
             "count",
             IdFamily::Relation,
             LayerRole::Weight,
@@ -2715,8 +3753,8 @@ mod tests {
             dense_descriptor,
             Arc::new(UInt32Array::from(vec![4_u32, 9_u32])),
         )?;
-        let sparse_descriptor = PropertyLayerDescriptor::try_new(
-            LayerId(11),
+        let sparse_descriptor = PropertyLayerDescriptor::<u32, u32>::try_new(
+            LayerId(11_u32),
             "score",
             IdFamily::Element,
             LayerRole::Property,
@@ -2728,37 +3766,130 @@ mod tests {
         let sparse = PropertyLayer::try_new_sparse(
             sparse_descriptor,
             3,
-            Arc::new(UInt64Array::from(vec![2_u64])),
+            Arc::new(UInt32Array::from(vec![2_u32])),
             Arc::new(Float32Array::from(vec![8.0_f32])),
             Some(Arc::new(Float32Array::from(vec![1.0_f32]))),
         )?;
-        let encoded = encode_property_snapshot(&[dense, sparse])?;
+        let encoded = encode_property_snapshot::<u32, u32, u32>(&[dense, sparse])?;
         let mut builder = SnapshotBuilder::new();
         builder.add_section(
-            SNAPSHOT_KIND_PROPERTY_DESCRIPTORS,
+            SNAPSHOT_KIND_PROPERTY_DESCRIPTORS_U32,
             SNAPSHOT_PROPERTY_VERSION,
             0,
             encoded.descriptors,
         )?;
         builder.add_section(
-            SNAPSHOT_KIND_PROPERTY_DATA,
+            SNAPSHOT_KIND_PROPERTY_DATA_U32,
             SNAPSHOT_PROPERTY_VERSION,
             0,
             encoded.data,
         )?;
         let bytes = builder.finish()?;
         let snapshot = Snapshot::open(&bytes)?;
-        let summary = validate_property_snapshot(&snapshot)?;
+        let summary = validate_property_snapshot::<u32>(&snapshot)?;
         assert_eq!(summary.layer_count, 2);
         assert_eq!(summary.total_logical_values, 5);
+        Ok(())
+    }
+
+    /// Snapshot validation accepts exact Arrow IPC payloads for bool/int/float/string layers.
+    #[test]
+    fn property_snapshot_validates_exact_arrow_payload_shapes() -> Result<(), Box<dyn Error>> {
+        let bool_layer = PropertyLayer::try_new_dense(
+            PropertyLayerDescriptor::<u32, u32>::try_new(
+                LayerId(20_u32),
+                "flag",
+                IdFamily::Element,
+                LayerRole::Property,
+                StorageMode::Dense,
+                field("flag", DataType::Boolean),
+            )?,
+            Arc::new(BooleanArray::from(vec![true, false])),
+        )?;
+        let int_layer = PropertyLayer::try_new_dense(
+            PropertyLayerDescriptor::<u32, u32>::try_new(
+                LayerId(21_u32),
+                "count",
+                IdFamily::Relation,
+                LayerRole::Property,
+                StorageMode::Dense,
+                field("count", DataType::Int32),
+            )?,
+            Arc::new(Int32Array::from(vec![1_i32, 2])),
+        )?;
+        let float_layer = PropertyLayer::try_new_dense(
+            PropertyLayerDescriptor::<u32, u32>::try_new(
+                LayerId(22_u32),
+                "score",
+                IdFamily::Element,
+                LayerRole::Property,
+                StorageMode::Dense,
+                field("score", DataType::Float64),
+            )?,
+            Arc::new(Float64Array::from(vec![1.5_f64, 2.5])),
+        )?;
+        let string_layer = PropertyLayer::try_new_dense(
+            PropertyLayerDescriptor::<u32, u32>::try_new(
+                LayerId(23_u32),
+                "label",
+                IdFamily::Element,
+                LayerRole::Property,
+                StorageMode::Dense,
+                field("label", DataType::Utf8),
+            )?,
+            Arc::new(StringArray::from(vec!["a", "b"])),
+        )?;
+
+        let encoded = encode_property_snapshot::<u32, u32, u32>(&[
+            bool_layer,
+            int_layer,
+            float_layer,
+            string_layer,
+        ])?;
+        let summary = validate_property_sections::<u32>(&encoded.descriptors, &encoded.data)?;
+        assert_eq!(summary.layer_count, 4);
+        assert_eq!(summary.total_logical_values, 8);
+        Ok(())
+    }
+
+    /// Sparse-default snapshots store explicit values and default scalar as separate streams.
+    #[test]
+    fn sparse_default_snapshot_accepts_zero_one_and_many_explicit_values()
+    -> Result<(), PropertyError> {
+        for (layer_id, indices, values) in [
+            (30_u32, Vec::new(), Vec::new()),
+            (31_u32, vec![1_u32], vec![4.0_f32]),
+            (32_u32, vec![0_u32, 2, 4], vec![2.0_f32, 3.0, 5.0]),
+        ] {
+            let layer = PropertyLayer::try_new_sparse(
+                PropertyLayerDescriptor::<u32, u32>::try_new(
+                    LayerId(layer_id),
+                    "score",
+                    IdFamily::Element,
+                    LayerRole::Property,
+                    StorageMode::Sparse {
+                        missing: MissingPolicy::Default,
+                    },
+                    field("score", DataType::Float32),
+                )?,
+                5,
+                Arc::new(UInt32Array::from(indices)),
+                Arc::new(Float32Array::from(values)),
+                Some(Arc::new(Float32Array::from(vec![1.0_f32]))),
+            )?;
+            let encoded = encode_property_snapshot::<u32, u32, u32>(&[layer])?;
+            let summary = validate_property_sections::<u32>(&encoded.descriptors, &encoded.data)?;
+            assert_eq!(summary.layer_count, 1);
+            assert_eq!(summary.total_logical_values, 5);
+        }
         Ok(())
     }
 
     /// Invalid property data sections are rejected structurally.
     #[test]
     fn property_snapshot_rejects_trailing_data() -> Result<(), PropertyError> {
-        let descriptor = PropertyLayerDescriptor::try_new(
-            LayerId(1),
+        let descriptor = PropertyLayerDescriptor::<u32, u32>::try_new(
+            LayerId(1_u32),
             "count",
             IdFamily::Relation,
             LayerRole::Weight,
@@ -2767,12 +3898,156 @@ mod tests {
         )?;
         let dense =
             PropertyLayer::try_new_dense(descriptor, Arc::new(Int32Array::from(vec![1_i32])))?;
-        let mut encoded = encode_property_snapshot(&[dense])?;
+        let mut encoded = encode_property_snapshot::<u32, u32, u32>(&[dense])?;
         encoded.data.push(0);
         assert!(matches!(
-            validate_property_sections(&encoded.descriptors, &encoded.data),
+            validate_property_sections::<u32>(&encoded.descriptors, &encoded.data),
             Err(PropertyError::SnapshotDescriptorMismatch { .. })
         ));
+        Ok(())
+    }
+
+    /// Sparse-default descriptor corruption is rejected before consumers see payloads.
+    #[test]
+    fn sparse_default_snapshot_rejects_malformed_default_ranges() -> Result<(), PropertyError> {
+        let descriptor = PropertyLayerDescriptor::<u32, u32>::try_new(
+            LayerId(40_u32),
+            "score",
+            IdFamily::Element,
+            LayerRole::Property,
+            StorageMode::Sparse {
+                missing: MissingPolicy::Default,
+            },
+            field("score", DataType::Float32),
+        )?;
+        let layer = PropertyLayer::try_new_sparse(
+            descriptor,
+            3,
+            Arc::new(UInt32Array::from(vec![1_u32])),
+            Arc::new(Float32Array::from(vec![8.0_f32])),
+            Some(Arc::new(Float32Array::from(vec![1.0_f32]))),
+        )?;
+        let encoded = encode_property_snapshot::<u32, u32, u32>(&[layer])?;
+        let record_start = core::mem::size_of::<PropertySnapshotHeader>();
+        let word_len = core::mem::size_of::<U32<LE>>();
+        let default_offset_start = record_start + (11 * word_len);
+        let default_len_start = record_start + (12 * word_len);
+
+        let mut missing_default = encoded.descriptors.clone();
+        missing_default[default_len_start..default_len_start + word_len]
+            .copy_from_slice(&0_u32.to_le_bytes());
+        assert!(matches!(
+            validate_property_sections::<u32>(&missing_default, &encoded.data),
+            Err(PropertyError::SnapshotDescriptorMismatch { .. })
+        ));
+
+        let mut overlapping_default = encoded.descriptors;
+        let value_offset = overlapping_default
+            [record_start + (9 * word_len)..record_start + (10 * word_len)]
+            .to_vec();
+        overlapping_default[default_offset_start..default_offset_start + word_len]
+            .copy_from_slice(&value_offset);
+        assert!(matches!(
+            validate_property_sections::<u32>(&overlapping_default, &encoded.data),
+            Err(PropertyError::SnapshotDescriptorMismatch { .. } | PropertyError::Arrow { .. })
+        ));
+        Ok(())
+    }
+
+    /// Rekeying dense layers uses Arrow take and works for primitive and string values.
+    #[test]
+    fn rekey_dense_layers_to_snapshot_local_order() -> Result<(), PropertyError> {
+        let int_layer = PropertyLayer::try_new_dense(
+            PropertyLayerDescriptor::<u32, u32>::try_new(
+                LayerId(50_u32),
+                "count",
+                IdFamily::Relation,
+                LayerRole::Property,
+                StorageMode::Dense,
+                field("count", DataType::Int32),
+            )?,
+            Arc::new(Int32Array::from(vec![10_i32, 20, 30])),
+        )?;
+        let rekeyed_int = rekey_layer_to_local(&int_layer, &[2_u32, 0, 1])?;
+        let PropertyLayerData::Dense { values } = rekeyed_int.data() else {
+            unreachable!("rekeyed dense layer stays dense");
+        };
+        let values = values.as_any().downcast_ref::<Int32Array>().ok_or(
+            PropertyError::SnapshotDescriptorMismatch {
+                reason: "rekeyed int layer has wrong type",
+            },
+        )?;
+        assert_eq!(values.values(), &[30, 10, 20]);
+
+        let string_layer = PropertyLayer::try_new_dense(
+            PropertyLayerDescriptor::<u32, u32>::try_new(
+                LayerId(51_u32),
+                "label",
+                IdFamily::Element,
+                LayerRole::Property,
+                StorageMode::Dense,
+                field("label", DataType::Utf8),
+            )?,
+            Arc::new(StringArray::from(vec!["a", "b", "c"])),
+        )?;
+        let rekeyed_string = rekey_layer_to_local(&string_layer, &[1_u32, 2])?;
+        let PropertyLayerData::Dense { values } = rekeyed_string.data() else {
+            unreachable!("rekeyed dense layer stays dense");
+        };
+        let values = values.as_any().downcast_ref::<StringArray>().ok_or(
+            PropertyError::SnapshotDescriptorMismatch {
+                reason: "rekeyed string layer has wrong type",
+            },
+        )?;
+        assert_eq!(values.value(0), "b");
+        assert_eq!(values.value(1), "c");
+        assert_eq!(rekeyed_string.len(), 2);
+        Ok(())
+    }
+
+    /// Rekeying sparse layers remaps explicit indexes and preserves defaults.
+    #[test]
+    fn rekey_sparse_layers_to_snapshot_local_order() -> Result<(), PropertyError> {
+        let layer = PropertyLayer::try_new_sparse(
+            PropertyLayerDescriptor::<u32, u32>::try_new(
+                LayerId(52_u32),
+                "score",
+                IdFamily::Relation,
+                LayerRole::Weight,
+                StorageMode::Sparse {
+                    missing: MissingPolicy::Default,
+                },
+                field("score", DataType::Float64),
+            )?,
+            4,
+            Arc::new(UInt32Array::from(vec![0_u32, 3])),
+            Arc::new(Float64Array::from(vec![1.5_f64, 9.5])),
+            Some(Arc::new(Float64Array::from(vec![2.5_f64]))),
+        )?;
+        let rekeyed = rekey_layer_to_local(&layer, &[3_u32, 0])?;
+        let PropertyLayerData::Sparse {
+            indices,
+            values,
+            default,
+        } = rekeyed.data()
+        else {
+            unreachable!("rekeyed sparse layer stays sparse");
+        };
+        assert_eq!(indices.values(), &[0, 1]);
+        let values = values.as_any().downcast_ref::<Float64Array>().ok_or(
+            PropertyError::SnapshotDescriptorMismatch {
+                reason: "rekeyed float layer has wrong type",
+            },
+        )?;
+        assert_eq!(values.values(), &[9.5, 1.5]);
+        let default = default
+            .as_ref()
+            .and_then(|array| array.as_any().downcast_ref::<Float64Array>())
+            .ok_or(PropertyError::SnapshotDescriptorMismatch {
+                reason: "rekeyed sparse default has wrong type",
+            })?;
+        assert!((default.value(0) - 2.5).abs() <= f64::EPSILON);
+        assert_eq!(rekeyed.len(), 2);
         Ok(())
     }
 
@@ -2780,13 +4055,13 @@ mod tests {
     #[test]
     fn identity_snapshot_sections_validate() -> Result<(), Box<dyn Error>> {
         let modes = [
-            IdentityModeRecord::local_equals_canonical(IdFamily::Element, 3),
-            IdentityModeRecord::explicit_u32_map(IdFamily::Relation, 2),
+            IdentityModeRecord::<u32>::local_equals_canonical(IdFamily::Element, 3)?,
+            IdentityModeRecord::<u32>::explicit_map(IdFamily::Relation, 2)?,
         ];
         let maps = [U32::<LE>::new(10), U32::<LE>::new(12)];
         let mut builder = SnapshotBuilder::new();
         builder.add_section_typed(
-            SNAPSHOT_KIND_IDENTITY_MODES,
+            SNAPSHOT_KIND_IDENTITY_MODES_U32,
             SNAPSHOT_PROPERTY_VERSION,
             &modes,
         )?;
@@ -2797,8 +4072,59 @@ mod tests {
         )?;
         let bytes = builder.finish()?;
         let snapshot = Snapshot::open(&bytes)?;
-        let summary = validate_identity_snapshot(&snapshot)?;
+        let summary = validate_identity_snapshot::<u32>(&snapshot)?;
         assert_eq!(summary.records.len(), 2);
+        Ok(())
+    }
+
+    /// Identity map section validation follows the selected canonical ID width.
+    #[test]
+    fn identity_snapshot_sections_validate_u16_u32_and_u64() -> Result<(), Box<dyn Error>> {
+        let modes_u16 = [IdentityModeRecord::<u16>::explicit_map(
+            IdFamily::Element,
+            2,
+        )?];
+        let maps_u16 = [U16::<LE>::new(1), U16::<LE>::new(3)];
+        let mut builder = SnapshotBuilder::new();
+        builder.add_section_typed(
+            SNAPSHOT_KIND_IDENTITY_MODES_U16,
+            SNAPSHOT_PROPERTY_VERSION,
+            &modes_u16,
+        )?;
+        builder.add_section_typed(
+            SNAPSHOT_KIND_ELEMENT_IDENTITY_MAP_U16,
+            SNAPSHOT_PROPERTY_VERSION,
+            &maps_u16,
+        )?;
+        let bytes = builder.finish()?;
+        let snapshot = Snapshot::open(&bytes)?;
+        assert_eq!(
+            validate_identity_snapshot::<u16>(&snapshot)?.records.len(),
+            1
+        );
+
+        let modes_u64 = [IdentityModeRecord::<u64>::explicit_map(
+            IdFamily::Incidence,
+            2,
+        )?];
+        let maps_u64 = [U64::<LE>::new(10), U64::<LE>::new(12)];
+        let mut builder = SnapshotBuilder::new();
+        builder.add_section_typed(
+            SNAPSHOT_KIND_IDENTITY_MODES_U64,
+            SNAPSHOT_PROPERTY_VERSION,
+            &modes_u64,
+        )?;
+        builder.add_section_typed(
+            SNAPSHOT_KIND_INCIDENCE_IDENTITY_MAP_U64,
+            SNAPSHOT_PROPERTY_VERSION,
+            &maps_u64,
+        )?;
+        let bytes = builder.finish()?;
+        let snapshot = Snapshot::open(&bytes)?;
+        assert_eq!(
+            validate_identity_snapshot::<u64>(&snapshot)?.records.len(),
+            1
+        );
         Ok(())
     }
 }
