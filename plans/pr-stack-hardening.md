@@ -20,7 +20,7 @@ This is a bottom-up stacked-PR repair plan. Each lower PR must be fixed and reba
 2. **Fix wire/index fundamentals before higher layers.** PR #1 must make CSR memory and snapshot widths explicit, portable, and future-proof.
 3. **Shrink property/build surfaces.** PR #4-#6 must make graph construction Arrow-free in the core feature set and must repair property/identity mapping after layout reordering.
 4. **Re-cut PageRank around a correct visible-state contract.** PR #7 must not leak rank mass, must reject duplicate states, and must split no-alloc scratch from alloc convenience APIs.
-5. **Curate aggregation layers.** PR #8 must use explicit re-exports and explicit feature costs. PR #9 must be removed from the merge stack and converted to a blocked follow-up until PR #1-#8 are corrected.
+5. **Curate aggregation layers.** PR #8 must use explicit re-exports and explicit feature costs. PR #9 is reviewed after PR #1-#8 as a standalone Python facade under `bindings/python`.
 6. **Update Shapes first in the implementation phase.** Before code edits, add/amend Shapes to record the architecture corrections below.
 
 ## Fixed implementation decisions
@@ -42,7 +42,7 @@ These decisions remove discretion from the implementation handoff.
 - PageRank uses induced visible-state semantics: transitions to invisible states are ignored, and rows with no visible outgoing targets are dangling.
 - `PageRankScalar` remains a generic public Rust trait with explicit documented numeric laws; Rust PageRank APIs do not default to `f64`.
 - Umbrella crate features use explicit names for Arrow/property costs: `property-arrow`, `graph-property-arrow`, and `hyper-property-arrow`.
-- PR #9 Python facade is not merged in this stack. The Python branch is kept as a follow-up branch after PR #1-#8 land.
+- PR #9 Python facade is a standalone follow-up branch after PR #1-#8, outside the root Rust workspace.
 
 ## Genericity policy
 
@@ -130,12 +130,12 @@ These rules apply to every phase below.
 
 ### Python facade
 
-- `crates/oxgraph-python/Cargo.toml`
-- `crates/oxgraph-python/src/lib.rs`
-- `crates/oxgraph-python/SAFETY.md`
-- `crates/oxgraph-python/pyproject.toml`
-- `crates/oxgraph-python/python/oxgraph/__init__.py`
-- `crates/oxgraph-python/tests/test_oxgraph.py`
+- `bindings/python/Cargo.toml`
+- `bindings/python/src/lib.rs`
+- `bindings/python/SAFETY.md`
+- `bindings/python/pyproject.toml`
+- `bindings/python/python/oxgraph/__init__.py`
+- `bindings/python/tests/test_oxgraph.py`
 
 ## Reuse
 
@@ -159,7 +159,7 @@ These rules apply to every phase below.
 - [ ] In amendment 12, update shape 21 snapshot identity/property sections to state that property arrays are keyed by **snapshot-local IDs**, and identity maps are mandatory whenever local and canonical order differ.
 - [ ] In amendment 12, update shape 20 construction builders to split core append/freeze builders from Arrow/property/snapshot export helpers.
 - [ ] In amendment 12, update shape 22 PageRank algorithms to define visible-state semantics and duplicate-state rejection.
-- [ ] Create `.shapes/amendments/13-python-facade-blocked.yaml` marking PR #9 as a blocked follow-up outside the current merge stack.
+- [ ] Create `.shapes/amendments/13-python-facade-blocked.yaml` for the initial PR #1-#8 deferral and `.shapes/amendments/14-python-facade-review-ready-follow-up.yaml` for the standalone PR #9 review scope.
 - [ ] Update `docs/architecture.md` with the corrected dependency graph and snapshot/property/PageRank contracts.
 - [ ] Update each PR body after code changes so the review focus matches the new scope.
 
@@ -724,18 +724,18 @@ Completion criteria:
 
 ### Phase 7 — PR #9: Python facade follow-up handling
 
-PR #9 is removed from the current merge stack. It remains open only as a draft/blocked follow-up branch after PR #1-#8 are corrected and merged. No Python code lands in this stack.
+PR #9 is reviewed after the Rust hardening stack as a standalone Python facade branch. No Python code lands in PR #1-#8, and the Python package stays outside the root Rust workspace member set.
 
 Implementation checklist for the current stack:
 
-- [ ] Mark PR #9 as draft with the title prefix `Draft: blocked on PR #1-#8 hardening`.
+- [ ] Mark PR #9 ready for review after `just python-ci` passes.
 - [ ] Remove `oxgraph-python` from the active merge stack for PR #1-#8.
 - [ ] Do not include `oxgraph-python` in root `Cargo.toml` workspace members for the PR #1-#8 merge path.
 - [ ] Remove Python/PyO3 lockfile additions from the PR #1-#8 merge path.
 - [ ] Update `docs/architecture.md` to state that Python is a follow-up facade after Rust contracts stabilize.
-- [ ] Add a Python-facade Shapes amendment that sets the Python facade work to blocked on stack hardening.
+- [ ] Add a Python-facade Shapes amendment that records the review-ready standalone facade scope.
 
-Required design for the future Python follow-up PR:
+Required design for the Python follow-up PR:
 
 - [ ] Place bindings under `bindings/python` with a standalone `Cargo.toml` and `pyproject.toml`; do not add it to the Rust workspace default member set.
 - [ ] Add `just python-build` with exact command: `cd bindings/python && uv run maturin develop`.
@@ -751,8 +751,8 @@ Required design for the future Python follow-up PR:
 Completion criteria:
 
 - [ ] PR #1-#8 merge without PyO3 or Python build requirements.
-- [ ] PR #9 cannot be merged accidentally as part of the current stack.
-- [ ] The future Python acceptance criteria are explicit and testable.
+- [ ] PR #9 can be reviewed independently after PR #1-#8 without adding PyO3 to the Rust workspace.
+- [ ] The Python acceptance criteria are explicit and testable.
 
 ---
 
@@ -811,9 +811,9 @@ Completion criteria:
 - [ ] Keep Kani skips only for `oxgraph-property`, `oxgraph-graph-build`, `oxgraph-hyper-build`, and PageRank; each skip comment must name the exact proptest/fixture/bench files that cover the skipped contract.
 - [ ] `cargo +nightly miri test --workspace` for the PR #1-#8 Rust workspace.
 
-### Required Python gate for the future PR #9 follow-up
+### Required Python gate for PR #9
 
-- [ ] `just python-ci` from the future Python follow-up plan.
+- [ ] `just python-ci` from the Python follow-up plan.
 - [ ] Python tests run from a clean environment and build/import the native extension.
 - [ ] Python package metadata license is `MIT`.
 
@@ -844,6 +844,6 @@ The PR stack is ready for merge only when all items below are true:
 - [ ] PageRank scalar API is generic, law-documented, and has no default scalar type.
 - [ ] PageRank has proptests for mass, visibility, weights, and tier equivalence.
 - [ ] Umbrella re-exports are curated and feature dependency costs are explicit.
-- [ ] Python PR #9 is deferred as a draft/blocked follow-up and is not merged in the current stack.
+- [ ] Python PR #9 is standalone, review-ready, and not merged in PR #1-#8.
 - [ ] All PR descriptions and docs match the implemented architecture.
 - [ ] All verification commands listed above pass.

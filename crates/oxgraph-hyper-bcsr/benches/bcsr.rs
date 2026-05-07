@@ -21,7 +21,8 @@ use std::hint::black_box;
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use oxgraph_hyper::{DirectedHyperedgeParticipants, DirectedVertexSuccessors, IncidentHyperedges};
 use oxgraph_hyper_bcsr::{
-    BcsrHyperedgeId, BcsrHypergraph, BcsrSections, BcsrValidation, BcsrVertexId,
+    BcsrHyperedgeId, BcsrHypergraph, BcsrNativeHypergraph, BcsrSections, BcsrValidation,
+    BcsrVertexId,
 };
 
 /// Fixed head and tail size used by the synthetic regular hypergraph.
@@ -53,7 +54,7 @@ struct RegularSlices {
 
 impl RegularSlices {
     /// Returns a [`BcsrSections`] borrowing this fixture.
-    fn sections(&self) -> BcsrSections<'_, u32> {
+    fn sections(&self) -> BcsrSections<'_, u32, u32, u32> {
         BcsrSections {
             head_offsets: &self.head_offsets,
             head_participants: &self.head_participants,
@@ -152,7 +153,7 @@ fn push_vertex_major(vertex_count: u32, slices: &mut RegularSlices) {
 }
 
 /// Walks every hyperedge's head and tail and returns a checksum.
-fn walk_hyperedges(view: &BcsrHypergraph<'_>) -> u64 {
+fn walk_hyperedges(view: &BcsrNativeHypergraph<'_, u32, u32, u32>) -> u64 {
     let mut checksum = 0u64;
     let h_count = match u32::try_from(view.hyperedge_count()) {
         Ok(value) => value,
@@ -170,7 +171,7 @@ fn walk_hyperedges(view: &BcsrHypergraph<'_>) -> u64 {
 }
 
 /// Walks every vertex's incident hyperedges and returns a checksum.
-fn walk_incident(view: &BcsrHypergraph<'_>) -> u64 {
+fn walk_incident(view: &BcsrNativeHypergraph<'_, u32, u32, u32>) -> u64 {
     let mut checksum = 0u64;
     let v_count = match u32::try_from(view.vertex_count()) {
         Ok(value) => value,
@@ -185,7 +186,7 @@ fn walk_incident(view: &BcsrHypergraph<'_>) -> u64 {
 }
 
 /// Walks every vertex's directed successors and returns a checksum.
-fn walk_successors(view: &BcsrHypergraph<'_>) -> u64 {
+fn walk_successors(view: &BcsrNativeHypergraph<'_, u32, u32, u32>) -> u64 {
     let mut checksum = 0u64;
     let v_count = match u32::try_from(view.vertex_count()) {
         Ok(value) => value,
@@ -205,7 +206,7 @@ fn pairs_throughput(vertex_count: u32) -> u64 {
 }
 
 /// Opens a borrowed view over `slices` or panics with a clear message.
-fn open_view(slices: &RegularSlices) -> BcsrHypergraph<'_> {
+fn open_view(slices: &RegularSlices) -> BcsrNativeHypergraph<'_, u32, u32, u32> {
     match BcsrHypergraph::open(slices.sections()) {
         Ok(value) => value,
         Err(error) => panic!("regular fixture invalid: {error:?}"),

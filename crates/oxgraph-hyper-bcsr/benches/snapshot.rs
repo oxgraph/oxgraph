@@ -15,11 +15,12 @@ use std::hint::black_box;
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use oxgraph_hyper::DirectedVertexSuccessors;
 use oxgraph_hyper_bcsr::{
-    BcsrHypergraph, BcsrVertexId, SNAPSHOT_KIND_BCSR_HEAD_OFFSETS,
-    SNAPSHOT_KIND_BCSR_HEAD_PARTICIPANTS, SNAPSHOT_KIND_BCSR_TAIL_OFFSETS,
-    SNAPSHOT_KIND_BCSR_TAIL_PARTICIPANTS, SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_HYPEREDGES,
-    SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_OFFSETS, SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_HYPEREDGES,
-    SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_OFFSETS,
+    BcsrSnapshotHypergraph, BcsrVertexId, SNAPSHOT_KIND_BCSR_HEAD_OFFSETS_U32,
+    SNAPSHOT_KIND_BCSR_HEAD_PARTICIPANTS_U32, SNAPSHOT_KIND_BCSR_TAIL_OFFSETS_U32,
+    SNAPSHOT_KIND_BCSR_TAIL_PARTICIPANTS_U32, SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_HYPEREDGES_U32,
+    SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_OFFSETS_U32,
+    SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_HYPEREDGES_U32,
+    SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_OFFSETS_U32,
 };
 use oxgraph_snapshot::{Snapshot, SnapshotBuilder};
 
@@ -131,30 +132,30 @@ fn fill_vertex_major(vertex_count: u32, words: &mut SectionWords) {
 fn encode_snapshot(words: &SectionWords) -> Vec<u8> {
     let mut builder = SnapshotBuilder::new();
     let entries: [(u32, &[u32]); 8] = [
-        (SNAPSHOT_KIND_BCSR_HEAD_OFFSETS, &words.head_offsets),
+        (SNAPSHOT_KIND_BCSR_HEAD_OFFSETS_U32, &words.head_offsets),
         (
-            SNAPSHOT_KIND_BCSR_HEAD_PARTICIPANTS,
+            SNAPSHOT_KIND_BCSR_HEAD_PARTICIPANTS_U32,
             &words.head_participants,
         ),
-        (SNAPSHOT_KIND_BCSR_TAIL_OFFSETS, &words.tail_offsets),
+        (SNAPSHOT_KIND_BCSR_TAIL_OFFSETS_U32, &words.tail_offsets),
         (
-            SNAPSHOT_KIND_BCSR_TAIL_PARTICIPANTS,
+            SNAPSHOT_KIND_BCSR_TAIL_PARTICIPANTS_U32,
             &words.tail_participants,
         ),
         (
-            SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_OFFSETS,
+            SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_OFFSETS_U32,
             &words.vertex_outgoing_offsets,
         ),
         (
-            SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_HYPEREDGES,
+            SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_HYPEREDGES_U32,
             &words.vertex_outgoing_hyperedges,
         ),
         (
-            SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_OFFSETS,
+            SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_OFFSETS_U32,
             &words.vertex_incoming_offsets,
         ),
         (
-            SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_HYPEREDGES,
+            SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_HYPEREDGES_U32,
             &words.vertex_incoming_hyperedges,
         ),
     ];
@@ -170,9 +171,7 @@ fn encode_snapshot(words: &SectionWords) -> Vec<u8> {
 }
 
 /// Walks every vertex's successor expansion and returns a checksum.
-fn walk_successors(
-    view: &BcsrHypergraph<'_, zerocopy::byteorder::U32<zerocopy::byteorder::LE>>,
-) -> u64 {
+fn walk_successors(view: &BcsrSnapshotHypergraph<'_, u32, u32, u32>) -> u64 {
     let mut checksum = 0u64;
     let v_count = match u32::try_from(view.vertex_count()) {
         Ok(value) => value,
@@ -215,8 +214,8 @@ fn bench_from_snapshot(c: &mut Criterion) {
 /// Opens `snapshot` as a [`BcsrHypergraph`] or panics with a clear message.
 fn open_snapshot_view<'view>(
     snapshot: &Snapshot<'view>,
-) -> BcsrHypergraph<'view, zerocopy::byteorder::U32<zerocopy::byteorder::LE>> {
-    match BcsrHypergraph::from_snapshot(snapshot) {
+) -> BcsrSnapshotHypergraph<'view, u32, u32, u32> {
+    match BcsrSnapshotHypergraph::<u32, u32, u32>::from_snapshot(snapshot) {
         Ok(value) => value,
         Err(error) => panic!("benchmark bcsr invalid: {error:?}"),
     }

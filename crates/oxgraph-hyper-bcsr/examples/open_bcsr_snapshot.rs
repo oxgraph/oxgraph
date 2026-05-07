@@ -9,11 +9,13 @@
 
 use oxgraph_hyper::{DirectedHyperedgeParticipants, DirectedVertexSuccessors};
 use oxgraph_hyper_bcsr::{
-    BcsrHyperedgeId, BcsrHypergraph, BcsrSnapshotError, BcsrVertexId,
-    SNAPSHOT_KIND_BCSR_HEAD_OFFSETS, SNAPSHOT_KIND_BCSR_HEAD_PARTICIPANTS,
-    SNAPSHOT_KIND_BCSR_TAIL_OFFSETS, SNAPSHOT_KIND_BCSR_TAIL_PARTICIPANTS,
-    SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_HYPEREDGES, SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_OFFSETS,
-    SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_HYPEREDGES, SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_OFFSETS,
+    BcsrHyperedgeId, BcsrSnapshotError, BcsrSnapshotHypergraph, BcsrVertexId,
+    SNAPSHOT_KIND_BCSR_HEAD_OFFSETS_U32, SNAPSHOT_KIND_BCSR_HEAD_PARTICIPANTS_U32,
+    SNAPSHOT_KIND_BCSR_TAIL_OFFSETS_U32, SNAPSHOT_KIND_BCSR_TAIL_PARTICIPANTS_U32,
+    SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_HYPEREDGES_U32,
+    SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_OFFSETS_U32,
+    SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_HYPEREDGES_U32,
+    SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_OFFSETS_U32,
 };
 use oxgraph_snapshot::{Snapshot, SnapshotBuilder, SnapshotError};
 
@@ -67,24 +69,24 @@ fn main() -> Result<(), DemoError> {
 
     let mut builder = SnapshotBuilder::new();
     let entries: [(u32, &[u32]); 8] = [
-        (SNAPSHOT_KIND_BCSR_HEAD_OFFSETS, &head_offsets),
-        (SNAPSHOT_KIND_BCSR_HEAD_PARTICIPANTS, &head_participants),
-        (SNAPSHOT_KIND_BCSR_TAIL_OFFSETS, &tail_offsets),
-        (SNAPSHOT_KIND_BCSR_TAIL_PARTICIPANTS, &tail_participants),
+        (SNAPSHOT_KIND_BCSR_HEAD_OFFSETS_U32, &head_offsets),
+        (SNAPSHOT_KIND_BCSR_HEAD_PARTICIPANTS_U32, &head_participants),
+        (SNAPSHOT_KIND_BCSR_TAIL_OFFSETS_U32, &tail_offsets),
+        (SNAPSHOT_KIND_BCSR_TAIL_PARTICIPANTS_U32, &tail_participants),
         (
-            SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_OFFSETS,
+            SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_OFFSETS_U32,
             &vertex_outgoing_offsets,
         ),
         (
-            SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_HYPEREDGES,
+            SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_HYPEREDGES_U32,
             &vertex_outgoing_hyperedges,
         ),
         (
-            SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_OFFSETS,
+            SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_OFFSETS_U32,
             &vertex_incoming_offsets,
         ),
         (
-            SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_HYPEREDGES,
+            SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_HYPEREDGES_U32,
             &vertex_incoming_hyperedges,
         ),
     ];
@@ -100,7 +102,7 @@ fn main() -> Result<(), DemoError> {
     println!("encoded snapshot: {} bytes", bytes.len());
 
     let snapshot = Snapshot::open(&bytes)?;
-    let view = BcsrHypergraph::from_snapshot(&snapshot)?;
+    let view = BcsrSnapshotHypergraph::<u32, u32, u32>::from_snapshot(&snapshot)?;
     println!(
         "hypergraph: {} vertices, {} hyperedges",
         view.vertex_count(),

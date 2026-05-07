@@ -2,11 +2,14 @@
 
 use oxgraph_hyper::DirectedHyperedgeParticipants;
 use oxgraph_hyper_bcsr::{
-    BcsrError, BcsrHyperedgeId, BcsrHypergraph, BcsrSection, BcsrSnapshotError, BcsrVertexId,
-    SNAPSHOT_KIND_BCSR_HEAD_OFFSETS, SNAPSHOT_KIND_BCSR_HEAD_PARTICIPANTS,
-    SNAPSHOT_KIND_BCSR_TAIL_OFFSETS, SNAPSHOT_KIND_BCSR_TAIL_PARTICIPANTS,
-    SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_HYPEREDGES, SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_OFFSETS,
-    SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_HYPEREDGES, SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_OFFSETS,
+    BcsrError, BcsrHyperedgeId, BcsrSection, BcsrSnapshotError, BcsrSnapshotHypergraph,
+    BcsrVertexId, SNAPSHOT_KIND_BCSR_HEAD_OFFSETS_U32, SNAPSHOT_KIND_BCSR_HEAD_OFFSETS_U64,
+    SNAPSHOT_KIND_BCSR_HEAD_PARTICIPANTS_U32, SNAPSHOT_KIND_BCSR_TAIL_OFFSETS_U32,
+    SNAPSHOT_KIND_BCSR_TAIL_OFFSETS_U64, SNAPSHOT_KIND_BCSR_TAIL_PARTICIPANTS_U16,
+    SNAPSHOT_KIND_BCSR_TAIL_PARTICIPANTS_U32, SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_HYPEREDGES_U32,
+    SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_OFFSETS_U32, SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_OFFSETS_U64,
+    SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_HYPEREDGES_U32,
+    SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_OFFSETS_U32, SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_OFFSETS_U64,
 };
 use oxgraph_snapshot::{Snapshot, SnapshotBuilder, SnapshotError};
 
@@ -47,6 +50,11 @@ fn words_to_bytes(words: &[u32]) -> Vec<u8> {
     words.iter().flat_map(|word| word.to_le_bytes()).collect()
 }
 
+/// Encodes `[u64]` words as little-endian bytes.
+fn words64_to_bytes(words: &[u64]) -> Vec<u8> {
+    words.iter().flat_map(|word| word.to_le_bytes()).collect()
+}
+
 /// Hand-built canonical bipartite-CSR fixture as raw u32 word vectors.
 struct Fixture {
     head_offsets: Vec<u32>,
@@ -78,30 +86,30 @@ impl Fixture {
 fn build_snapshot(fixture: &Fixture) -> Vec<u8> {
     let mut builder = SnapshotBuilder::new();
     let entries: [(u32, &[u32]); 8] = [
-        (SNAPSHOT_KIND_BCSR_HEAD_OFFSETS, &fixture.head_offsets),
+        (SNAPSHOT_KIND_BCSR_HEAD_OFFSETS_U32, &fixture.head_offsets),
         (
-            SNAPSHOT_KIND_BCSR_HEAD_PARTICIPANTS,
+            SNAPSHOT_KIND_BCSR_HEAD_PARTICIPANTS_U32,
             &fixture.head_participants,
         ),
-        (SNAPSHOT_KIND_BCSR_TAIL_OFFSETS, &fixture.tail_offsets),
+        (SNAPSHOT_KIND_BCSR_TAIL_OFFSETS_U32, &fixture.tail_offsets),
         (
-            SNAPSHOT_KIND_BCSR_TAIL_PARTICIPANTS,
+            SNAPSHOT_KIND_BCSR_TAIL_PARTICIPANTS_U32,
             &fixture.tail_participants,
         ),
         (
-            SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_OFFSETS,
+            SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_OFFSETS_U32,
             &fixture.vertex_outgoing_offsets,
         ),
         (
-            SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_HYPEREDGES,
+            SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_HYPEREDGES_U32,
             &fixture.vertex_outgoing_hyperedges,
         ),
         (
-            SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_OFFSETS,
+            SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_OFFSETS_U32,
             &fixture.vertex_incoming_offsets,
         ),
         (
-            SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_HYPEREDGES,
+            SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_HYPEREDGES_U32,
             &fixture.vertex_incoming_hyperedges,
         ),
     ];
@@ -121,7 +129,7 @@ fn from_snapshot_round_trips_canonical_fixture() -> Result<(), FixtureError> {
     let fixture = Fixture::canonical();
     let bytes = build_snapshot(&fixture);
     let snapshot = Snapshot::open(&bytes)?;
-    let view = BcsrHypergraph::from_snapshot(&snapshot)?;
+    let view = BcsrSnapshotHypergraph::<u32, u32, u32>::from_snapshot(&snapshot)?;
 
     assert_eq!(view.vertex_count(), 3);
     assert_eq!(view.hyperedge_count(), 2);
@@ -131,33 +139,119 @@ fn from_snapshot_round_trips_canonical_fixture() -> Result<(), FixtureError> {
 }
 
 #[test]
+fn opens_mixed_u32_vertices_relations_u64_incidences() -> Result<(), FixtureError> {
+    let fixture = Fixture::canonical();
+    let head_offsets: Vec<u64> = fixture
+        .head_offsets
+        .iter()
+        .copied()
+        .map(u64::from)
+        .collect();
+    let tail_offsets: Vec<u64> = fixture
+        .tail_offsets
+        .iter()
+        .copied()
+        .map(u64::from)
+        .collect();
+    let vertex_outgoing_offsets: Vec<u64> = fixture
+        .vertex_outgoing_offsets
+        .iter()
+        .copied()
+        .map(u64::from)
+        .collect();
+    let vertex_incoming_offsets: Vec<u64> = fixture
+        .vertex_incoming_offsets
+        .iter()
+        .copied()
+        .map(u64::from)
+        .collect();
+
+    let mut builder = SnapshotBuilder::new();
+    let offset_entries: [(u32, &[u64]); 4] = [
+        (SNAPSHOT_KIND_BCSR_HEAD_OFFSETS_U64, &head_offsets),
+        (SNAPSHOT_KIND_BCSR_TAIL_OFFSETS_U64, &tail_offsets),
+        (
+            SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_OFFSETS_U64,
+            &vertex_outgoing_offsets,
+        ),
+        (
+            SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_OFFSETS_U64,
+            &vertex_incoming_offsets,
+        ),
+    ];
+    for (kind, words) in offset_entries {
+        if let Err(error) = builder.add_section(kind, 0, 3, words64_to_bytes(words)) {
+            panic!("section 0x{kind:04x}: {error:?}");
+        }
+    }
+    let value_entries: [(u32, &[u32]); 4] = [
+        (
+            SNAPSHOT_KIND_BCSR_HEAD_PARTICIPANTS_U32,
+            &fixture.head_participants,
+        ),
+        (
+            SNAPSHOT_KIND_BCSR_TAIL_PARTICIPANTS_U32,
+            &fixture.tail_participants,
+        ),
+        (
+            SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_HYPEREDGES_U32,
+            &fixture.vertex_outgoing_hyperedges,
+        ),
+        (
+            SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_HYPEREDGES_U32,
+            &fixture.vertex_incoming_hyperedges,
+        ),
+    ];
+    for (kind, words) in value_entries {
+        if let Err(error) = builder.add_section(kind, 0, 2, words_to_bytes(words)) {
+            panic!("section 0x{kind:04x}: {error:?}");
+        }
+    }
+    let bytes = match builder.finish() {
+        Ok(value) => value,
+        Err(error) => panic!("builder finish: {error:?}"),
+    };
+    let snapshot = Snapshot::open(&bytes)?;
+    let view = BcsrSnapshotHypergraph::<u32, u32, u64>::from_snapshot(&snapshot)?;
+
+    assert_eq!(view.vertex_count(), 3);
+    assert_eq!(view.hyperedge_count(), 2);
+    assert_eq!(
+        view.target_participants(BcsrHyperedgeId(0))
+            .collect::<Vec<_>>(),
+        vec![BcsrVertexId(1), BcsrVertexId(2)]
+    );
+    Ok(())
+}
+
+#[test]
 fn rejects_missing_head_offsets_section() -> Result<(), FixtureError> {
     let fixture = Fixture::canonical();
     let mut builder = SnapshotBuilder::new();
     let entries: [(u32, &[u32]); 7] = [
         (
-            SNAPSHOT_KIND_BCSR_HEAD_PARTICIPANTS,
+            SNAPSHOT_KIND_BCSR_HEAD_PARTICIPANTS_U32,
             &fixture.head_participants,
         ),
-        (SNAPSHOT_KIND_BCSR_TAIL_OFFSETS, &fixture.tail_offsets),
+        (SNAPSHOT_KIND_BCSR_TAIL_OFFSETS_U32, &fixture.tail_offsets),
         (
-            SNAPSHOT_KIND_BCSR_TAIL_PARTICIPANTS,
+            SNAPSHOT_KIND_BCSR_TAIL_PARTICIPANTS_U32,
             &fixture.tail_participants,
         ),
         (
-            SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_OFFSETS,
+            SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_OFFSETS_U32,
             &fixture.vertex_outgoing_offsets,
         ),
         (
-            SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_HYPEREDGES,
+            SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_HYPEREDGES_U32,
             &fixture.vertex_outgoing_hyperedges,
         ),
         (
-            SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_OFFSETS,
+            SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_OFFSETS_U32,
             &fixture.vertex_incoming_offsets,
         ),
         (
-            SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_HYPEREDGES,
+            SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_HYPEREDGES_U32,
             &fixture.vertex_incoming_hyperedges,
         ),
     ];
@@ -171,12 +265,77 @@ fn rejects_missing_head_offsets_section() -> Result<(), FixtureError> {
         Err(error) => panic!("builder finish: {error:?}"),
     };
     let snapshot = Snapshot::open(&bytes)?;
-    let result = BcsrHypergraph::from_snapshot(&snapshot);
+    let result = BcsrSnapshotHypergraph::<u32, u32, u32>::from_snapshot(&snapshot);
     let Err(BcsrSnapshotError::MissingSection { section, kind }) = result else {
         panic!("expected MissingSection, got {result:?}");
     };
     assert_eq!(section, BcsrSection::HeadOffsets);
-    assert_eq!(kind, SNAPSHOT_KIND_BCSR_HEAD_OFFSETS);
+    assert_eq!(kind, SNAPSHOT_KIND_BCSR_HEAD_OFFSETS_U32);
+    Ok(())
+}
+
+#[test]
+fn rejects_wrong_offset_width() -> Result<(), FixtureError> {
+    let fixture = Fixture::canonical();
+    let bytes = build_snapshot(&fixture);
+    let snapshot = Snapshot::open(&bytes)?;
+    let result = BcsrSnapshotHypergraph::<u32, u32, u64>::from_snapshot(&snapshot);
+    let Err(BcsrSnapshotError::MissingSection { section, kind }) = result else {
+        panic!("expected MissingSection, got {result:?}");
+    };
+    assert_eq!(section, BcsrSection::HeadOffsets);
+    assert_eq!(kind, SNAPSHOT_KIND_BCSR_HEAD_OFFSETS_U64);
+    Ok(())
+}
+
+#[test]
+fn rejects_wrong_participant_width() -> Result<(), FixtureError> {
+    let fixture = Fixture::canonical();
+    let mut builder = SnapshotBuilder::new();
+    let entries: [(u32, &[u32]); 8] = [
+        (SNAPSHOT_KIND_BCSR_HEAD_OFFSETS_U32, &fixture.head_offsets),
+        (
+            SNAPSHOT_KIND_BCSR_HEAD_PARTICIPANTS_U32,
+            &fixture.head_participants,
+        ),
+        (SNAPSHOT_KIND_BCSR_TAIL_OFFSETS_U32, &fixture.tail_offsets),
+        (
+            SNAPSHOT_KIND_BCSR_TAIL_PARTICIPANTS_U16,
+            &fixture.tail_participants,
+        ),
+        (
+            SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_OFFSETS_U32,
+            &fixture.vertex_outgoing_offsets,
+        ),
+        (
+            SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_HYPEREDGES_U32,
+            &fixture.vertex_outgoing_hyperedges,
+        ),
+        (
+            SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_OFFSETS_U32,
+            &fixture.vertex_incoming_offsets,
+        ),
+        (
+            SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_HYPEREDGES_U32,
+            &fixture.vertex_incoming_hyperedges,
+        ),
+    ];
+    for (kind, words) in entries {
+        if let Err(error) = builder.add_section(kind, 0, 2, words_to_bytes(words)) {
+            panic!("section 0x{kind:04x}: {error:?}");
+        }
+    }
+    let bytes = match builder.finish() {
+        Ok(value) => value,
+        Err(error) => panic!("builder finish: {error:?}"),
+    };
+    let snapshot = Snapshot::open(&bytes)?;
+    let result = BcsrSnapshotHypergraph::<u32, u32, u32>::from_snapshot(&snapshot);
+    let Err(BcsrSnapshotError::MissingSection { section, kind }) = result else {
+        panic!("expected MissingSection, got {result:?}");
+    };
+    assert_eq!(section, BcsrSection::TailParticipants);
+    assert_eq!(kind, SNAPSHOT_KIND_BCSR_TAIL_PARTICIPANTS_U32);
     Ok(())
 }
 
@@ -186,7 +345,7 @@ fn rejects_validation_failure_through_snapshot() -> Result<(), FixtureError> {
     fixture.head_participants[0] = 99;
     let bytes = build_snapshot(&fixture);
     let snapshot = Snapshot::open(&bytes)?;
-    let result = BcsrHypergraph::from_snapshot(&snapshot);
+    let result = BcsrSnapshotHypergraph::<u32, u32, u32>::from_snapshot(&snapshot);
     let Err(BcsrSnapshotError::Bcsr(BcsrError::VertexOutOfRange { vertex: 99, .. })) = result
     else {
         panic!("expected Bcsr(VertexOutOfRange), got {result:?}");

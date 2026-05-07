@@ -8,7 +8,7 @@
 use crate::{
     error::{BcsrError, BcsrRoleSide, BcsrSection},
     sections::BcsrSections,
-    word::BcsrWord,
+    word::{BcsrIndex, BcsrWord},
 };
 
 /// Validation depth applied at view open time.
@@ -45,16 +45,16 @@ pub enum BcsrValidation {
 #[derive(Clone, Copy, Debug)]
 pub(in crate::internal) struct DerivedCounts {
     /// Number of vertices visible in this view.
-    pub(in crate::internal) vertex_count: u32,
+    pub(in crate::internal) vertex_count: usize,
     /// Number of hyperedges visible in this view.
-    pub(in crate::internal) hyperedge_count: u32,
+    pub(in crate::internal) hyperedge_count: usize,
     /// Number of outgoing incidences (`P_head == P_outgoing`).
-    pub(in crate::internal) p_outgoing: u32,
+    pub(in crate::internal) p_outgoing: usize,
     /// Number of incoming incidences (`P_tail == P_incoming`).
-    pub(in crate::internal) p_incoming: u32,
+    pub(in crate::internal) p_incoming: usize,
     /// Total incidence count (`P_outgoing + P_incoming`). Validation
-    /// guarantees this fits in `u32`.
-    pub(in crate::internal) total_incidences: u32,
+    /// guarantees this fits in `usize`.
+    pub(in crate::internal) total_incidences: usize,
 }
 
 /// Validates the eight bipartite-CSR section payloads.
@@ -71,10 +71,15 @@ pub(in crate::internal) struct DerivedCounts {
 /// At [`BcsrValidation::Layout`] the cost is
 /// `O(P_head + P_tail + P_outgoing + P_incoming)`. [`BcsrValidation::Strict`]
 /// adds `O((P_head + P_tail) · log d)` for the cross-direction walk.
-pub(in crate::internal) fn validate_sections<Word: BcsrWord>(
-    sections: &BcsrSections<'_, Word>,
+pub(in crate::internal) fn validate_sections<OffsetWord, VertexWord, RelationWord>(
+    sections: &BcsrSections<'_, OffsetWord, VertexWord, RelationWord>,
     level: BcsrValidation,
-) -> Result<DerivedCounts, BcsrError> {
+) -> Result<DerivedCounts, BcsrError>
+where
+    OffsetWord: BcsrWord,
+    VertexWord: BcsrWord,
+    RelationWord: BcsrWord,
+{
     let counts = derive_counts(sections)?;
     validate_all_offsets(sections, counts)?;
     validate_total_lengths(sections)?;
@@ -88,9 +93,14 @@ pub(in crate::internal) fn validate_sections<Word: BcsrWord>(
 
 /// Derives `vertex_count`, `hyperedge_count`, `P_outgoing`, `P_incoming`
 /// after checking offset slice lengths agree pairwise.
-fn derive_counts<Word: BcsrWord>(
-    sections: &BcsrSections<'_, Word>,
-) -> Result<DerivedCounts, BcsrError> {
+fn derive_counts<OffsetWord, VertexWord, RelationWord>(
+    sections: &BcsrSections<'_, OffsetWord, VertexWord, RelationWord>,
+) -> Result<DerivedCounts, BcsrError>
+where
+    OffsetWord: BcsrWord,
+    VertexWord: BcsrWord,
+    RelationWord: BcsrWord,
+{
     let head_len = sections.head_offsets.len();
     let tail_len = sections.tail_offsets.len();
     if head_len != tail_len {
@@ -110,8 +120,8 @@ fn derive_counts<Word: BcsrWord>(
 
     let hyperedge_count = derive_count_from_offsets(head_len, BcsrSection::HeadOffsets)?;
     let vertex_count = derive_count_from_offsets(outgoing_len, BcsrSection::VertexOutgoingOffsets)?;
-    let p_outgoing = u32_try_from_usize(sections.vertex_outgoing_hyperedges.len())?;
-    let p_incoming = u32_try_from_usize(sections.vertex_incoming_hyperedges.len())?;
+    let p_outgoing = sections.vertex_outgoing_hyperedges.len();
+    let p_incoming = sections.vertex_incoming_hyperedges.len();
     let total_incidences =
         p_outgoing
             .checked_add(p_incoming)
@@ -129,9 +139,11 @@ fn derive_counts<Word: BcsrWord>(
     })
 }
 
-/// Returns `(offsets.len() - 1) as u32` after checking length is non-zero
-/// and `len - 1` fits in `u32`.
-fn derive_count_from_offsets(offsets_len: usize, section: BcsrSection) -> Result<u32, BcsrError> {
+/// Returns `offsets.len() - 1` after checking length is non-zero.
+const fn derive_count_from_offsets(
+    offsets_len: usize,
+    section: BcsrSection,
+) -> Result<usize, BcsrError> {
     if offsets_len == 0 {
         return Err(BcsrError::OffsetLength {
             section,
@@ -139,25 +151,19 @@ fn derive_count_from_offsets(offsets_len: usize, section: BcsrSection) -> Result
             actual: 0,
         });
     }
-    u32_try_from_usize(offsets_len - 1)
-}
-
-/// Converts a `usize` into a `u32`, returning [`BcsrError::UsizeOverflow`]
-/// when the value cannot be represented.
-fn u32_try_from_usize(value: usize) -> Result<u32, BcsrError> {
-    u32::try_from(value).map_err(|_error| BcsrError::UsizeOverflow {
-        // The error variant carries `u32`; report the saturating value when
-        // the input does not fit. This branch is only taken on platforms
-        // where `usize` is wider than `u32`.
-        value: u32::MAX,
-    })
+    Ok(offsets_len - 1)
 }
 
 /// Validates each of the four offset arrays end-to-end.
-fn validate_all_offsets<Word: BcsrWord>(
-    sections: &BcsrSections<'_, Word>,
+fn validate_all_offsets<OffsetWord, VertexWord, RelationWord>(
+    sections: &BcsrSections<'_, OffsetWord, VertexWord, RelationWord>,
     counts: DerivedCounts,
-) -> Result<(), BcsrError> {
+) -> Result<(), BcsrError>
+where
+    OffsetWord: BcsrWord,
+    VertexWord: BcsrWord,
+    RelationWord: BcsrWord,
+{
     validate_one_offsets(
         sections.head_offsets,
         BcsrSection::HeadOffsets,
@@ -189,10 +195,10 @@ fn validate_all_offsets<Word: BcsrWord>(
 fn validate_one_offsets<Word: BcsrWord>(
     offsets: &[Word],
     section: BcsrSection,
-    count: u32,
+    count: usize,
     value_len: usize,
 ) -> Result<(), BcsrError> {
-    let expected = u32_to_usize(count)?
+    let expected = count
         .checked_add(1)
         .ok_or(BcsrError::OffsetLengthOverflow { count })?;
     if offsets.len() != expected {
@@ -203,8 +209,8 @@ fn validate_one_offsets<Word: BcsrWord>(
         });
     }
     check_offsets_monotonic(offsets, section)?;
-    let final_offset = offsets[offsets.len() - 1].get();
-    if u32_to_usize(final_offset)? != value_len {
+    let final_offset = index_to_usize(offsets[offsets.len() - 1].get())?;
+    if final_offset != value_len {
         return Err(BcsrError::FinalOffset {
             section,
             final_offset,
@@ -221,7 +227,7 @@ fn check_offsets_monotonic<Word: BcsrWord>(
 ) -> Result<(), BcsrError> {
     let mut previous = 0;
     for (index, offset_word) in offsets.iter().copied().enumerate() {
-        let offset = offset_word.get();
+        let offset = index_to_usize(offset_word.get())?;
         if index == 0 && offset != 0 {
             return Err(BcsrError::FirstOffset {
                 section,
@@ -243,9 +249,14 @@ fn check_offsets_monotonic<Word: BcsrWord>(
 
 /// Verifies that head/outgoing and tail/incoming totals agree, so the
 /// bipartite index has a single shared incidence count per direction.
-const fn validate_total_lengths<Word: BcsrWord>(
-    sections: &BcsrSections<'_, Word>,
-) -> Result<(), BcsrError> {
+const fn validate_total_lengths<OffsetWord, VertexWord, RelationWord>(
+    sections: &BcsrSections<'_, OffsetWord, VertexWord, RelationWord>,
+) -> Result<(), BcsrError>
+where
+    OffsetWord: BcsrWord,
+    VertexWord: BcsrWord,
+    RelationWord: BcsrWord,
+{
     if sections.head_participants.len() != sections.vertex_outgoing_hyperedges.len() {
         return Err(BcsrError::OutgoingTotalMismatch {
             head_participants_len: sections.head_participants.len(),
@@ -262,10 +273,15 @@ const fn validate_total_lengths<Word: BcsrWord>(
 }
 
 /// Verifies vertex IDs and hyperedge IDs in value sections are in range.
-fn validate_value_ranges<Word: BcsrWord>(
-    sections: &BcsrSections<'_, Word>,
+fn validate_value_ranges<OffsetWord, VertexWord, RelationWord>(
+    sections: &BcsrSections<'_, OffsetWord, VertexWord, RelationWord>,
     counts: DerivedCounts,
-) -> Result<(), BcsrError> {
+) -> Result<(), BcsrError>
+where
+    OffsetWord: BcsrWord,
+    VertexWord: BcsrWord,
+    RelationWord: BcsrWord,
+{
     check_vertex_values(
         sections.head_participants,
         BcsrSection::HeadParticipants,
@@ -292,10 +308,10 @@ fn validate_value_ranges<Word: BcsrWord>(
 fn check_vertex_values<Word: BcsrWord>(
     values: &[Word],
     section: BcsrSection,
-    vertex_count: u32,
+    vertex_count: usize,
 ) -> Result<(), BcsrError> {
     for (index, word) in values.iter().copied().enumerate() {
-        let vertex = word.get();
+        let vertex = index_to_usize(word.get())?;
         if vertex >= vertex_count {
             return Err(BcsrError::VertexOutOfRange {
                 section,
@@ -312,10 +328,10 @@ fn check_vertex_values<Word: BcsrWord>(
 fn check_hyperedge_values<Word: BcsrWord>(
     values: &[Word],
     section: BcsrSection,
-    hyperedge_count: u32,
+    hyperedge_count: usize,
 ) -> Result<(), BcsrError> {
     for (index, word) in values.iter().copied().enumerate() {
-        let hyperedge = word.get();
+        let hyperedge = index_to_usize(word.get())?;
         if hyperedge >= hyperedge_count {
             return Err(BcsrError::HyperedgeOutOfRange {
                 section,
@@ -330,9 +346,14 @@ fn check_hyperedge_values<Word: BcsrWord>(
 
 /// Verifies that values within every per-bucket range are strictly
 /// ascending. Bipartite-CSR uses set semantics inside each range.
-fn validate_within_range_sorted<Word: BcsrWord>(
-    sections: &BcsrSections<'_, Word>,
-) -> Result<(), BcsrError> {
+fn validate_within_range_sorted<OffsetWord, VertexWord, RelationWord>(
+    sections: &BcsrSections<'_, OffsetWord, VertexWord, RelationWord>,
+) -> Result<(), BcsrError>
+where
+    OffsetWord: BcsrWord,
+    VertexWord: BcsrWord,
+    RelationWord: BcsrWord,
+{
     check_strictly_ascending_buckets(
         sections.head_offsets,
         sections.head_participants,
@@ -357,17 +378,21 @@ fn validate_within_range_sorted<Word: BcsrWord>(
 
 /// Checks each `[offsets[i], offsets[i + 1])` bucket of `values` is
 /// strictly ascending.
-fn check_strictly_ascending_buckets<Word: BcsrWord>(
-    offsets: &[Word],
+fn check_strictly_ascending_buckets<OffsetWord, Word>(
+    offsets: &[OffsetWord],
     values: &[Word],
     section: BcsrSection,
-) -> Result<(), BcsrError> {
+) -> Result<(), BcsrError>
+where
+    OffsetWord: BcsrWord,
+    Word: BcsrWord,
+{
     if offsets.len() < 2 {
         return Ok(());
     }
     for window in offsets.windows(2) {
-        let start = u32_to_usize(window[0].get())?;
-        let end = u32_to_usize(window[1].get())?;
+        let start = index_to_usize(window[0].get())?;
+        let end = index_to_usize(window[1].get())?;
         check_strictly_ascending_range(values, start, end, section)?;
     }
     Ok(())
@@ -383,10 +408,10 @@ fn check_strictly_ascending_range<Word: BcsrWord>(
     if end <= start + 1 {
         return Ok(());
     }
-    let mut previous = values[start].get();
+    let mut previous = index_to_usize(values[start].get())?;
     for relative in 1..(end - start) {
         let index = start + relative;
-        let actual = values[index].get();
+        let actual = index_to_usize(values[index].get())?;
         if actual <= previous {
             return Err(BcsrError::NotStrictlyAscending {
                 section,
@@ -403,9 +428,14 @@ fn check_strictly_ascending_range<Word: BcsrWord>(
 /// Verifies that the hyperedge-major and vertex-major indexes describe the
 /// same multiset of incidences (Strict-tier check). Set semantics let the
 /// check use binary search; cost is `O((P_head + P_tail) · log d)`.
-fn validate_cross_direction<Word: BcsrWord>(
-    sections: &BcsrSections<'_, Word>,
-) -> Result<(), BcsrError> {
+fn validate_cross_direction<OffsetWord, VertexWord, RelationWord>(
+    sections: &BcsrSections<'_, OffsetWord, VertexWord, RelationWord>,
+) -> Result<(), BcsrError>
+where
+    OffsetWord: BcsrWord,
+    VertexWord: BcsrWord,
+    RelationWord: BcsrWord,
+{
     cross_direction_walk(
         sections.head_offsets,
         sections.head_participants,
@@ -424,20 +454,25 @@ fn validate_cross_direction<Word: BcsrWord>(
 
 /// Walks one side of the bipartite index hyperedge-by-hyperedge and confirms
 /// every `(h, v)` pair appears in the matching vertex-major bucket.
-fn cross_direction_walk<Word: BcsrWord>(
-    edge_offsets: &[Word],
-    edge_values: &[Word],
-    vertex_offsets: &[Word],
-    vertex_values: &[Word],
+fn cross_direction_walk<OffsetWord, VertexWord, RelationWord>(
+    edge_offsets: &[OffsetWord],
+    edge_values: &[VertexWord],
+    vertex_offsets: &[OffsetWord],
+    vertex_values: &[RelationWord],
     side: BcsrRoleSide,
-) -> Result<(), BcsrError> {
+) -> Result<(), BcsrError>
+where
+    OffsetWord: BcsrWord,
+    VertexWord: BcsrWord,
+    RelationWord: BcsrWord,
+{
     if edge_offsets.len() < 2 {
         return Ok(());
     }
     for hyperedge_index in 0..(edge_offsets.len() - 1) {
-        let start = u32_to_usize(edge_offsets[hyperedge_index].get())?;
-        let end = u32_to_usize(edge_offsets[hyperedge_index + 1].get())?;
-        let hyperedge = u32_try_from_usize(hyperedge_index)?;
+        let start = index_to_usize(edge_offsets[hyperedge_index].get())?;
+        let end = index_to_usize(edge_offsets[hyperedge_index + 1].get())?;
+        let hyperedge = hyperedge_index;
         cross_direction_check_bucket(CrossDirectionBucket {
             edge_values,
             start,
@@ -453,33 +488,38 @@ fn cross_direction_walk<Word: BcsrWord>(
 
 /// Parameter bundle for [`cross_direction_check_bucket`].
 #[derive(Clone, Copy)]
-struct CrossDirectionBucket<'a, Word> {
+struct CrossDirectionBucket<'a, OffsetWord, VertexWord, RelationWord> {
     /// Hyperedge-major value slice (`head_participants` or `tail_participants`).
-    edge_values: &'a [Word],
+    edge_values: &'a [VertexWord],
     /// Inclusive start of the hyperedge's range inside `edge_values`.
     start: usize,
     /// Exclusive end of the hyperedge's range inside `edge_values`.
     end: usize,
     /// Vertex-major offset slice on the matching side.
-    vertex_offsets: &'a [Word],
+    vertex_offsets: &'a [OffsetWord],
     /// Vertex-major hyperedge ID slice on the matching side.
-    vertex_values: &'a [Word],
+    vertex_values: &'a [RelationWord],
     /// Hyperedge ID being checked.
-    hyperedge: u32,
+    hyperedge: usize,
     /// Which side of the bipartite index this check covers.
     side: BcsrRoleSide,
 }
 
 /// Confirms every vertex in `edge_values[start..end]` lists `hyperedge`
 /// in its own vertex-major bucket.
-fn cross_direction_check_bucket<Word: BcsrWord>(
-    args: CrossDirectionBucket<'_, Word>,
-) -> Result<(), BcsrError> {
+fn cross_direction_check_bucket<OffsetWord, VertexWord, RelationWord>(
+    args: CrossDirectionBucket<'_, OffsetWord, VertexWord, RelationWord>,
+) -> Result<(), BcsrError>
+where
+    OffsetWord: BcsrWord,
+    VertexWord: BcsrWord,
+    RelationWord: BcsrWord,
+{
     for word in args.edge_values.iter().take(args.end).skip(args.start) {
-        let vertex = word.get();
-        let v_index = u32_to_usize(vertex)?;
-        let bucket_start = u32_to_usize(args.vertex_offsets[v_index].get())?;
-        let bucket_end = u32_to_usize(args.vertex_offsets[v_index + 1].get())?;
+        let vertex = index_to_usize(word.get())?;
+        let v_index = vertex;
+        let bucket_start = index_to_usize(args.vertex_offsets[v_index].get())?;
+        let bucket_end = index_to_usize(args.vertex_offsets[v_index + 1].get())?;
         if !bucket_contains(args.vertex_values, bucket_start, bucket_end, args.hyperedge) {
             return Err(BcsrError::CrossDirectionMismatch {
                 side: args.side,
@@ -493,36 +533,54 @@ fn cross_direction_check_bucket<Word: BcsrWord>(
 
 /// Returns whether `values[start..end]` contains `needle`. Values within the
 /// range are required to be strictly ascending, so binary search is correct.
-fn bucket_contains<Word: BcsrWord>(values: &[Word], start: usize, end: usize, needle: u32) -> bool {
+fn bucket_contains<Word: BcsrWord>(
+    values: &[Word],
+    start: usize,
+    end: usize,
+    needle: usize,
+) -> bool {
     let bucket = &values[start..end];
     bucket
-        .binary_search_by(|word| word.get().cmp(&needle))
+        .binary_search_by(|word| index_to_usize_validated(word.get()).cmp(&needle))
         .is_ok()
 }
 
-/// Converts a validated `u32` count to `usize`, returning a typed error on
-/// 16-bit `usize` targets where the conversion would truncate.
-fn u32_to_usize(value: u32) -> Result<usize, BcsrError> {
-    usize::try_from(value).map_err(|_error| BcsrError::UsizeOverflow { value })
+/// Converts a BCSR index to `usize`, returning a typed error on truncation.
+pub(in crate::internal) fn index_to_usize<Index: BcsrIndex>(
+    value: Index,
+) -> Result<usize, BcsrError> {
+    value
+        .to_usize()
+        .ok_or(BcsrError::UsizeOverflow { value: usize::MAX })
 }
 
-/// Converts a previously validated `u32` to `usize`. Used inside the view's
-/// hot trait paths where validation guarantees the conversion succeeds.
+/// Converts a previously validated BCSR index to `usize`.
 ///
 /// # Panics
 ///
-/// Panics via `unreachable!()` only on a target where `usize` is narrower
-/// than `u32` AND the caller has bypassed [`u32_to_usize`]. All in-tree
-/// callers run after [`validate_sections`](super::validation::validate_sections),
-/// which surfaces the failure as [`BcsrError::UsizeOverflow`] before any
-/// `_validated` call, so on supported targets this branch is dead.
+/// Panics via `unreachable!()` only if validation has been bypassed. All
+/// in-tree callers run after [`validate_sections`], which surfaces truncation
+/// as [`BcsrError::UsizeOverflow`] before any `_validated` call.
 ///
 /// # Performance
 ///
 /// This function is `O(1)`.
-pub(in crate::internal) fn u32_to_usize_validated(value: u32) -> usize {
-    match usize::try_from(value) {
-        Ok(converted) => converted,
-        Err(_error) => unreachable!("validated bipartite-CSR u32 must fit usize"),
-    }
+pub(in crate::internal) fn index_to_usize_validated<Index: BcsrIndex>(value: Index) -> usize {
+    value
+        .to_usize()
+        .unwrap_or_else(|| unreachable!("validated bipartite-CSR index must fit usize"))
+}
+
+/// Converts a previously validated `usize` slot to a BCSR index.
+///
+/// # Panics
+///
+/// Panics via `unreachable!()` only if validation failed to enforce the target
+/// index width.
+///
+/// # Performance
+///
+/// This function is `O(1)`.
+pub(in crate::internal) fn usize_to_index_validated<Index: BcsrIndex>(value: usize) -> Index {
+    Index::from_usize(value).unwrap_or_else(|| unreachable!("validated BCSR slot must fit index"))
 }

@@ -26,16 +26,16 @@ intent:
     Unsafe policy would erode across the workspace, and Python ownership or panic
     behavior could become implicit instead of an explicit API contract.
   verification_method: |
-    Manual review of oxgraph-python Cargo lint settings and SAFETY.md. Foundation
+    Manual review of bindings/python Cargo lint settings and SAFETY.md. Foundation
     crates continue to inherit workspace unsafe_code = forbid.
 realization:
 - bindings:
   - scheme: path
-    value: crates/oxgraph-python/SAFETY.md
+    value: bindings/python/SAFETY.md
     metadata:
       summary: Python FFI safety contract for PyO3 glue, ownership, GIL behavior, stale views, and panic/error mapping.
   - scheme: path
-    value: crates/oxgraph-python/Cargo.toml
+    value: bindings/python/Cargo.toml
     metadata:
       summary: Crate-local lint policy for Python FFI while other crates keep workspace lints.
   role: primary

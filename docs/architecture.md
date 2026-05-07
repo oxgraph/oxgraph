@@ -24,9 +24,9 @@ oxgraph-algo           BFS and PageRank over capability bounds
 oxgraph                feature-gated curated umbrella re-exports
 ```
 
-The Python facade is not part of the active Rust merge stack. It is a blocked
-follow-up after the Rust contracts in this document are implemented and
-reviewed.
+The Python facade is a standalone follow-up under `bindings/python`, outside
+the active Rust workspace. It is reviewed after the Rust contracts in this
+document so PyO3 and Python packaging do not enter PR #1-#8.
 
 Foundation crates (`topology`, `graph`, `hyper`, `csr`, and `hyper-bcsr`) must
 not depend on Arrow, `oxgraph-property`, PyO3, Python packaging, or builder
@@ -150,15 +150,14 @@ costs explicitly, including:
 Enabling `graph-build` or `hyper-build` pulls only the core builder crates.
 Snapshot and property export costs require explicit snapshot/property features.
 
-## Python follow-up
+## Python facade
 
-Python bindings move to a future follow-up under `bindings/python`, outside the
-Rust workspace default member set. That package may choose facade-owned string
-labels and `f64` convenience APIs, but those choices must not leak into Rust
-substrate APIs.
+Python bindings live under `bindings/python`, outside the Rust workspace default
+member set. That package may choose facade-owned string labels and `f64`
+convenience APIs, but those choices must not leak into Rust substrate APIs.
 
-The follow-up must keep any PyO3 unsafe allowance local to the Python crate and
-document it in `SAFETY.md`. Its first public surface is limited to builders,
+The facade keeps any PyO3 unsafe allowance local to the Python crate and
+documents it in `SAFETY.md`. Its first public surface is limited to builders,
 frozen views, snapshot open helpers, typed exceptions, BFS, and PageRank.
-Property-layer Python classes wait until property snapshot/export contracts are
-landed and tested in Rust.
+Property-layer Python classes wait until property snapshot/export contracts have
+Python-specific tests.
