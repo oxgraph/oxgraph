@@ -1,0 +1,40 @@
+[package]
+name = "oxgraph-graph-build"
+version = "0.0.0"
+description = "Append/update-only graph builders for OxGraph."
+publish = false
+
+authors.workspace = true
+edition.workspace = true
+repository.workspace = true
+
+[dependencies]
+oxgraph-csr = { version = "0.0.0", path = "../oxgraph-csr", optional = true }
+oxgraph-graph = { version = "0.0.0", path = "../oxgraph-graph" }
+oxgraph-property = { version = "0.0.0", path = "../oxgraph-property", optional = true }
+oxgraph-snapshot = { version = "0.0.0", path = "../oxgraph-snapshot", features = [
+  "alloc",
+], optional = true }
+zerocopy = { workspace = true, optional = true }
+
+[features]
+default = []
+snapshot = ["dep:oxgraph-csr", "dep:oxgraph-snapshot", "dep:zerocopy"]
+property-arrow = ["snapshot", "dep:oxgraph-property"]
+
+[dev-dependencies]
+arrow-array = { workspace = true }
+arrow-schema = { workspace = true }
+criterion = { workspace = true }
+oxgraph-csr = { version = "0.0.0", path = "../oxgraph-csr" }
+oxgraph-property = { version = "0.0.0", path = "../oxgraph-property" }
+oxgraph-snapshot = { version = "0.0.0", path = "../oxgraph-snapshot", features = ["alloc"] }
+proptest = { workspace = true }
+zerocopy = { workspace = true }
+
+[[bench]]
+name = "builder"
+harness = false
+
+[lints]
+workspace = true

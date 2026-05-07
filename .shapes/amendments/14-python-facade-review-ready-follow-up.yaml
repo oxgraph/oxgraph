@@ -1,0 +1,40 @@
+id: 14
+name: Python facade review-ready follow-up
+description: Python facade review-ready follow-up
+targets:
+  shape_ids:
+  - 23
+  - 24
+status: proposed
+version_impact: major
+intent:
+  kind: amendment
+  summary: 'Refactor PR #9 into a standalone bindings/python facade ready for review after Rust hardening'
+  source: human
+  goals: |
+    - Move the PyO3 facade from crates/oxgraph-python to standalone bindings/python so it does not become a root workspace member.
+    - Keep the first Python surface narrow: graph/hypergraph builders, owned frozen views, labels, identity lookup, BFS, PageRank, snapshot open helpers, and typed exceptions.
+    - Remove Python property-layer classes from PR #9 until property snapshot/export behavior has Python-specific tests.
+    - Add just python-build, python-test, python-unsafe-check, and python-ci as explicit review gates.
+    - Mark PR #9 ready for review after the Python gates pass.
+  non_goals: |
+    No property-layer Python classes, no Python labels leaking into Rust topology IDs,
+    no PyO3 dependency in the root Rust workspace, and no workspace-wide unsafe_code
+    relaxation.
+  rationale: |
+    With PR #1-#8 hardened, PR #9 can be reviewed as the Python boundary. Keeping it
+    standalone preserves Rust workspace CI focus while still letting Python expose
+    facade-owned string labels and f64 conveniences.
+realization:
+- bindings:
+  - scheme: path
+    value: bindings/python
+    metadata:
+      summary: Standalone maturin package with PyO3 facade classes, snapshot helpers, typed exceptions, tests, and safety docs.
+  - scheme: path
+    value: justfile
+    metadata:
+      summary: Python build, test, unsafe-check, and aggregate CI recipes.
+  role: primary
+initiated_by:
+  type: human
