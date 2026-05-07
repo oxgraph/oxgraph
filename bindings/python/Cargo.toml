@@ -3,28 +3,31 @@ name = "oxgraph-python"
 version = "0.0.0"
 description = "Python bindings for OxGraph."
 publish = false
+authors = ["oxgraph contributors"]
+edition = "2024"
+repository = "https://github.com/oxgraph/oxgraph"
+license = "MIT"
 
-authors.workspace = true
-edition.workspace = true
-repository.workspace = true
+[workspace]
 
 [lib]
 name = "_oxgraph"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-arrow-array = { workspace = true }
-arrow-schema = { workspace = true }
-oxgraph-algo = { version = "0.0.0", path = "../oxgraph-algo", features = ["std"] }
-oxgraph-csr = { version = "0.0.0", path = "../oxgraph-csr" }
-oxgraph-graph = { version = "0.0.0", path = "../oxgraph-graph" }
-oxgraph-graph-build = { version = "0.0.0", path = "../oxgraph-graph-build" }
-oxgraph-hyper = { version = "0.0.0", path = "../oxgraph-hyper" }
-oxgraph-hyper-bcsr = { version = "0.0.0", path = "../oxgraph-hyper-bcsr" }
-oxgraph-hyper-build = { version = "0.0.0", path = "../oxgraph-hyper-build" }
-oxgraph-property = { version = "0.0.0", path = "../oxgraph-property" }
-oxgraph-snapshot = { version = "0.0.0", path = "../oxgraph-snapshot" }
-oxgraph-topology = { version = "0.0.0", path = "../oxgraph-topology" }
+oxgraph-algo = { version = "0.0.0", path = "../../crates/oxgraph-algo", features = ["std"] }
+oxgraph-csr = { version = "0.0.0", path = "../../crates/oxgraph-csr" }
+oxgraph-graph = { version = "0.0.0", path = "../../crates/oxgraph-graph" }
+oxgraph-graph-build = { version = "0.0.0", path = "../../crates/oxgraph-graph-build", features = [
+  "snapshot",
+] }
+oxgraph-hyper = { version = "0.0.0", path = "../../crates/oxgraph-hyper" }
+oxgraph-hyper-bcsr = { version = "0.0.0", path = "../../crates/oxgraph-hyper-bcsr" }
+oxgraph-hyper-build = { version = "0.0.0", path = "../../crates/oxgraph-hyper-build", features = [
+  "snapshot",
+] }
+oxgraph-snapshot = { version = "0.0.0", path = "../../crates/oxgraph-snapshot" }
+oxgraph-topology = { version = "0.0.0", path = "../../crates/oxgraph-topology" }
 pyo3 = { version = "0.28.3", features = ["extension-module"] }
 
 [build-dependencies]

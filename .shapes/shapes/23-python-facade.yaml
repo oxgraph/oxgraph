@@ -2,28 +2,27 @@ id: 23
 name: Python facade
 description: |
   Python package/import surface for OxGraph. The native module wraps Rust builders,
-  frozen views, identity lookup, property/weight layers, BFS, PageRank, and snapshot
-  helpers while keeping Python labels in facade-owned maps. It exposes OxGraph concepts
-  rather than third-party graph-library exporters.
+  frozen views, identity lookup, BFS, PageRank, and snapshot helpers while keeping
+  Python labels in facade-owned maps. It exposes OxGraph concepts rather than
+  third-party graph-library exporters.
 profile: 1
 status: proposed
 intent:
   kind: interface
-  summary: Python package exposing OxGraph builders, views, properties, BFS, PageRank, and identity
+  summary: Python package exposing OxGraph builders, views, BFS, PageRank, snapshots, and identity
   source: ai
   goals: |
-    - Add oxgraph-python inside the workspace with a PyO3 native module importable as
-      oxgraph.
+    - Add a standalone bindings/python PyO3 native module importable as oxgraph.
     - Expose graph and hypergraph builders, frozen owned views, BFS, PageRank, relation
-      weights, named property layers, labels, and local/canonical lookup.
-    - Keep Python float APIs as explicit boundary specializations over generic Rust property, builder, and PageRank scalar APIs.
+      weights, incidence weights, labels, snapshots, and local/canonical lookup.
+    - Keep Python float APIs as explicit boundary specializations over generic Rust builder and PageRank scalar APIs.
     - Translate typed Rust errors into Python exceptions without panicking across FFI.
     - Keep Python labels facade-owned and never interpreted by Rust algorithms.
     - Document ownership/lifetime, stale view, GIL, panic, and unsafe boundary behavior.
   non_goals: |
     No NetworkX/igraph/PyTorch/DGL exporters, no downstream birdsong changes, no Python
-    domain semantics in topology, and no borrowed frozen view lifetime footguns in the
-    first surface.
+    domain semantics in topology, no property-layer Python classes in the first surface,
+    and no borrowed frozen view lifetime footguns.
   rationale: |
     Downstream Python users need OxGraph construction and algorithms, but the binding
     should expose the same substrate concepts Rust uses. Owned frozen views avoid Python
@@ -35,11 +34,11 @@ constraints:
 realization:
 - bindings:
   - scheme: path
-    value: crates/oxgraph-python
+    value: bindings/python
     metadata:
-      summary: PyO3 native module and thin Python package metadata exposing builders, frozen views, BFS, PageRank, properties, and identity.
+      summary: Standalone PyO3 native module and thin Python package exposing builders, frozen views, BFS, PageRank, snapshots, labels, and identity.
   - scheme: path
-    value: crates/oxgraph-python/SAFETY.md
+    value: bindings/python/SAFETY.md
     metadata:
       summary: Python FFI safety and ownership contract.
   role: primary
@@ -48,6 +47,7 @@ amendment_log:
 - 10
 - 11
 - 13
+- 14
 parents:
 - id: 1
   role: component

@@ -8,8 +8,12 @@ version = "0.0.0"
 description = "Python bindings for OxGraph topology builders and algorithms"
 requires-python = ">=3.9"
 readme = "SAFETY.md"
-license = { text = "MIT OR Apache-2.0" }
+license = "MIT"
 authors = [{ name = "oxgraph contributors" }]
+dependencies = []
+
+[dependency-groups]
+dev = ["maturin>=1.8,<2", "pytest>=8,<9"]
 
 [tool.maturin]
 module-name = "oxgraph._oxgraph"

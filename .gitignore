@@ -3,10 +3,12 @@
 .DS_Store
 .envrc.local
 .claude/settings.local.json
+.mcp.json
 
 # Python local/build artifacts
 **/.venv/
 **/.pytest_cache/
 **/__pycache__/
 **/*.py[cod]
-crates/oxgraph-python/python/oxgraph/_oxgraph*.so
+bindings/python/target/
+bindings/python/python/oxgraph/_oxgraph*.so
