@@ -5,6 +5,9 @@
 //! choose the layers they need.
 #![no_std]
 
+#[cfg(kani)]
+extern crate kani;
+
 /// Substrate-neutral topology capability traits.
 ///
 /// # Performance
@@ -12,7 +15,16 @@
 /// `perf: unspecified`; this module re-exports another crate.
 #[cfg(feature = "topology")]
 pub mod topology {
-    pub use oxgraph_topology::*;
+    pub use oxgraph_topology::{
+        CanonicalElementIdentity, CanonicalIncidenceIdentity, CanonicalRelationIdentity,
+        ContainsElement, ContainsIncidence, ContainsRelation, ElementId, ElementIncidenceCount,
+        ElementIncidences, ElementIndex, ElementPredecessors, ElementSuccessors, ElementWeight,
+        IncidenceBase, IncidenceCounts, IncidenceElement, IncidenceIndex, IncidenceRelation,
+        IncidenceRole, IncidenceView, IncidenceWeight, LocalElementIdentity,
+        LocalIncidenceIdentity, LocalRelationIdentity, RelationId, RelationIncidenceCount,
+        RelationIncidences, RelationIndex, RelationWeight, TopologyBase, TopologyCounts,
+        TopologyId,
+    };
 }
 
 /// Binary graph vocabulary traits.
@@ -22,7 +34,13 @@ pub mod topology {
 /// `perf: unspecified`; this module re-exports another crate.
 #[cfg(feature = "graph")]
 pub mod graph {
-    pub use oxgraph_graph::*;
+    pub use oxgraph_graph::{
+        ContainsEdge, ContainsEndpoint, ContainsNode, DirectedGraph, EdgeEndpointGraph, EdgeId,
+        EdgeIndex, EdgeSourceGraph, EdgeTargetGraph, EndpointId, EndpointIndex, EndpointRole,
+        ForwardGraph, GraphBase, GraphCounts, IncomingEdgeCount, IncomingGraph,
+        IncomingNeighborsGraph, NodeId, NodeIndex, OutgoingEdgeCount, OutgoingGraph,
+        OutgoingNeighborsGraph, ReverseGraph,
+    };
 }
 
 /// Hypergraph vocabulary traits.
@@ -32,7 +50,16 @@ pub mod graph {
 /// `perf: unspecified`; this module re-exports another crate.
 #[cfg(feature = "hyper")]
 pub mod hyper {
-    pub use oxgraph_hyper::*;
+    pub use oxgraph_hyper::{
+        ContainsHyperedge, ContainsParticipant, ContainsVertex, DirectedHyperedgeIncidences,
+        DirectedHyperedgeParticipants, DirectedHypergraph, DirectedVertexHyperedges,
+        DirectedVertexPredecessors, DirectedVertexSuccessors, HyperedgeId, HyperedgeIncidences,
+        HyperedgeIndex, HyperedgeParticipantCount, HyperedgeParticipants, Hypergraph,
+        HypergraphBase, HypergraphCounts, IncidentHyperedgeCount, IncidentHyperedges,
+        ParticipantBase, ParticipantCounts, ParticipantHyperedge, ParticipantId, ParticipantIndex,
+        ParticipantRole, ParticipantRoleOf, ParticipantVertex, VertexId, VertexIncidences,
+        VertexIndex,
+    };
 }
 
 /// Borrowed CSR graph layout.
@@ -42,7 +69,13 @@ pub mod hyper {
 /// `perf: unspecified`; this module re-exports another crate.
 #[cfg(feature = "csr")]
 pub mod csr {
-    pub use oxgraph_csr::*;
+    pub use oxgraph_csr::{
+        CsrEdgeId, CsrError, CsrGraph, CsrIndex, CsrNativeGraph, CsrNodeId, CsrOutEdges,
+        CsrOutNeighbors, CsrSnapshotError, CsrSnapshotGraph, CsrSnapshotIndex, CsrSnapshotWord,
+        CsrWord, SNAPSHOT_KIND_CSR_OFFSETS_U16, SNAPSHOT_KIND_CSR_OFFSETS_U32,
+        SNAPSHOT_KIND_CSR_OFFSETS_U64, SNAPSHOT_KIND_CSR_TARGETS_U16,
+        SNAPSHOT_KIND_CSR_TARGETS_U32, SNAPSHOT_KIND_CSR_TARGETS_U64,
+    };
 }
 
 /// Borrowed bipartite-CSR hypergraph layout.
@@ -52,7 +85,32 @@ pub mod csr {
 /// `perf: unspecified`; this module re-exports another crate.
 #[cfg(feature = "hyper-bcsr")]
 pub mod hyper_bcsr {
-    pub use oxgraph_hyper_bcsr::*;
+    pub use oxgraph_hyper_bcsr::{
+        BcsrChainedHyperedges, BcsrChainedParticipants, BcsrChainedRelationIncidences,
+        BcsrElementIncidences, BcsrError, BcsrHyperedgeId, BcsrHyperedgeSlice, BcsrHypergraph,
+        BcsrIndex, BcsrNativeHypergraph, BcsrParticipantId, BcsrParticipantSlice,
+        BcsrPredecessorVertices, BcsrRole, BcsrRoleSide, BcsrSection, BcsrSections,
+        BcsrSnapshotError, BcsrSnapshotHypergraph, BcsrSnapshotIndex, BcsrSnapshotWord,
+        BcsrSuccessorVertices, BcsrValidation, BcsrVertexId, BcsrVertexSlice, BcsrWord,
+        SNAPSHOT_KIND_BCSR_HEAD_OFFSETS_U16, SNAPSHOT_KIND_BCSR_HEAD_OFFSETS_U32,
+        SNAPSHOT_KIND_BCSR_HEAD_OFFSETS_U64, SNAPSHOT_KIND_BCSR_HEAD_PARTICIPANTS_U16,
+        SNAPSHOT_KIND_BCSR_HEAD_PARTICIPANTS_U32, SNAPSHOT_KIND_BCSR_HEAD_PARTICIPANTS_U64,
+        SNAPSHOT_KIND_BCSR_TAIL_OFFSETS_U16, SNAPSHOT_KIND_BCSR_TAIL_OFFSETS_U32,
+        SNAPSHOT_KIND_BCSR_TAIL_OFFSETS_U64, SNAPSHOT_KIND_BCSR_TAIL_PARTICIPANTS_U16,
+        SNAPSHOT_KIND_BCSR_TAIL_PARTICIPANTS_U32, SNAPSHOT_KIND_BCSR_TAIL_PARTICIPANTS_U64,
+        SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_HYPEREDGES_U16,
+        SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_HYPEREDGES_U32,
+        SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_HYPEREDGES_U64,
+        SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_OFFSETS_U16,
+        SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_OFFSETS_U32,
+        SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_OFFSETS_U64,
+        SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_HYPEREDGES_U16,
+        SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_HYPEREDGES_U32,
+        SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_HYPEREDGES_U64,
+        SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_OFFSETS_U16,
+        SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_OFFSETS_U32,
+        SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_OFFSETS_U64,
+    };
 }
 
 /// Topology-agnostic snapshot container.
@@ -62,7 +120,14 @@ pub mod hyper_bcsr {
 /// `perf: unspecified`; this module re-exports another crate.
 #[cfg(feature = "snapshot")]
 pub mod snapshot {
-    pub use oxgraph_snapshot::*;
+    #[cfg(feature = "snapshot-alloc")]
+    pub use oxgraph_snapshot::SnapshotBuilder;
+    pub use oxgraph_snapshot::{
+        FORMAT_MAGIC, FORMAT_MAJOR, FORMAT_MINOR, HEADER_SIZE, HeaderOnlySnapshot,
+        MAX_ALIGNMENT_LOG2, MAX_SECTION_COUNT, MAX_SUPPORTED_MINOR, PendingSection, PlanError,
+        SECTION_ENTRY_SIZE, Section, SectionIter, SectionViewError, Snapshot, SnapshotError,
+        SnapshotPlan, ValidationLevel,
+    };
 }
 
 /// Substrate-agnostic algorithms.
@@ -72,7 +137,31 @@ pub mod snapshot {
 /// `perf: unspecified`; this module re-exports another crate.
 #[cfg(feature = "algo")]
 pub mod algo {
-    pub use oxgraph_algo::*;
+    pub use oxgraph_algo::{
+        BfsEpochScratch, BfsError, BreadthFirstSearchEpochScratch, BreadthFirstSearchScratch,
+        HypergraphPageRankScratch, IntoPageRankScalar, PageRankConfig, PageRankError,
+        PageRankReport, PageRankScalar, PageRankScratch, ReverseBreadthFirstSearchEpochScratch,
+        ReverseBreadthFirstSearchScratch, breadth_first_search_with_epoch_scratch,
+        breadth_first_search_with_scratch, hypergraph_pagerank_weighted_with_scratch,
+        hypergraph_pagerank_with_scratch, pagerank_weighted_with_scratch, pagerank_with_scratch,
+        reverse_breadth_first_search_with_epoch_scratch, reverse_breadth_first_search_with_scratch,
+    };
+    #[cfg(feature = "algo-alloc")]
+    pub use oxgraph_algo::{
+        BfsWorkspace, BreadthFirstSearch, BreadthFirstSearchWorkspace, GenericBreadthFirstSearch,
+        GenericReverseBreadthFirstSearch, HypergraphPageRankWorkspace, PageRankWorkspace,
+        ReverseBreadthFirstSearch, ReverseBreadthFirstSearchWorkspace, breadth_first_search,
+        breadth_first_search_generic, breadth_first_search_with_workspace, hypergraph_pagerank,
+        hypergraph_pagerank_weighted, hypergraph_pagerank_weighted_with_workspace,
+        hypergraph_pagerank_with_workspace, pagerank, pagerank_weighted,
+        pagerank_weighted_with_workspace, pagerank_with_workspace, reverse_breadth_first_search,
+        reverse_breadth_first_search_generic, reverse_breadth_first_search_with_workspace,
+    };
+    #[cfg(feature = "algo-std")]
+    pub use oxgraph_algo::{
+        HashBreadthFirstSearch, HashReverseBreadthFirstSearch, breadth_first_search_generic_hash,
+        reverse_breadth_first_search_generic_hash,
+    };
 }
 
 /// Arrow-backed property layers.
@@ -80,9 +169,29 @@ pub mod algo {
 /// # Performance
 ///
 /// `perf: unspecified`; this module re-exports another crate.
-#[cfg(feature = "property")]
+#[cfg(feature = "property-arrow")]
 pub mod property {
-    pub use oxgraph_property::*;
+    pub use oxgraph_property::{
+        DenseElementWeights, DenseIncidenceWeights, DenseRelationWeights, EncodedPropertySnapshot,
+        GraphPropertyLayers, HyperPropertyLayers, IdFamily, IdentityMapMode, IdentityModeRecord,
+        IdentityModeSummary, IdentitySnapshotSummary, LayerId, LayerName, LayerRole, MissingPolicy,
+        PropertyError, PropertyIndex, PropertyLayer, PropertyLayerData, PropertyLayerDescriptor,
+        PropertySnapshotMetaWord, PropertySnapshotRecord, PropertySnapshotSummary,
+        SNAPSHOT_KIND_ELEMENT_IDENTITY_MAP_U16, SNAPSHOT_KIND_ELEMENT_IDENTITY_MAP_U32,
+        SNAPSHOT_KIND_ELEMENT_IDENTITY_MAP_U64, SNAPSHOT_KIND_IDENTITY_MODES_U16,
+        SNAPSHOT_KIND_IDENTITY_MODES_U32, SNAPSHOT_KIND_IDENTITY_MODES_U64,
+        SNAPSHOT_KIND_INCIDENCE_IDENTITY_MAP_U16, SNAPSHOT_KIND_INCIDENCE_IDENTITY_MAP_U32,
+        SNAPSHOT_KIND_INCIDENCE_IDENTITY_MAP_U64, SNAPSHOT_KIND_PROPERTY_DATA_U16,
+        SNAPSHOT_KIND_PROPERTY_DATA_U32, SNAPSHOT_KIND_PROPERTY_DATA_U64,
+        SNAPSHOT_KIND_PROPERTY_DESCRIPTORS_U16, SNAPSHOT_KIND_PROPERTY_DESCRIPTORS_U32,
+        SNAPSHOT_KIND_PROPERTY_DESCRIPTORS_U64, SNAPSHOT_KIND_RELATION_IDENTITY_MAP_U16,
+        SNAPSHOT_KIND_RELATION_IDENTITY_MAP_U32, SNAPSHOT_KIND_RELATION_IDENTITY_MAP_U64,
+        SNAPSHOT_PROPERTY_VERSION, SparseElementWeights, SparseIncidenceWeights,
+        SparseRelationWeights, StorageMode, encode_graph_property_snapshot,
+        encode_hyper_property_snapshot, encode_property_snapshot, rekey_layer_to_local,
+        validate_identity_snapshot, validate_property_sections, validate_property_snapshot,
+        validate_unique_layer_ids, validate_unique_names,
+    };
 }
 
 /// Append/update graph builders.
@@ -92,7 +201,19 @@ pub mod property {
 /// `perf: unspecified`; this module re-exports another crate.
 #[cfg(feature = "graph-build")]
 pub mod graph_build {
-    pub use oxgraph_graph_build::*;
+    pub use oxgraph_graph_build::{
+        BuildIndex, FrozenGraph, FrozenOutEdges, FrozenSuccessors, FrozenWeightedGraph,
+        GraphBuildError, GraphBuilder, GraphEdgeId, GraphNodeId, WeightedGraphBuilder,
+    };
+    #[cfg(feature = "graph-snapshot")]
+    pub use oxgraph_graph_build::{
+        GraphSnapshotIndex, csr_slice_to_le, export_csr_snapshot, export_weighted_csr_snapshot,
+        identity_slice_to_le,
+    };
+    #[cfg(feature = "graph-property-arrow")]
+    pub use oxgraph_graph_build::{
+        export_csr_snapshot_with_properties, export_weighted_csr_snapshot_with_properties,
+    };
 }
 
 /// Append/update hypergraph builders.
@@ -102,5 +223,19 @@ pub mod graph_build {
 /// `perf: unspecified`; this module re-exports another crate.
 #[cfg(feature = "hyper-build")]
 pub mod hyper_build {
-    pub use oxgraph_hyper_build::*;
+    pub use oxgraph_hyper_build::{
+        BuildIndex, FrozenHypergraph, FrozenWeightedHypergraph, HyperBuildError,
+        HyperParticipantId, HyperParticipantRole, HyperVertexId, HyperedgeId, HyperedgeSliceIter,
+        HypergraphBuilder, IncidentHyperedgeIter, ParticipantRangeIter, ParticipantSliceIter,
+        PredecessorIter, SuccessorIter, VertexSliceIter, WeightedHypergraphBuilder,
+    };
+    #[cfg(feature = "hyper-snapshot")]
+    pub use oxgraph_hyper_build::{
+        HyperSnapshotIndex, bcsr_slice_to_le, export_bcsr_snapshot, export_weighted_bcsr_snapshot,
+    };
+    #[cfg(feature = "hyper-property-arrow")]
+    pub use oxgraph_hyper_build::{
+        export_bcsr_snapshot_with_properties, export_weighted_bcsr_snapshot_with_properties,
+        identity_slice_to_le,
+    };
 }
