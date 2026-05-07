@@ -7,25 +7,30 @@
 
 #![cfg(feature = "alloc")]
 
-use std::{error::Error, fmt};
+use std::{
+    error::Error,
+    fmt,
+    ops::{Add, AddAssign, Div, Mul, Sub},
+};
 
 use oxgraph_algo::{
-    HypergraphPageRankWorkspace, PageRankConfig, PageRankError, PageRankScratch, PageRankWorkspace,
-    hypergraph_pagerank, hypergraph_pagerank_weighted, hypergraph_pagerank_with_workspace,
-    pagerank, pagerank_weighted, pagerank_weighted_with_workspace, pagerank_with_scratch,
-    pagerank_with_workspace,
+    HypergraphPageRankWorkspace, PageRankConfig, PageRankError, PageRankScalar, PageRankScratch,
+    PageRankWorkspace, hypergraph_pagerank, hypergraph_pagerank_weighted,
+    hypergraph_pagerank_with_workspace, pagerank, pagerank_weighted,
+    pagerank_weighted_with_workspace, pagerank_with_scratch, pagerank_with_workspace,
 };
-use oxgraph_csr::{CsrEdgeId, CsrError, CsrGraph, CsrNodeId};
+use oxgraph_csr::{CsrEdgeId, CsrError, CsrNativeGraph, CsrNodeId};
 use oxgraph_hyper_bcsr::{
-    BcsrError, BcsrHyperedgeId, BcsrHypergraph, BcsrParticipantId, BcsrRole, BcsrSections,
+    BcsrError, BcsrHyperedgeId, BcsrNativeHypergraph, BcsrParticipantId, BcsrRole, BcsrSections,
     BcsrVertexId,
 };
 use oxgraph_topology::{
     ElementIndex, IncidenceBase, IncidenceWeight, RelationIndex, RelationWeight, TopologyBase,
 };
+use proptest::prelude::*;
 
 /// Shared convergence configuration for layout tests.
-const CONFIG: PageRankConfig = PageRankConfig::new(0.85, 1.0e-12, 500);
+const CONFIG: PageRankConfig<f64> = PageRankConfig::new(0.85, 1.0e-12, 500);
 
 /// Absolute tolerance for stationary-rank assertions.
 const EPSILON: f64 = 1.0e-8;
@@ -37,11 +42,11 @@ const EPSILON_F32: f32 = 1.0e-5;
 #[derive(Debug)]
 enum PageRankFixtureError {
     /// CSR fixture validation failed.
-    Csr(CsrError<u32>),
+    Csr(CsrError<u32, u32>),
     /// BCSR fixture validation failed.
     Bcsr(BcsrError),
     /// `PageRank` rejected input or failed to converge.
-    PageRank(PageRankError),
+    PageRank(PageRankError<f64>),
 }
 
 impl fmt::Display for PageRankFixtureError {
@@ -64,8 +69,8 @@ impl Error for PageRankFixtureError {
     }
 }
 
-impl From<CsrError<u32>> for PageRankFixtureError {
-    fn from(error: CsrError<u32>) -> Self {
+impl From<CsrError<u32, u32>> for PageRankFixtureError {
+    fn from(error: CsrError<u32, u32>) -> Self {
         Self::Csr(error)
     }
 }
@@ -76,8 +81,8 @@ impl From<BcsrError> for PageRankFixtureError {
     }
 }
 
-impl From<PageRankError> for PageRankFixtureError {
-    fn from(error: PageRankError) -> Self {
+impl From<PageRankError<f64>> for PageRankFixtureError {
+    fn from(error: PageRankError<f64>) -> Self {
         Self::PageRank(error)
     }
 }
@@ -130,14 +135,14 @@ struct BcsrRelationWeights<'view> {
 }
 
 impl TopologyBase for BcsrRelationWeights<'_> {
-    type ElementId = BcsrVertexId;
-    type RelationId = BcsrHyperedgeId;
+    type ElementId = BcsrVertexId<u32>;
+    type RelationId = BcsrHyperedgeId<u32>;
 }
 
 impl RelationWeight for BcsrRelationWeights<'_> {
     type Weight = f64;
 
-    fn relation_weight(&self, relation: BcsrHyperedgeId) -> Self::Weight {
+    fn relation_weight(&self, relation: BcsrHyperedgeId<u32>) -> Self::Weight {
         self.values[relation.0 as usize]
     }
 }
@@ -150,20 +155,88 @@ struct BcsrIncidenceWeights<'view> {
 }
 
 impl TopologyBase for BcsrIncidenceWeights<'_> {
-    type ElementId = BcsrVertexId;
-    type RelationId = BcsrHyperedgeId;
+    type ElementId = BcsrVertexId<u32>;
+    type RelationId = BcsrHyperedgeId<u32>;
 }
 
 impl IncidenceBase for BcsrIncidenceWeights<'_> {
-    type IncidenceId = BcsrParticipantId;
+    type IncidenceId = BcsrParticipantId<u32>;
     type Role = BcsrRole;
 }
 
 impl IncidenceWeight for BcsrIncidenceWeights<'_> {
     type Weight = f64;
 
-    fn incidence_weight(&self, incidence: BcsrParticipantId) -> Self::Weight {
+    fn incidence_weight(&self, incidence: BcsrParticipantId<u32>) -> Self::Weight {
         self.values[incidence.0 as usize]
+    }
+}
+
+/// Minimal custom scalar used to prove `PageRank` is not hard-wired to primitives.
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
+struct TestScalar(f64);
+
+impl Add for TestScalar {
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        Self(self.0 + rhs.0)
+    }
+}
+
+impl Sub for TestScalar {
+    type Output = Self;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        Self(self.0 - rhs.0)
+    }
+}
+
+impl Mul for TestScalar {
+    type Output = Self;
+
+    fn mul(self, rhs: Self) -> Self::Output {
+        Self(self.0 * rhs.0)
+    }
+}
+
+impl Div for TestScalar {
+    type Output = Self;
+
+    fn div(self, rhs: Self) -> Self::Output {
+        Self(self.0 / rhs.0)
+    }
+}
+
+impl AddAssign for TestScalar {
+    fn add_assign(&mut self, rhs: Self) {
+        self.0 += rhs.0;
+    }
+}
+
+impl PageRankScalar for TestScalar {
+    const ZERO: Self = Self(0.0);
+    const ONE: Self = Self(1.0);
+    const INFINITY: Self = Self(f64::INFINITY);
+
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "custom scalar test mirrors f64 degree conversion"
+    )]
+    fn from_usize(value: usize) -> Self {
+        Self(value as f64)
+    }
+
+    fn from_f64(value: f64) -> Self {
+        Self(value)
+    }
+
+    fn abs(self) -> Self {
+        Self(self.0.abs())
+    }
+
+    fn is_finite(self) -> bool {
+        self.0.is_finite()
     }
 }
 
@@ -226,6 +299,22 @@ fn pagerank_runs_with_f32_rank_scalar() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
+fn pagerank_compiles_with_custom_rank_scalar() -> Result<(), Box<dyn Error>> {
+    let graph = csr_fixture()?;
+    let elements = [CsrNodeId(0), CsrNodeId(1), CsrNodeId(2), CsrNodeId(3)];
+    let config = PageRankConfig::new(TestScalar(0.85), TestScalar(1.0e-10), 500);
+    let mut ranks = [TestScalar::ZERO; 4];
+
+    let report = pagerank(&graph, elements, config, None, &mut ranks)?;
+
+    assert!(report.iterations > 0);
+    assert!(report.delta <= config.tolerance);
+    let total = ranks.iter().fold(0.0, |acc, rank| acc + rank.0);
+    assert_close(total, 1.0);
+    Ok(())
+}
+
+#[test]
 fn weighted_pagerank_accepts_integer_weights_into_f32_ranks() -> Result<(), Box<dyn Error>> {
     let graph = csr_fixture()?;
     let elements = [CsrNodeId(0), CsrNodeId(1), CsrNodeId(2), CsrNodeId(3)];
@@ -268,6 +357,7 @@ fn graph_scratch_and_workspace_match_allocating() -> Result<(), Box<dyn Error>> 
 
     let mut teleport = [0.0; 4];
     let mut next = [0.0; 4];
+    let mut visible = [0; 4];
     let mut scratch_ranks = [0.0; 4];
     pagerank_with_scratch(
         &graph,
@@ -275,7 +365,7 @@ fn graph_scratch_and_workspace_match_allocating() -> Result<(), Box<dyn Error>> 
         CONFIG,
         None,
         &mut scratch_ranks,
-        PageRankScratch::new(&mut teleport, &mut next),
+        PageRankScratch::new(&mut teleport, &mut next, &mut visible),
     )?;
 
     let mut workspace = PageRankWorkspace::for_graph(&graph);
@@ -308,6 +398,7 @@ fn borrowed_scratch_rejects_undersized_storage() -> Result<(), Box<dyn Error>> {
     let mut ranks = [0.0; 4];
     let mut teleport = [0.0; 4];
     let mut next = [0.0; 2];
+    let mut visible = [0; 4];
 
     let error = pagerank_with_scratch(
         &graph,
@@ -315,7 +406,7 @@ fn borrowed_scratch_rejects_undersized_storage() -> Result<(), Box<dyn Error>> {
         CONFIG,
         None,
         &mut ranks,
-        PageRankScratch::new(&mut teleport, &mut next),
+        PageRankScratch::new(&mut teleport, &mut next, &mut visible),
     );
 
     assert!(matches!(error, Err(PageRankError::ScratchTooShort { .. })));
@@ -508,6 +599,54 @@ fn graph_personalization_and_lengths_are_validated() -> Result<(), PageRankFixtu
 }
 
 #[test]
+fn graph_visible_subset_ignores_omitted_targets() -> Result<(), PageRankFixtureError> {
+    let graph = csr_fixture()?;
+    let elements = [CsrNodeId(0), CsrNodeId(1)];
+    let mut ranks = [0.0; 4];
+
+    let report = pagerank(&graph, elements, CONFIG, None, &mut ranks)?;
+
+    assert!(report.delta <= CONFIG.tolerance);
+    assert_close(ranks[0], 0.350_877_192_982_456_1);
+    assert_close(ranks[1], 0.649_122_807_017_543_9);
+    assert_close(ranks[2], 0.0);
+    assert_close(ranks[3], 0.0);
+    assert_probability_mass(&[&ranks[..2]]);
+
+    let weights = CsrRelationWeights {
+        values: &[1.0, f64::NAN, 1.0, 1.0],
+    };
+    let mut weighted_ranks = [0.0; 4];
+    pagerank_weighted(
+        &graph,
+        &weights,
+        elements,
+        CONFIG,
+        None,
+        &mut weighted_ranks,
+    )?;
+    for (left, right) in ranks.into_iter().zip(weighted_ranks) {
+        assert_close(left, right);
+    }
+    Ok(())
+}
+
+#[test]
+fn graph_duplicate_visible_elements_are_rejected() -> Result<(), PageRankFixtureError> {
+    let graph = csr_fixture()?;
+    let elements = [CsrNodeId(0), CsrNodeId(1), CsrNodeId(1)];
+    let mut ranks = [0.0; 4];
+
+    let error = pagerank(&graph, elements, CONFIG, None, &mut ranks);
+
+    assert!(matches!(
+        error,
+        Err(PageRankError::DuplicateElement { index: 1 })
+    ));
+    Ok(())
+}
+
+#[test]
 fn graph_invalid_weights_are_rejected() -> Result<(), PageRankFixtureError> {
     let graph = csr_fixture()?;
     let elements = [CsrNodeId(0), CsrNodeId(1), CsrNodeId(2), CsrNodeId(3)];
@@ -571,6 +710,67 @@ fn deterministic_output_repeats() -> Result<(), PageRankFixtureError> {
     for (left, right) in first.into_iter().zip(second) {
         assert_close(left, right);
     }
+    Ok(())
+}
+
+#[test]
+fn hypergraph_visible_subset_ignores_omitted_states() -> Result<(), PageRankFixtureError> {
+    let hypergraph = bcsr_fixture()?;
+    let elements = [BcsrVertexId(0), BcsrVertexId(1)];
+    let relations = [BcsrHyperedgeId(0)];
+    let mut element_ranks = [0.0; 3];
+    let mut relation_ranks = [0.0; 2];
+
+    let report = hypergraph_pagerank(
+        &hypergraph,
+        elements,
+        relations,
+        CONFIG,
+        None,
+        &mut element_ranks,
+        &mut relation_ranks,
+    )?;
+
+    assert!(report.delta <= CONFIG.tolerance);
+    assert_close(element_ranks[2], 0.0);
+    assert_close(relation_ranks[1], 0.0);
+    assert_probability_mass(&[&element_ranks[..2], &relation_ranks[..1]]);
+    Ok(())
+}
+
+#[test]
+fn hypergraph_duplicate_visible_states_are_rejected() -> Result<(), PageRankFixtureError> {
+    let hypergraph = bcsr_fixture()?;
+    let mut element_ranks = [0.0; 3];
+    let mut relation_ranks = [0.0; 2];
+
+    let duplicate_element = hypergraph_pagerank(
+        &hypergraph,
+        [BcsrVertexId(0), BcsrVertexId(1), BcsrVertexId(1)],
+        [BcsrHyperedgeId(0), BcsrHyperedgeId(1)],
+        CONFIG,
+        None,
+        &mut element_ranks,
+        &mut relation_ranks,
+    );
+    assert!(matches!(
+        duplicate_element,
+        Err(PageRankError::DuplicateElement { index: 1 })
+    ));
+
+    let duplicate_relation = hypergraph_pagerank(
+        &hypergraph,
+        [BcsrVertexId(0), BcsrVertexId(1), BcsrVertexId(2)],
+        [BcsrHyperedgeId(0), BcsrHyperedgeId(0)],
+        CONFIG,
+        None,
+        &mut element_ranks,
+        &mut relation_ranks,
+    );
+    assert!(matches!(
+        duplicate_relation,
+        Err(PageRankError::DuplicateRelation { index: 0 })
+    ));
     Ok(())
 }
 
@@ -660,16 +860,121 @@ fn hypergraph_non_convergence_reports_last_nonzero_delta() -> Result<(), PageRan
     Ok(())
 }
 
+proptest! {
+    /// Generated CSR fixtures preserve probability mass and tier equivalence.
+    #[test]
+    fn generated_graph_pagerank_preserves_mass_visibility_and_tier_equivalence(
+        node_count in 1_u32..12,
+        edges in prop::collection::vec((0_u32..12, 0_u32..12), 0..48),
+        visible_seed in prop::collection::vec(any::<bool>(), 1..12),
+    ) {
+        let (offsets, targets) = generated_csr_arrays(node_count, &edges);
+        let graph = CsrNativeGraph::<u32, u32>::validate(node_count, &offsets, &targets)
+            .map_err(|error| TestCaseError::fail(error.to_string()))?;
+        let node_len = node_count as usize;
+        let mut visible = vec![false; node_len];
+        for (node, slot) in visible.iter_mut().enumerate() {
+            *slot = visible_seed[node % visible_seed.len()];
+        }
+        if !visible.iter().any(|value| *value) {
+            visible[0] = true;
+        }
+        let elements: Vec<CsrNodeId<u32>> = visible
+            .iter()
+            .enumerate()
+            .filter_map(|(node, is_visible)| {
+                is_visible.then_some(CsrNodeId(u32::try_from(node).ok()?))
+            })
+            .collect();
+        let config = PageRankConfig::new(0.85, 1.0e-9, 1_000);
+
+        let mut allocating = vec![0.0; node_len];
+        pagerank(&graph, elements.iter().copied(), config, None, &mut allocating)
+            .map_err(|error| TestCaseError::fail(error.to_string()))?;
+
+        let mut teleport = vec![0.0; node_len];
+        let mut next = vec![0.0; node_len];
+        let mut visible_scratch = vec![0; node_len];
+        let mut scratch = vec![0.0; node_len];
+        pagerank_with_scratch(
+            &graph,
+            elements.iter().copied(),
+            config,
+            None,
+            &mut scratch,
+            PageRankScratch::new(&mut teleport, &mut next, &mut visible_scratch),
+        )
+        .map_err(|error| TestCaseError::fail(error.to_string()))?;
+
+        let mut workspace = PageRankWorkspace::for_graph(&graph);
+        let mut workspace_ranks = vec![0.0; node_len];
+        pagerank_with_workspace(
+            &graph,
+            elements.iter().copied(),
+            config,
+            None,
+            &mut workspace_ranks,
+            &mut workspace,
+        )
+        .map_err(|error| TestCaseError::fail(error.to_string()))?;
+
+        let total: f64 = allocating.iter().sum();
+        prop_assert!((total - 1.0).abs() <= 1.0e-7, "rank mass was {total}");
+        for (node, ((alloc_rank, scratch_rank), workspace_rank)) in allocating
+            .iter()
+            .zip(&scratch)
+            .zip(&workspace_ranks)
+            .enumerate()
+        {
+            prop_assert!(alloc_rank.is_finite());
+            prop_assert!(*alloc_rank >= 0.0);
+            prop_assert!(
+                (*alloc_rank - *scratch_rank).abs() <= 1.0e-8,
+                "scratch rank diverged at node {node}: {alloc_rank} vs {scratch_rank}"
+            );
+            prop_assert!(
+                (*alloc_rank - *workspace_rank).abs() <= 1.0e-8,
+                "workspace rank diverged at node {node}: {alloc_rank} vs {workspace_rank}"
+            );
+            if !visible[node] {
+                prop_assert!(
+                    alloc_rank.abs() <= 1.0e-12,
+                    "invisible node {node} received rank {alloc_rank}"
+                );
+            }
+        }
+    }
+}
+
+/// Builds generated CSR arrays for `PageRank` proptests.
+fn generated_csr_arrays(node_count: u32, edges: &[(u32, u32)]) -> (Vec<u32>, Vec<u32>) {
+    let node_len = node_count as usize;
+    let mut buckets = vec![Vec::<u32>::new(); node_len];
+    for &(source, target) in edges {
+        if source < node_count && target < node_count {
+            buckets[source as usize].push(target);
+        }
+    }
+    let mut offsets = Vec::with_capacity(node_len + 1);
+    let mut targets = Vec::new();
+    offsets.push(0);
+    for bucket in buckets {
+        targets.extend(bucket);
+        offsets.push(u32::try_from(targets.len()).unwrap_or(u32::MAX));
+    }
+    (offsets, targets)
+}
+
 /// Opens the CSR graph fixture used by ordinary graph `PageRank` tests.
-fn csr_fixture() -> Result<CsrGraph<'static, u32, u32>, CsrError<u32>> {
+fn csr_fixture() -> Result<CsrNativeGraph<'static, u32, u32>, CsrError<u32, u32>> {
     static OFFSETS: &[u32] = &[0, 1, 2, 4, 4];
     static TARGETS: &[u32] = &[1, 2, 0, 1];
 
-    CsrGraph::validate(4, OFFSETS, TARGETS)
+    CsrNativeGraph::<u32, u32>::validate(4, OFFSETS, TARGETS)
 }
 
 /// Opens the BCSR hypergraph fixture used by incidence `PageRank` tests.
-fn bcsr_fixture() -> Result<BcsrHypergraph<'static>, BcsrError> {
+fn bcsr_fixture() -> Result<BcsrNativeHypergraph<'static, u32, u32, u32>, BcsrError> {
     static HEAD_OFFSETS: &[u32] = &[0, 1, 3];
     static HEAD_PARTICIPANTS: &[u32] = &[0, 0, 1];
     static TAIL_OFFSETS: &[u32] = &[0, 2, 3];
@@ -679,7 +984,7 @@ fn bcsr_fixture() -> Result<BcsrHypergraph<'static>, BcsrError> {
     static VERTEX_INCOMING_OFFSETS: &[u32] = &[0, 0, 1, 3];
     static VERTEX_INCOMING_HYPEREDGES: &[u32] = &[0, 0, 1];
 
-    BcsrHypergraph::open(BcsrSections {
+    BcsrNativeHypergraph::<u32, u32, u32>::open(BcsrSections {
         head_offsets: HEAD_OFFSETS,
         head_participants: HEAD_PARTICIPANTS,
         tail_offsets: TAIL_OFFSETS,

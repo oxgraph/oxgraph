@@ -14,11 +14,13 @@
     )
 )]
 
+#[cfg(feature = "alloc")]
 use alloc::{vec, vec::Vec};
+#[cfg(feature = "alloc")]
+use core::marker::PhantomData;
 use core::{
     error::Error,
     fmt,
-    marker::PhantomData,
     ops::{Add, AddAssign, Div, Mul, Sub},
 };
 
@@ -35,6 +37,13 @@ use oxgraph_topology::{
 /// semantics and public algorithms do not expose a broad numeric dependency.
 /// Implementations define the numeric operations `PageRank` needs for rank state,
 /// damping, tolerance, personalization, and converted weights.
+///
+/// # Scalar laws
+///
+/// Implementations must use ordinary finite numeric ordering and arithmetic:
+/// `ZERO` is the additive identity, `ONE` is the multiplicative identity,
+/// division by a positive count is finite for supported topology sizes, and
+/// `abs(a - b)` is non-negative and finite whenever `a` and `b` are finite.
 pub trait PageRankScalar:
     Copy
     + fmt::Debug
@@ -178,6 +187,16 @@ impl_weight_into_pagerank_scalar_cast!(f64; u64, usize, i64, isize);
 impl_weight_into_pagerank_scalar_from!(f32; u8, u16, i8, i16);
 impl_weight_into_pagerank_scalar_cast!(f32; u32, u64, usize, i32, i64, isize);
 
+impl IntoPageRankScalar<f32> for f64 {
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "f32 PageRank callers explicitly select f32 rank and configuration output"
+    )]
+    fn into_pagerank_scalar(self) -> f32 {
+        self as f32
+    }
+}
+
 /// `PageRank` configuration shared by graph and hypergraph policies.
 ///
 /// # Performance
@@ -185,7 +204,7 @@ impl_weight_into_pagerank_scalar_cast!(f32; u32, u64, usize, i32, i64, isize);
 /// Copying and debug-formatting are `O(1)`.
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[non_exhaustive]
-pub struct PageRankConfig<S = f64> {
+pub struct PageRankConfig<S> {
     /// Damping factor, usually `0.85`.
     pub damping: S,
     /// L1 convergence tolerance.
@@ -213,12 +232,6 @@ impl<S> PageRankConfig<S> {
     }
 }
 
-impl<S: PageRankScalar> Default for PageRankConfig<S> {
-    fn default() -> Self {
-        Self::new(S::from_f64(0.85), S::from_f64(1.0e-9), 100)
-    }
-}
-
 /// Successful `PageRank` convergence report.
 ///
 /// # Performance
@@ -226,7 +239,7 @@ impl<S: PageRankScalar> Default for PageRankConfig<S> {
 /// Copying and debug-formatting are `O(1)`.
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[non_exhaustive]
-pub struct PageRankReport<S = f64> {
+pub struct PageRankReport<S> {
     /// Number of iterations executed.
     pub iterations: usize,
     /// Final L1 rank delta.
@@ -240,7 +253,7 @@ pub struct PageRankReport<S = f64> {
 /// Formatting is `O(message length)`.
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
-pub enum PageRankError<S = f64> {
+pub enum PageRankError<S> {
     /// `PageRank` is undefined for an empty visible state set.
     EmptyState,
     /// Damping must be finite and in `[0, 1]`.
@@ -293,6 +306,16 @@ pub enum PageRankError<S = f64> {
         index: usize,
         /// Advertised bound.
         bound: usize,
+    },
+    /// A visible element was provided more than once.
+    DuplicateElement {
+        /// Duplicate dense element index.
+        index: usize,
+    },
+    /// A visible relation was provided more than once.
+    DuplicateRelation {
+        /// Duplicate dense relation index.
+        index: usize,
     },
     /// A topology relation mapped outside the advertised relation bound.
     RelationIndexOutOfBounds {
@@ -370,6 +393,12 @@ impl<S: fmt::Debug> fmt::Display for PageRankError<S> {
             Self::ElementIndexOutOfBounds { index, bound } => {
                 write!(formatter, "element index {index} is outside bound {bound}")
             }
+            Self::DuplicateElement { index } => {
+                write!(formatter, "duplicate pagerank element index {index}")
+            }
+            Self::DuplicateRelation { index } => {
+                write!(formatter, "duplicate pagerank relation index {index}")
+            }
             Self::RelationIndexOutOfBounds { index, bound } => {
                 write!(formatter, "relation index {index} is outside bound {bound}")
             }
@@ -408,6 +437,8 @@ pub struct PageRankScratch<'scratch, S> {
     teleport: &'scratch mut [S],
     /// Next-rank scratch by element index.
     next: &'scratch mut [S],
+    /// Visible element bitset by element index.
+    visible_elements: &'scratch mut [u8],
 }
 
 impl<'scratch, S> PageRankScratch<'scratch, S> {
@@ -416,8 +447,16 @@ impl<'scratch, S> PageRankScratch<'scratch, S> {
     /// # Performance
     ///
     /// This function is `O(1)`.
-    pub const fn new(teleport: &'scratch mut [S], next: &'scratch mut [S]) -> Self {
-        Self { teleport, next }
+    pub const fn new(
+        teleport: &'scratch mut [S],
+        next: &'scratch mut [S],
+        visible_elements: &'scratch mut [u8],
+    ) -> Self {
+        Self {
+            teleport,
+            next,
+            visible_elements,
+        }
     }
 
     /// Returns current teleport scratch capacity.
@@ -439,6 +478,16 @@ impl<'scratch, S> PageRankScratch<'scratch, S> {
     pub const fn next_capacity(&self) -> usize {
         self.next.len()
     }
+
+    /// Returns current visible-element scratch capacity.
+    ///
+    /// # Performance
+    ///
+    /// This function is `O(1)`.
+    #[must_use]
+    pub const fn visible_element_capacity(&self) -> usize {
+        self.visible_elements.len()
+    }
 }
 
 /// Borrowed scratch storage for incidence/bipartite hypergraph `PageRank`.
@@ -456,6 +505,10 @@ pub struct HypergraphPageRankScratch<'scratch, S> {
     next_elements: &'scratch mut [S],
     /// Next relation ranks by relation index.
     next_relations: &'scratch mut [S],
+    /// Visible element bitset by element index.
+    visible_elements: &'scratch mut [u8],
+    /// Visible relation bitset by relation index.
+    visible_relations: &'scratch mut [u8],
 }
 
 impl<'scratch, S> HypergraphPageRankScratch<'scratch, S> {
@@ -468,11 +521,15 @@ impl<'scratch, S> HypergraphPageRankScratch<'scratch, S> {
         teleport: &'scratch mut [S],
         next_elements: &'scratch mut [S],
         next_relations: &'scratch mut [S],
+        visible_elements: &'scratch mut [u8],
+        visible_relations: &'scratch mut [u8],
     ) -> Self {
         Self {
             teleport,
             next_elements,
             next_relations,
+            visible_elements,
+            visible_relations,
         }
     }
 
@@ -495,22 +552,27 @@ impl<'scratch, S> HypergraphPageRankScratch<'scratch, S> {
 /// # Performance
 ///
 /// Memory usage is `O(b)` for the largest element bound used with the workspace.
+#[cfg(feature = "alloc")]
 #[derive(Clone, Debug)]
-pub struct PageRankWorkspace<G, S = f64> {
+pub struct PageRankWorkspace<G, S> {
     /// Teleport/personalization scratch.
     teleport: Vec<S>,
     /// Next-rank scratch.
     next: Vec<S>,
+    /// Visible element bitset.
+    visible_elements: Vec<u8>,
     /// Brands workspace storage to a topology view type without owning the view.
     _graph: PhantomData<fn() -> G>,
 }
 
+#[cfg(feature = "alloc")]
 impl<G, S: PageRankScalar> Default for PageRankWorkspace<G, S> {
     fn default() -> Self {
         Self::new()
     }
 }
 
+#[cfg(feature = "alloc")]
 impl<G, S: PageRankScalar> PageRankWorkspace<G, S> {
     /// Creates an empty reusable `PageRank` workspace.
     ///
@@ -522,6 +584,7 @@ impl<G, S: PageRankScalar> PageRankWorkspace<G, S> {
         Self {
             teleport: Vec::new(),
             next: Vec::new(),
+            visible_elements: Vec::new(),
             _graph: PhantomData,
         }
     }
@@ -549,6 +612,7 @@ impl<G, S: PageRankScalar> PageRankWorkspace<G, S> {
         Self {
             teleport: vec![S::ZERO; element_bound],
             next: vec![S::ZERO; element_bound],
+            visible_elements: vec![0; element_bound],
             _graph: PhantomData,
         }
     }
@@ -571,11 +635,18 @@ impl<G, S: PageRankScalar> PageRankWorkspace<G, S> {
         if self.next.len() < element_bound {
             self.next.resize(element_bound, S::ZERO);
         }
+        if self.visible_elements.len() < element_bound {
+            self.visible_elements.resize(element_bound, 0);
+        }
     }
 
     /// Borrows this workspace as scratch.
     fn as_scratch(&mut self) -> PageRankScratch<'_, S> {
-        PageRankScratch::new(&mut self.teleport, &mut self.next)
+        PageRankScratch::new(
+            &mut self.teleport,
+            &mut self.next,
+            &mut self.visible_elements,
+        )
     }
 }
 
@@ -584,24 +655,31 @@ impl<G, S: PageRankScalar> PageRankWorkspace<G, S> {
 /// # Performance
 ///
 /// Memory usage is `O(e + r)` for the largest element and relation bounds used.
+#[cfg(feature = "alloc")]
 #[derive(Clone, Debug)]
-pub struct HypergraphPageRankWorkspace<H, S = f64> {
+pub struct HypergraphPageRankWorkspace<H, S> {
     /// Combined element+relation teleport/personalization scratch.
     teleport: Vec<S>,
     /// Next element ranks.
     next_elements: Vec<S>,
     /// Next relation ranks.
     next_relations: Vec<S>,
+    /// Visible element bitset.
+    visible_elements: Vec<u8>,
+    /// Visible relation bitset.
+    visible_relations: Vec<u8>,
     /// Brands workspace storage to a hypergraph view type without owning the view.
     _hypergraph: PhantomData<fn() -> H>,
 }
 
+#[cfg(feature = "alloc")]
 impl<H, S: PageRankScalar> Default for HypergraphPageRankWorkspace<H, S> {
     fn default() -> Self {
         Self::new()
     }
 }
 
+#[cfg(feature = "alloc")]
 impl<H, S: PageRankScalar> HypergraphPageRankWorkspace<H, S> {
     /// Creates an empty reusable hypergraph `PageRank` workspace.
     ///
@@ -614,6 +692,8 @@ impl<H, S: PageRankScalar> HypergraphPageRankWorkspace<H, S> {
             teleport: Vec::new(),
             next_elements: Vec::new(),
             next_relations: Vec::new(),
+            visible_elements: Vec::new(),
+            visible_relations: Vec::new(),
             _hypergraph: PhantomData,
         }
     }
@@ -643,6 +723,8 @@ impl<H, S: PageRankScalar> HypergraphPageRankWorkspace<H, S> {
             teleport: vec![S::ZERO; state_bound],
             next_elements: vec![S::ZERO; element_bound],
             next_relations: vec![S::ZERO; relation_bound],
+            visible_elements: vec![0; element_bound],
+            visible_relations: vec![0; relation_bound],
             _hypergraph: PhantomData,
         }
     }
@@ -678,6 +760,12 @@ impl<H, S: PageRankScalar> HypergraphPageRankWorkspace<H, S> {
         if self.next_relations.len() < relation_bound {
             self.next_relations.resize(relation_bound, S::ZERO);
         }
+        if self.visible_elements.len() < element_bound {
+            self.visible_elements.resize(element_bound, 0);
+        }
+        if self.visible_relations.len() < relation_bound {
+            self.visible_relations.resize(relation_bound, 0);
+        }
     }
 
     /// Borrows this workspace as hypergraph scratch.
@@ -686,6 +774,8 @@ impl<H, S: PageRankScalar> HypergraphPageRankWorkspace<H, S> {
             &mut self.teleport,
             &mut self.next_elements,
             &mut self.next_relations,
+            &mut self.visible_elements,
+            &mut self.visible_relations,
         )
     }
 }
@@ -705,6 +795,7 @@ impl<H, S: PageRankScalar> HypergraphPageRankWorkspace<H, S> {
 /// Each iteration is `O(n + m)` for `n` visible elements and `m` outgoing edge
 /// entries yielded from those elements. Scratch allocation is `O(b)` where `b`
 /// is `graph.element_bound()`.
+#[cfg(feature = "alloc")]
 pub fn pagerank<G, I, S>(
     graph: &G,
     elements: I,
@@ -720,13 +811,14 @@ where
     let bound = graph.element_bound();
     let mut teleport = vec![S::ZERO; bound];
     let mut next = vec![S::ZERO; bound];
+    let mut visible_elements = vec![0; bound];
     pagerank_with_scratch(
         graph,
         elements,
         config,
         personalization,
         ranks,
-        PageRankScratch::new(&mut teleport, &mut next),
+        PageRankScratch::new(&mut teleport, &mut next, &mut visible_elements),
     )
 }
 
@@ -764,12 +856,14 @@ where
     ensure_output_len(ranks.len(), bound)?;
     ensure_scratch_len("teleport", scratch.teleport.len(), bound)?;
     ensure_scratch_len("next", scratch.next.len(), bound)?;
+    ensure_scratch_len("visible_elements", scratch.visible_elements.len(), bound)?;
     build_personalization_into(
         elements.clone(),
         bound,
         personalization,
         |element| graph.element_index(element),
         scratch.teleport,
+        scratch.visible_elements,
     )?;
     initialize_ranks(elements.clone(), graph, scratch.teleport, ranks)?;
     iterate_graph_unweighted(
@@ -777,6 +871,7 @@ where
         elements,
         config,
         scratch.teleport,
+        scratch.visible_elements,
         ranks,
         scratch.next,
     )
@@ -793,6 +888,7 @@ where
 ///
 /// Grows workspace storage to `graph.element_bound()` if needed, then performs no
 /// additional heap allocation. Each iteration is `O(n + m)`.
+#[cfg(feature = "alloc")]
 #[expect(
     clippy::too_many_arguments,
     reason = "PageRank workspace API keeps policy and reusable storage inputs explicit"
@@ -835,6 +931,7 @@ where
 ///
 /// Each iteration is `O(n + m)` for `n` visible elements and `m` outgoing edge
 /// entries, with two outgoing-edge passes for non-dangling weighted rows.
+#[cfg(feature = "alloc")]
 #[expect(
     clippy::too_many_arguments,
     reason = "weighted PageRank entry point keeps graph, weights, policy, personalization, and output explicit"
@@ -857,6 +954,7 @@ where
     let bound = graph.element_bound();
     let mut teleport = vec![S::ZERO; bound];
     let mut next = vec![S::ZERO; bound];
+    let mut visible_elements = vec![0; bound];
     pagerank_weighted_with_scratch(
         graph,
         weights,
@@ -864,7 +962,7 @@ where
         config,
         personalization,
         ranks,
-        PageRankScratch::new(&mut teleport, &mut next),
+        PageRankScratch::new(&mut teleport, &mut next, &mut visible_elements),
     )
 }
 
@@ -908,12 +1006,14 @@ where
     ensure_output_len(ranks.len(), bound)?;
     ensure_scratch_len("teleport", scratch.teleport.len(), bound)?;
     ensure_scratch_len("next", scratch.next.len(), bound)?;
+    ensure_scratch_len("visible_elements", scratch.visible_elements.len(), bound)?;
     build_personalization_into(
         elements.clone(),
         bound,
         personalization,
         |element| graph.element_index(element),
         scratch.teleport,
+        scratch.visible_elements,
     )?;
     initialize_ranks(elements.clone(), graph, scratch.teleport, ranks)?;
     iterate_graph_weighted(
@@ -922,6 +1022,7 @@ where
         elements,
         config,
         scratch.teleport,
+        scratch.visible_elements,
         ranks,
         scratch.next,
     )
@@ -938,6 +1039,7 @@ where
 ///
 /// Grows workspace storage to `graph.element_bound()` if needed, then performs no
 /// additional heap allocation.
+#[cfg(feature = "alloc")]
 #[expect(
     clippy::too_many_arguments,
     reason = "weighted PageRank workspace entry point keeps all policy and storage inputs explicit"
@@ -984,6 +1086,7 @@ where
 ///
 /// Each iteration is `O(e + r + p)` for visible elements, visible relations,
 /// and traversed source/target participant entries.
+#[cfg(feature = "alloc")]
 #[expect(
     clippy::too_many_arguments,
     reason = "hypergraph PageRank entry point keeps state families and output slices explicit"
@@ -1014,6 +1117,8 @@ where
     let mut teleport = vec![S::ZERO; state_bound];
     let mut next_elements = vec![S::ZERO; e_bound];
     let mut next_relations = vec![S::ZERO; r_bound];
+    let mut visible_elements = vec![0; e_bound];
+    let mut visible_relations = vec![0; r_bound];
     hypergraph_pagerank_with_scratch(
         hypergraph,
         elements,
@@ -1022,7 +1127,13 @@ where
         personalization,
         element_ranks,
         relation_ranks,
-        HypergraphPageRankScratch::new(&mut teleport, &mut next_elements, &mut next_relations),
+        HypergraphPageRankScratch::new(
+            &mut teleport,
+            &mut next_elements,
+            &mut next_relations,
+            &mut visible_elements,
+            &mut visible_relations,
+        ),
     )
 }
 
@@ -1072,6 +1183,12 @@ where
     ensure_scratch_len("teleport", scratch.teleport.len(), state_bound)?;
     ensure_scratch_len("next_elements", scratch.next_elements.len(), e_bound)?;
     ensure_scratch_len("next_relations", scratch.next_relations.len(), r_bound)?;
+    ensure_scratch_len("visible_elements", scratch.visible_elements.len(), e_bound)?;
+    ensure_scratch_len(
+        "visible_relations",
+        scratch.visible_relations.len(),
+        r_bound,
+    )?;
     build_hyper_personalization_into(
         hypergraph,
         elements.clone(),
@@ -1079,6 +1196,8 @@ where
         state_bound,
         personalization,
         scratch.teleport,
+        scratch.visible_elements,
+        scratch.visible_relations,
     )?;
     initialize_hyper_ranks(
         hypergraph,
@@ -1094,6 +1213,8 @@ where
         relations,
         config,
         scratch.teleport,
+        scratch.visible_elements,
+        scratch.visible_relations,
         element_ranks,
         relation_ranks,
         scratch.next_elements,
@@ -1112,6 +1233,7 @@ where
 ///
 /// Grows workspace storage to the visible bounds if needed, then performs no
 /// additional heap allocation.
+#[cfg(feature = "alloc")]
 #[expect(
     clippy::too_many_arguments,
     reason = "hypergraph PageRank workspace entry point keeps state families and storage explicit"
@@ -1169,6 +1291,7 @@ where
 ///
 /// Each iteration is `O(e + r + p)` with two passes over weighted non-dangling
 /// rows.
+#[cfg(feature = "alloc")]
 #[expect(
     clippy::too_many_arguments,
     reason = "weighted hypergraph PageRank keeps relation and incidence policies explicit"
@@ -1210,6 +1333,8 @@ where
     let mut teleport = vec![S::ZERO; state_bound];
     let mut next_elements = vec![S::ZERO; e_bound];
     let mut next_relations = vec![S::ZERO; r_bound];
+    let mut visible_elements = vec![0; e_bound];
+    let mut visible_relations = vec![0; r_bound];
     hypergraph_pagerank_weighted_with_scratch(
         hypergraph,
         relation_weights,
@@ -1220,7 +1345,13 @@ where
         personalization,
         element_ranks,
         relation_ranks,
-        HypergraphPageRankScratch::new(&mut teleport, &mut next_elements, &mut next_relations),
+        HypergraphPageRankScratch::new(
+            &mut teleport,
+            &mut next_elements,
+            &mut next_relations,
+            &mut visible_elements,
+            &mut visible_relations,
+        ),
     )
 }
 
@@ -1281,6 +1412,12 @@ where
     ensure_scratch_len("teleport", scratch.teleport.len(), state_bound)?;
     ensure_scratch_len("next_elements", scratch.next_elements.len(), e_bound)?;
     ensure_scratch_len("next_relations", scratch.next_relations.len(), r_bound)?;
+    ensure_scratch_len("visible_elements", scratch.visible_elements.len(), e_bound)?;
+    ensure_scratch_len(
+        "visible_relations",
+        scratch.visible_relations.len(),
+        r_bound,
+    )?;
     build_hyper_personalization_into(
         hypergraph,
         elements.clone(),
@@ -1288,6 +1425,8 @@ where
         state_bound,
         personalization,
         scratch.teleport,
+        scratch.visible_elements,
+        scratch.visible_relations,
     )?;
     initialize_hyper_ranks(
         hypergraph,
@@ -1305,6 +1444,8 @@ where
         relations,
         config,
         scratch.teleport,
+        scratch.visible_elements,
+        scratch.visible_relations,
         element_ranks,
         relation_ranks,
         scratch.next_elements,
@@ -1323,6 +1464,7 @@ where
 ///
 /// Grows workspace storage to the visible bounds if needed, then performs no
 /// additional heap allocation.
+#[cfg(feature = "alloc")]
 #[expect(
     clippy::too_many_arguments,
     reason = "weighted hypergraph PageRank workspace entry point keeps all policy and storage inputs explicit"
@@ -1440,12 +1582,43 @@ fn clear<S: PageRankScalar>(values: &mut [S], len: usize) {
     }
 }
 
+fn clear_u8(values: &mut [u8], len: usize) {
+    for value in &mut values[..len] {
+        *value = 0;
+    }
+}
+
+fn mark_visible_element<S>(visible: &mut [u8], index: usize) -> Result<(), PageRankError<S>> {
+    if visible[index] != 0 {
+        return Err(PageRankError::DuplicateElement { index });
+    }
+    visible[index] = 1;
+    Ok(())
+}
+
+fn mark_visible_relation<S>(visible: &mut [u8], index: usize) -> Result<(), PageRankError<S>> {
+    if visible[index] != 0 {
+        return Err(PageRankError::DuplicateRelation { index });
+    }
+    visible[index] = 1;
+    Ok(())
+}
+
+fn is_visible(visible: &[u8], index: usize) -> bool {
+    visible.get(index).copied().unwrap_or(0) != 0
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "personalization normalization keeps topology family bounds and caller buffers explicit"
+)]
 fn build_personalization_into<I, F, S>(
     elements: I,
     bound: usize,
     personalization: Option<&[S]>,
     index_of: F,
     out: &mut [S],
+    visible: &mut [u8],
 ) -> Result<(), PageRankError<S>>
 where
     I: IntoIterator,
@@ -1453,6 +1626,7 @@ where
     S: PageRankScalar,
 {
     clear(out, bound);
+    clear_u8(visible, bound);
     let mut count = 0_usize;
     let mut sum = S::ZERO;
     if let Some(input) = personalization {
@@ -1465,6 +1639,7 @@ where
         for element in elements {
             let index = index_of(element);
             check_index(index, bound)?;
+            mark_visible_element(visible, index)?;
             let value = input[index];
             check_personalization_value(index, value)?;
             out[index] = value;
@@ -1475,6 +1650,7 @@ where
         for element in elements {
             let index = index_of(element);
             check_index(index, bound)?;
+            mark_visible_element(visible, index)?;
             out[index] = S::ONE;
             sum += S::ONE;
             count += 1;
@@ -1494,6 +1670,8 @@ fn build_hyper_personalization_into<H, IE, IR, S>(
     state_bound: usize,
     personalization: Option<&[S]>,
     out: &mut [S],
+    visible_elements: &mut [u8],
+    visible_relations: &mut [u8],
 ) -> Result<(), PageRankError<S>>
 where
     H: ElementIndex + RelationIndex,
@@ -1502,6 +1680,8 @@ where
     S: PageRankScalar,
 {
     clear(out, state_bound);
+    clear_u8(visible_elements, hypergraph.element_bound());
+    clear_u8(visible_relations, hypergraph.relation_bound());
     let mut count = 0_usize;
     let mut sum = S::ZERO;
     if let Some(input) = personalization {
@@ -1512,11 +1692,26 @@ where
             });
         }
         fill_hyper_personalization_from_input(
-            hypergraph, elements, relations, input, out, &mut count, &mut sum,
+            hypergraph,
+            elements,
+            relations,
+            input,
+            out,
+            visible_elements,
+            visible_relations,
+            &mut count,
+            &mut sum,
         )?;
     } else {
         fill_hyper_personalization_uniform(
-            hypergraph, elements, relations, out, &mut count, &mut sum,
+            hypergraph,
+            elements,
+            relations,
+            out,
+            visible_elements,
+            visible_relations,
+            &mut count,
+            &mut sum,
         )?;
     }
     normalize_personalization(out, count, sum)
@@ -1532,6 +1727,8 @@ fn fill_hyper_personalization_from_input<H, IE, IR, S>(
     relations: IR,
     input: &[S],
     out: &mut [S],
+    visible_elements: &mut [u8],
+    visible_relations: &mut [u8],
     count: &mut usize,
     sum: &mut S,
 ) -> Result<(), PageRankError<S>>
@@ -1545,6 +1742,7 @@ where
     for element in elements {
         let index = hypergraph.element_index(element);
         check_index(index, e_bound)?;
+        mark_visible_element(visible_elements, index)?;
         let value = input[index];
         check_personalization_value(index, value)?;
         out[index] = value;
@@ -1554,6 +1752,7 @@ where
     for relation in relations {
         let index = hypergraph.relation_index(relation);
         check_relation_index(index, hypergraph.relation_bound())?;
+        mark_visible_relation(visible_relations, index)?;
         let state = e_bound + index;
         let value = input[state];
         check_personalization_value(state, value)?;
@@ -1573,6 +1772,8 @@ fn fill_hyper_personalization_uniform<H, IE, IR, S>(
     elements: IE,
     relations: IR,
     out: &mut [S],
+    visible_elements: &mut [u8],
+    visible_relations: &mut [u8],
     count: &mut usize,
     sum: &mut S,
 ) -> Result<(), PageRankError<S>>
@@ -1586,6 +1787,7 @@ where
     for element in elements {
         let index = hypergraph.element_index(element);
         check_index(index, e_bound)?;
+        mark_visible_element(visible_elements, index)?;
         out[index] = S::ONE;
         *sum += S::ONE;
         *count += 1;
@@ -1593,6 +1795,7 @@ where
     for relation in relations {
         let index = hypergraph.relation_index(relation);
         check_relation_index(index, hypergraph.relation_bound())?;
+        mark_visible_relation(visible_relations, index)?;
         out[e_bound + index] = S::ONE;
         *sum += S::ONE;
         *count += 1;
@@ -1698,6 +1901,7 @@ fn iterate_graph_unweighted<G, I, S>(
     elements: I,
     config: PageRankConfig<S>,
     teleport: &[S],
+    visible: &[u8],
     ranks: &mut [S],
     next: &mut [S],
 ) -> Result<PageRankReport<S>, PageRankError<S>>
@@ -1713,7 +1917,14 @@ where
         for element in elements.clone() {
             let index = checked_element_index(graph, element)?;
             let rank = ranks[index];
-            let degree = graph.outgoing_edges(element).count();
+            let mut degree = 0_usize;
+            for edge in graph.outgoing_edges(element) {
+                let target = graph.target(edge);
+                let target_index = checked_element_index(graph, target)?;
+                if is_visible(visible, target_index) {
+                    degree += 1;
+                }
+            }
             if degree == 0 {
                 dangling += rank;
             } else {
@@ -1721,7 +1932,9 @@ where
                 for edge in graph.outgoing_edges(element) {
                     let target = graph.target(edge);
                     let target_index = checked_element_index(graph, target)?;
-                    next[target_index] += share;
+                    if is_visible(visible, target_index) {
+                        next[target_index] += share;
+                    }
                 }
             }
         }
@@ -1766,6 +1979,7 @@ fn iterate_graph_weighted<G, W, I, S>(
     elements: I,
     config: PageRankConfig<S>,
     teleport: &[S],
+    visible: &[u8],
     ranks: &mut [S],
     next: &mut [S],
 ) -> Result<PageRankReport<S>, PageRankError<S>>
@@ -1783,15 +1997,17 @@ where
         for element in elements.clone() {
             let index = checked_element_index(graph, element)?;
             let rank = ranks[index];
-            let total = outgoing_weight_total(graph, weights, element)?;
+            let total = outgoing_weight_total(graph, weights, element, visible)?;
             if total <= S::ZERO {
                 dangling += rank;
             } else {
                 for edge in graph.outgoing_edges(element) {
-                    let weight = checked_relation_weight(graph, weights, edge)?;
                     let target = graph.target(edge);
                     let target_index = checked_element_index(graph, target)?;
-                    next[target_index] += rank * (weight / total);
+                    if is_visible(visible, target_index) {
+                        let weight = checked_relation_weight(graph, weights, edge)?;
+                        next[target_index] += rank * (weight / total);
+                    }
                 }
             }
         }
@@ -1832,6 +2048,8 @@ fn iterate_hyper_unweighted<H, IE, IR, S>(
     relations: IR,
     config: PageRankConfig<S>,
     teleport: &[S],
+    visible_elements: &[u8],
+    visible_relations: &[u8],
     element_ranks: &mut [S],
     relation_ranks: &mut [S],
     next_elements: &mut [S],
@@ -1855,6 +2073,8 @@ where
             hypergraph,
             elements.clone(),
             relations.clone(),
+            visible_elements,
+            visible_relations,
             element_ranks,
             relation_ranks,
             next_elements,
@@ -1902,6 +2122,8 @@ fn iterate_hyper_weighted<H, RW, IW, IE, IR, S>(
     relations: IR,
     config: PageRankConfig<S>,
     teleport: &[S],
+    visible_elements: &[u8],
+    visible_relations: &[u8],
     element_ranks: &mut [S],
     relation_ranks: &mut [S],
     next_elements: &mut [S],
@@ -1936,6 +2158,8 @@ where
             incidence_weights,
             elements.clone(),
             relations.clone(),
+            visible_elements,
+            visible_relations,
             element_ranks,
             relation_ranks,
             next_elements,
@@ -2045,16 +2269,21 @@ fn outgoing_weight_total<G, W, S>(
     graph: &G,
     weights: &W,
     element: ElementId<G>,
+    visible: &[u8],
 ) -> Result<S, PageRankError<S>>
 where
-    G: ForwardGraph + RelationIndex,
+    G: ForwardGraph + ElementIndex + RelationIndex,
     W: RelationWeight<ElementId = G::ElementId, RelationId = G::RelationId>,
     W::Weight: IntoPageRankScalar<S>,
     S: PageRankScalar,
 {
     let mut total = S::ZERO;
     for edge in graph.outgoing_edges(element) {
-        total += checked_relation_weight(graph, weights, edge)?;
+        let target = graph.target(edge);
+        let target_index = checked_element_index(graph, target)?;
+        if is_visible(visible, target_index) {
+            total += checked_relation_weight(graph, weights, edge)?;
+        }
     }
     Ok(total)
 }
@@ -2097,6 +2326,8 @@ fn push_hyper_unweighted<H, IE, IR, S>(
     hypergraph: &H,
     elements: IE,
     relations: IR,
+    visible_elements: &[u8],
+    visible_relations: &[u8],
     element_ranks: &[S],
     relation_ranks: &[S],
     next_elements: &mut [S],
@@ -2115,29 +2346,48 @@ where
     let mut dangling = S::ZERO;
     for element in elements {
         let index = checked_element_index(hypergraph, element)?;
-        let degree = hypergraph.outgoing_hyperedges(element).count();
+        let mut degree = 0_usize;
+        for relation in hypergraph.outgoing_hyperedges(element) {
+            let relation_index = checked_relation_index_for(hypergraph, relation)?;
+            if is_visible(visible_relations, relation_index) {
+                degree += 1;
+            }
+        }
         if degree == 0 {
             dangling += element_ranks[index];
-        } else {
-            let share = element_ranks[index] / S::from_usize(degree);
-            for relation in hypergraph.outgoing_hyperedges(element) {
-                let relation_index = checked_relation_index_for(hypergraph, relation)?;
-                next_relations[relation_index] += share;
+            continue;
+        }
+        let share = element_ranks[index] / S::from_usize(degree);
+        for relation in hypergraph.outgoing_hyperedges(element) {
+            let relation_index = checked_relation_index_for(hypergraph, relation)?;
+            if !is_visible(visible_relations, relation_index) {
+                continue;
             }
+            next_relations[relation_index] += share;
         }
     }
     for relation in relations {
         let relation_index = checked_relation_index_for(hypergraph, relation)?;
-        let degree = hypergraph.target_incidences(relation).count();
+        let mut degree = 0_usize;
+        for incidence in hypergraph.target_incidences(relation) {
+            let target = hypergraph.incidence_element(incidence);
+            let target_index = checked_element_index(hypergraph, target)?;
+            if is_visible(visible_elements, target_index) {
+                degree += 1;
+            }
+        }
         if degree == 0 {
             dangling += relation_ranks[relation_index];
-        } else {
-            let share = relation_ranks[relation_index] / S::from_usize(degree);
-            for incidence in hypergraph.target_incidences(relation) {
-                let target = hypergraph.incidence_element(incidence);
-                let target_index = checked_element_index(hypergraph, target)?;
-                next_elements[target_index] += share;
+            continue;
+        }
+        let share = relation_ranks[relation_index] / S::from_usize(degree);
+        for incidence in hypergraph.target_incidences(relation) {
+            let target = hypergraph.incidence_element(incidence);
+            let target_index = checked_element_index(hypergraph, target)?;
+            if !is_visible(visible_elements, target_index) {
+                continue;
             }
+            next_elements[target_index] += share;
         }
     }
     Ok(dangling)
@@ -2153,6 +2403,8 @@ fn push_hyper_weighted<H, RW, IW, IE, IR, S>(
     incidence_weights: &IW,
     elements: IE,
     relations: IR,
+    visible_elements: &[u8],
+    visible_relations: &[u8],
     element_ranks: &[S],
     relation_ranks: &[S],
     next_elements: &mut [S],
@@ -2180,29 +2432,45 @@ where
     let mut dangling = S::ZERO;
     for element in elements {
         let index = checked_element_index(hypergraph, element)?;
-        let total = hyper_outgoing_relation_weight(hypergraph, relation_weights, element)?;
+        let total = hyper_outgoing_relation_weight(
+            hypergraph,
+            relation_weights,
+            element,
+            visible_relations,
+        )?;
         if total <= S::ZERO {
             dangling += element_ranks[index];
-        } else {
-            for relation in hypergraph.outgoing_hyperedges(element) {
-                let weight = checked_relation_weight(hypergraph, relation_weights, relation)?;
-                let relation_index = checked_relation_index_for(hypergraph, relation)?;
-                next_relations[relation_index] += element_ranks[index] * (weight / total);
+            continue;
+        }
+        for relation in hypergraph.outgoing_hyperedges(element) {
+            let relation_index = checked_relation_index_for(hypergraph, relation)?;
+            if !is_visible(visible_relations, relation_index) {
+                continue;
             }
+            let weight = checked_relation_weight(hypergraph, relation_weights, relation)?;
+            next_relations[relation_index] += element_ranks[index] * (weight / total);
         }
     }
     for relation in relations {
         let relation_index = checked_relation_index_for(hypergraph, relation)?;
-        let total = hyper_target_incidence_weight(hypergraph, incidence_weights, relation)?;
+        let total = hyper_target_incidence_weight(
+            hypergraph,
+            incidence_weights,
+            relation,
+            visible_elements,
+        )?;
         if total <= S::ZERO {
             dangling += relation_ranks[relation_index];
-        } else {
-            for incidence in hypergraph.target_incidences(relation) {
-                let weight = checked_incidence_weight(hypergraph, incidence_weights, incidence)?;
-                let target = hypergraph.incidence_element(incidence);
-                let target_index = checked_element_index(hypergraph, target)?;
-                next_elements[target_index] += relation_ranks[relation_index] * (weight / total);
+            continue;
+        }
+        for incidence in hypergraph.target_incidences(relation) {
+            let target = hypergraph.incidence_element(incidence);
+            let target_index = checked_element_index(hypergraph, target)?;
+            if !is_visible(visible_elements, target_index) {
+                continue;
             }
+            let weight = checked_incidence_weight(hypergraph, incidence_weights, incidence)?;
+            next_elements[target_index] += relation_ranks[relation_index] * (weight / total);
         }
     }
     Ok(dangling)
@@ -2221,6 +2489,7 @@ fn hyper_outgoing_relation_weight<H, W, S>(
     hypergraph: &H,
     weights: &W,
     element: ElementId<H>,
+    visible_relations: &[u8],
 ) -> Result<S, PageRankError<S>>
 where
     H: DirectedVertexHyperedges + RelationIndex,
@@ -2230,7 +2499,10 @@ where
 {
     let mut total = S::ZERO;
     for relation in hypergraph.outgoing_hyperedges(element) {
-        total += checked_relation_weight(hypergraph, weights, relation)?;
+        let relation_index = checked_relation_index_for(hypergraph, relation)?;
+        if is_visible(visible_relations, relation_index) {
+            total += checked_relation_weight(hypergraph, weights, relation)?;
+        }
     }
     Ok(total)
 }
@@ -2239,9 +2511,10 @@ fn hyper_target_incidence_weight<H, W, S>(
     hypergraph: &H,
     weights: &W,
     relation: RelationId<H>,
+    visible_elements: &[u8],
 ) -> Result<S, PageRankError<S>>
 where
-    H: DirectedHyperedgeIncidences + IncidenceIndex,
+    H: DirectedHyperedgeIncidences + IncidenceElement + ElementIndex + IncidenceIndex,
     W: IncidenceWeight<
             ElementId = H::ElementId,
             RelationId = H::RelationId,
@@ -2252,7 +2525,11 @@ where
 {
     let mut total = S::ZERO;
     for incidence in hypergraph.target_incidences(relation) {
-        total += checked_incidence_weight(hypergraph, weights, incidence)?;
+        let target = hypergraph.incidence_element(incidence);
+        let target_index = checked_element_index(hypergraph, target)?;
+        if is_visible(visible_elements, target_index) {
+            total += checked_incidence_weight(hypergraph, weights, incidence)?;
+        }
     }
     Ok(total)
 }

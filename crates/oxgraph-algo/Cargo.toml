@@ -23,10 +23,14 @@ arrow-array = { workspace = true }
 arrow-schema = { workspace = true }
 criterion = { workspace = true }
 oxgraph-csr = { version = "0.0.0", path = "../oxgraph-csr" }
-oxgraph-graph-build = { version = "0.0.0", path = "../oxgraph-graph-build" }
+oxgraph-graph-build = { version = "0.0.0", path = "../oxgraph-graph-build", features = [
+  "property-arrow",
+] }
 oxgraph-hyper = { version = "0.0.0", path = "../oxgraph-hyper" }
 oxgraph-hyper-bcsr = { version = "0.0.0", path = "../oxgraph-hyper-bcsr" }
-oxgraph-hyper-build = { version = "0.0.0", path = "../oxgraph-hyper-build" }
+oxgraph-hyper-build = { version = "0.0.0", path = "../oxgraph-hyper-build", features = [
+  "property-arrow",
+] }
 oxgraph-property = { version = "0.0.0", path = "../oxgraph-property" }
 oxgraph-snapshot = { version = "0.0.0", path = "../oxgraph-snapshot", features = ["alloc"] }
 proptest = { workspace = true }

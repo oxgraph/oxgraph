@@ -13,39 +13,38 @@ use arrow_schema::{DataType, Field};
 use oxgraph_algo::{
     PageRankConfig, breadth_first_search, hypergraph_pagerank_weighted, pagerank_weighted,
 };
-use oxgraph_graph::GraphCounts;
-use oxgraph_graph_build::GraphBuilder;
+use oxgraph_graph_build::{WeightedGraphBuilder, export_weighted_csr_snapshot_with_properties};
 use oxgraph_hyper::HypergraphCounts;
-use oxgraph_hyper_build::HypergraphBuilder;
+use oxgraph_hyper_build::{
+    WeightedHypergraphBuilder, export_weighted_bcsr_snapshot_with_properties,
+};
 use oxgraph_property::{
-    IdFamily, LayerId, LayerRole, PropertyLayer, PropertyLayerDescriptor, StorageMode,
-    validate_identity_snapshot, validate_property_snapshot,
+    GraphPropertyLayers, HyperPropertyLayers, IdFamily, LayerId, LayerRole, PropertyLayer,
+    PropertyLayerDescriptor, StorageMode, validate_identity_snapshot, validate_property_snapshot,
 };
 use oxgraph_snapshot::Snapshot;
-use oxgraph_topology::{LocalElementIdentity, RelationWeight};
+use oxgraph_topology::{LocalElementIdentity, RelationWeight, TopologyCounts};
 
 /// Convergence configuration for local transition fixtures.
-const CONFIG: PageRankConfig = PageRankConfig::new(0.85, 1.0e-10, 200);
+const CONFIG: PageRankConfig<f64> = PageRankConfig::new(0.85, 1.0e-10, 200);
 
 #[test]
 fn weighted_graph_transition_fixture_covers_algorithms_identity_and_snapshot()
 -> Result<(), Box<dyn Error>> {
-    let mut builder = GraphBuilder::new(0.0_f64, 1.0_f64);
-    let idle = builder.add_node()?;
-    let queued = builder.add_node()?;
-    let running = builder.add_node()?;
-    let done = builder.add_node()?;
-    let to_queued = builder.add_edge(idle, queued)?;
-    let to_running = builder.add_edge(queued, running)?;
-    let retry = builder.add_edge(running, queued)?;
-    let finish = builder.add_edge(running, done)?;
-    builder.set_relation_weight(to_queued, 3.0)?;
-    builder.set_relation_weight(to_running, 5.0)?;
-    builder.set_relation_weight(retry, 1.0)?;
-    builder.set_relation_weight(finish, 4.0)?;
-    builder.add_property_layer(PropertyLayer::try_new_dense(
-        PropertyLayerDescriptor::try_new(
-            LayerId(1),
+    let mut builder = WeightedGraphBuilder::<u32, u32, f64, f64>::new();
+    let idle = builder.add_node(0.0)?;
+    let queued = builder.add_node(0.0)?;
+    let running = builder.add_node(0.0)?;
+    let done = builder.add_node(0.0)?;
+    builder.add_edge(idle, queued, 3.0)?;
+    builder.add_edge(queued, running, 5.0)?;
+    builder.add_edge(running, queued, 1.0)?;
+    let finish = builder.add_edge(running, done, 4.0)?;
+    let graph = builder.freeze()?;
+
+    let relation_weight_layers = [PropertyLayer::try_new_dense(
+        PropertyLayerDescriptor::<u32, u32>::try_new(
+            LayerId(1_u32),
             "edge_weight",
             IdFamily::Relation,
             LayerRole::Weight,
@@ -53,44 +52,49 @@ fn weighted_graph_transition_fixture_covers_algorithms_identity_and_snapshot()
             Field::new("edge_weight", DataType::Float64, false),
         )?,
         Arc::new(Float64Array::from(vec![3.0, 5.0, 1.0, 4.0])),
-    )?)?;
-    let graph = builder.freeze()?;
+    )?];
 
     let bfs: Vec<_> = breadth_first_search(&graph, idle)?.collect();
     assert_eq!(bfs, vec![idle, queued, running, done]);
     assert_eq!(graph.local_element_id(idle), Some(idle));
-    assert_eq!(graph.edge_count(), 4);
+    assert_eq!(graph.relation_count(), 4);
     assert!((graph.relation_weight(finish) - 4.0_f64).abs() < f64::EPSILON);
 
     let elements = vec![idle, queued, running, done];
-    let mut ranks = vec![0.0; graph.node_count()];
+    let mut ranks = vec![0.0; graph.element_count()];
     pagerank_weighted(&graph, &graph, elements, CONFIG, None, &mut ranks)?;
     assert_probability_mass(&ranks);
 
-    let bytes = graph.to_csr_snapshot()?;
+    let bytes = export_weighted_csr_snapshot_with_properties(
+        &graph,
+        GraphPropertyLayers {
+            element: &[],
+            relation: &relation_weight_layers,
+        },
+    )?;
     let snapshot = Snapshot::open(&bytes)?;
-    assert_eq!(validate_identity_snapshot(&snapshot)?.records.len(), 2);
-    assert_eq!(validate_property_snapshot(&snapshot)?.layer_count, 1);
+    assert_eq!(
+        validate_identity_snapshot::<u32>(&snapshot)?.records.len(),
+        2
+    );
+    assert_eq!(validate_property_snapshot::<u32>(&snapshot)?.layer_count, 1);
     Ok(())
 }
 
 #[test]
 fn weighted_hyper_transition_fixture_covers_bipartite_ranking_and_snapshot()
 -> Result<(), Box<dyn Error>> {
-    let mut builder = HypergraphBuilder::new(0.0_f64, 1.0_f64, 1.0_f64);
-    let idle = builder.add_vertex()?;
-    let queued = builder.add_vertex()?;
-    let running = builder.add_vertex()?;
-    let done = builder.add_vertex()?;
-    let dispatch = builder.add_hyperedge(&[idle, queued], &[running])?;
-    let complete_or_retry = builder.add_hyperedge(&[running], &[queued, done])?;
-    builder.set_relation_weight(dispatch, 2.0)?;
-    builder.set_relation_weight(complete_or_retry, 4.0)?;
-    builder.set_target_incidence_weight(complete_or_retry, 0, 1.0)?;
-    builder.set_target_incidence_weight(complete_or_retry, 1, 3.0)?;
-    builder.add_property_layer(PropertyLayer::try_new_dense(
-        PropertyLayerDescriptor::try_new(
-            LayerId(2),
+    let mut builder = WeightedHypergraphBuilder::<u32, u32, u32, f64, f64, f64>::new();
+    let idle = builder.add_vertex(0.0)?;
+    let queued = builder.add_vertex(0.0)?;
+    let running = builder.add_vertex(0.0)?;
+    let done = builder.add_vertex(0.0)?;
+    let dispatch = builder.add_hyperedge(&[(idle, 1.0), (queued, 1.0)], &[(running, 1.0)], 2.0)?;
+    let complete_or_retry =
+        builder.add_hyperedge(&[(running, 1.0)], &[(queued, 1.0), (done, 3.0)], 4.0)?;
+    let relation_weight_layers = [PropertyLayer::try_new_dense(
+        PropertyLayerDescriptor::<u32, u32>::try_new(
+            LayerId(2_u32),
             "hyperedge_weight",
             IdFamily::Relation,
             LayerRole::Weight,
@@ -98,7 +102,7 @@ fn weighted_hyper_transition_fixture_covers_bipartite_ranking_and_snapshot()
             Field::new("hyperedge_weight", DataType::Float64, false),
         )?,
         Arc::new(Float64Array::from(vec![2.0, 4.0])),
-    )?);
+    )?];
     let graph = builder.freeze()?;
 
     let elements = vec![idle, queued, running, done];
@@ -119,10 +123,20 @@ fn weighted_hyper_transition_fixture_covers_bipartite_ranking_and_snapshot()
     assert_probability_mass(&element_ranks);
     assert_probability_mass(&relation_ranks);
 
-    let bytes = graph.to_bcsr_snapshot()?;
+    let bytes = export_weighted_bcsr_snapshot_with_properties(
+        &graph,
+        HyperPropertyLayers {
+            element: &[],
+            relation: &relation_weight_layers,
+            incidence: &[],
+        },
+    )?;
     let snapshot = Snapshot::open(&bytes)?;
-    assert_eq!(validate_identity_snapshot(&snapshot)?.records.len(), 3);
-    assert_eq!(validate_property_snapshot(&snapshot)?.layer_count, 1);
+    assert_eq!(
+        validate_identity_snapshot::<u32>(&snapshot)?.records.len(),
+        3
+    );
+    assert_eq!(validate_property_snapshot::<u32>(&snapshot)?.layer_count, 1);
     Ok(())
 }
 

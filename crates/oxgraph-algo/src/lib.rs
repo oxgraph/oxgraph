@@ -53,7 +53,6 @@ extern crate alloc;
 extern crate std;
 
 pub mod bfs;
-#[cfg(feature = "alloc")]
 pub mod pagerank;
 
 pub use bfs::{
@@ -75,13 +74,15 @@ pub use bfs::{
     HashBreadthFirstSearch, HashReverseBreadthFirstSearch, breadth_first_search_generic_hash,
     reverse_breadth_first_search_generic_hash,
 };
+pub use pagerank::{
+    HypergraphPageRankScratch, IntoPageRankScalar, PageRankConfig, PageRankError, PageRankReport,
+    PageRankScalar, PageRankScratch, hypergraph_pagerank_weighted_with_scratch,
+    hypergraph_pagerank_with_scratch, pagerank_weighted_with_scratch, pagerank_with_scratch,
+};
 #[cfg(feature = "alloc")]
 pub use pagerank::{
-    HypergraphPageRankScratch, HypergraphPageRankWorkspace, IntoPageRankScalar, PageRankConfig,
-    PageRankError, PageRankReport, PageRankScalar, PageRankScratch, PageRankWorkspace,
-    hypergraph_pagerank, hypergraph_pagerank_weighted, hypergraph_pagerank_weighted_with_scratch,
-    hypergraph_pagerank_weighted_with_workspace, hypergraph_pagerank_with_scratch,
+    HypergraphPageRankWorkspace, PageRankWorkspace, hypergraph_pagerank,
+    hypergraph_pagerank_weighted, hypergraph_pagerank_weighted_with_workspace,
     hypergraph_pagerank_with_workspace, pagerank, pagerank_weighted,
-    pagerank_weighted_with_scratch, pagerank_weighted_with_workspace, pagerank_with_scratch,
-    pagerank_with_workspace,
+    pagerank_weighted_with_workspace, pagerank_with_workspace,
 };
