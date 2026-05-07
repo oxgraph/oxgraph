@@ -16,7 +16,8 @@ intent:
   goals: |
     - Define the smallest set of read-view capability traits both graph and hypergraph
       backends need: TopologyBase, IncidenceBase, ElementIndex, RelationIndex,
-      ElementSuccessors, ElementPredecessors, RelationIncidences, ElementIncidences, etc.
+      ElementSuccessors, ElementPredecessors, RelationIncidences, ElementIncidences,
+      optional semantic-free weights, opt-in canonical identity, etc.
     - Stay no_std. Stay dependency-light. Stay boring and stable.
     - Use associated types for IDs and roles so views can pick their own identity layer
       and integer width.
@@ -36,6 +37,8 @@ intent:
     specific (u16 / u32 / u64). Locking either would be a substrate-level mistake.
 constraints:
 - 17
+- 26
+- 27
 realization:
 - bindings:
   - scheme: path
@@ -45,8 +48,13 @@ realization:
   - scheme: path
     value: crates/oxgraph-topology/src/lib.rs
     metadata:
-      summary: All traits live in the single lib file — TopologyId, TopologyBase, IncidenceBase, indexes, counts, traversal, view bundle.
+      summary: All traits live in the single lib file — TopologyId, TopologyBase, IncidenceBase, indexes, counts, traversal, optional weights, canonical/local identity, view bundles.
   role: primary
+amendment_log:
+- 8
 parents:
 - id: 1
+  role: component
+children:
+- shape: 18
   role: component

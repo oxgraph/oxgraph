@@ -1,0 +1,33 @@
+id: 12
+name: PR stack hardening
+description: PR stack hardening
+targets:
+  shape_ids:
+  - 11
+  - 5
+  - 6
+  - 19
+  - 20
+  - 21
+  - 22
+  - 24
+status: proposed
+version_impact: major
+intent:
+  kind: amendment
+  summary: Re-cut the PR stack around explicit index widths, snapshot-local property identity, dependency-clean builders, and visible-state PageRank semantics.
+  source: human
+  goals: |
+    - Split CSR memory views into separate NodeIndex and EdgeIndex widths, and split BCSR memory views into separate vertex, relation, and incidence widths.
+    - Persist CSR and BCSR snapshots only through explicit u16/u32/u64 little-endian section kinds; usize remains native-memory-only.
+    - Keep properties above topology, generic over explicit layer-ID and sparse-index widths, and use Arrow IPC schema as the property type source of truth rather than duplicate coarse metadata.
+    - Key property arrays by snapshot-local IDs. Exporters must emit identity maps and rekey relation/incidence property layers whenever local order differs from canonical builder order.
+    - Split graph and hypergraph builders into no_std + alloc append/freeze cores, with snapshot/property Arrow export behind explicit features.
+    - Define PageRank over induced visible states: duplicate visible IDs are typed errors, invisible transitions are ignored, and rows without visible outgoing targets are dangling.
+    - Curate the umbrella crate with explicit feature names for snapshot/property Arrow costs instead of wildcard re-export mirrors.
+  non_goals: |
+    No default Rust generic widths or scalar types, no generation-checked mutation cache API, no deletion/tombstone/overlay mutation, no Arrow/PyO3/property leakage into foundation crates, and no stable snapshot ABI promotion.
+  rationale: |
+    The open stack was directionally aligned with OxGraph's substrate-first model but had correctness and dependency-boundary faults in the upper layers. The repair is a re-cut, not a blind patch: make wire/index fundamentals explicit first, keep construction and property export separate, and defer Python until the Rust contracts are corrected.
+initiated_by:
+  type: human

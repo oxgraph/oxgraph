@@ -1,0 +1,44 @@
+id: 24
+name: architecture documentation
+description: |
+  The durable architecture document for the Python-enabling slice. It captures the
+  layer hierarchy, topology/property boundary, weight and identity capabilities,
+  builder/freeze flow, snapshot persistence direction, PageRank policies, Python facade,
+  and safety boundary so implementation does not live only in a plan file.
+profile: 1
+status: proposed
+intent:
+  kind: interface
+  summary: Architecture document capturing layer hierarchy, boundaries, and accepted decisions
+  source: ai
+  goals: |
+    - Create docs/architecture.md before code changes.
+    - Include crate/layer hierarchy, topology weight vs property selection, generic builders,
+      Arrow-backed snapshot flows, generic PageRank rank-scalar and workspace policies, Python facade boundary,
+      and unsafe isolation.
+    - Keep the detailed decision logs in plans/ as supporting research, not the only
+      architecture reference.
+  non_goals: |
+    Not a replacement for shapes, not a stable snapshot ABI document, and not a Python
+    API reference.
+  rationale: |
+    The plan is too broad to realize safely from ephemeral chat alone. A checked-in
+    architecture document gives future contributors a concise, durable map from shape
+    intent to crate boundaries and implementation choices.
+realization:
+- bindings:
+  - scheme: path
+    value: docs/architecture.md
+    metadata:
+      summary: Architecture document for weighted topology, property layers, builders, snapshots, PageRank, Python, and safety.
+  role: primary
+amendment_log:
+- 9
+- 10
+- 11
+- 12
+- 13
+- 14
+parents:
+- id: 1
+  role: component

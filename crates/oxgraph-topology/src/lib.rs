@@ -95,6 +95,147 @@ pub type ElementId<T> = <T as TopologyBase>::ElementId;
 /// [`TopologyBase::RelationId`] type.
 pub type RelationId<T> = <T as TopologyBase>::RelationId;
 
+/// Optional total weight capability for topology elements.
+///
+/// A view implements this trait only when every visible element has a weight
+/// representation. The topology layer does not interpret the value: it is not a
+/// probability, cost, distance, count, or property name. Algorithms state their
+/// own numeric contracts when they consume a selected weight capability.
+///
+/// # Performance
+///
+/// Lookup should be `O(1)` unless an implementation documents a weaker
+/// contract.
+pub trait ElementWeight: TopologyBase {
+    /// Copyable weight representation attached to each visible element.
+    ///
+    /// # Performance
+    ///
+    /// Values should be `O(1)` to copy.
+    type Weight: Copy;
+
+    /// Returns the weight attached to `element`.
+    ///
+    /// # Performance
+    ///
+    /// Expected `O(1)` unless the implementation documents otherwise.
+    fn element_weight(&self, element: Self::ElementId) -> Self::Weight;
+}
+
+/// Optional total weight capability for topology relations.
+///
+/// A view implements this trait only when every visible relation has a weight
+/// representation. The topology layer does not interpret the value; algorithms
+/// define any finite, non-negative, additive, ordered, or normalization
+/// requirements separately.
+///
+/// # Performance
+///
+/// Lookup should be `O(1)` unless an implementation documents a weaker
+/// contract.
+pub trait RelationWeight: TopologyBase {
+    /// Copyable weight representation attached to each visible relation.
+    ///
+    /// # Performance
+    ///
+    /// Values should be `O(1)` to copy.
+    type Weight: Copy;
+
+    /// Returns the weight attached to `relation`.
+    ///
+    /// # Performance
+    ///
+    /// Expected `O(1)` unless the implementation documents otherwise.
+    fn relation_weight(&self, relation: Self::RelationId) -> Self::Weight;
+}
+
+/// Optional local-to-canonical element identity capability.
+///
+/// Views implement this trait only when they guarantee a stable canonical ID for
+/// every visible element in the view's documented identity scope. The canonical
+/// ID is a substrate identity, not a Python label or domain identifier.
+///
+/// # Performance
+///
+/// Lookup should be `O(1)` unless an implementation documents a weaker
+/// contract.
+pub trait CanonicalElementIdentity: TopologyBase {
+    /// Canonical element ID guaranteed by this view.
+    ///
+    /// # Performance
+    ///
+    /// Values should be `O(1)` to copy, compare, order, hash, and debug-format.
+    type CanonicalElementId: TopologyId;
+
+    /// Returns the canonical ID for a visible local `element`.
+    ///
+    /// # Performance
+    ///
+    /// Expected `O(1)` unless the implementation documents otherwise.
+    fn canonical_element_id(&self, element: Self::ElementId) -> Self::CanonicalElementId;
+}
+
+/// Optional canonical-to-local element identity capability.
+///
+/// This reverse lookup is separate from [`CanonicalElementIdentity`] because it
+/// may require extra memory or may be partial for filtered and projected views.
+///
+/// # Performance
+///
+/// Lookup should be `O(1)` unless an implementation documents a weaker
+/// contract.
+pub trait LocalElementIdentity: CanonicalElementIdentity {
+    /// Returns the visible local element for `canonical`, if present.
+    ///
+    /// # Performance
+    ///
+    /// Expected `O(1)` unless the implementation documents otherwise.
+    fn local_element_id(&self, canonical: Self::CanonicalElementId) -> Option<Self::ElementId>;
+}
+
+/// Optional local-to-canonical relation identity capability.
+///
+/// Views implement this trait only when they guarantee a stable canonical ID for
+/// every visible relation in the view's documented identity scope.
+///
+/// # Performance
+///
+/// Lookup should be `O(1)` unless an implementation documents a weaker
+/// contract.
+pub trait CanonicalRelationIdentity: TopologyBase {
+    /// Canonical relation ID guaranteed by this view.
+    ///
+    /// # Performance
+    ///
+    /// Values should be `O(1)` to copy, compare, order, hash, and debug-format.
+    type CanonicalRelationId: TopologyId;
+
+    /// Returns the canonical ID for a visible local `relation`.
+    ///
+    /// # Performance
+    ///
+    /// Expected `O(1)` unless the implementation documents otherwise.
+    fn canonical_relation_id(&self, relation: Self::RelationId) -> Self::CanonicalRelationId;
+}
+
+/// Optional canonical-to-local relation identity capability.
+///
+/// This reverse lookup is separate from [`CanonicalRelationIdentity`] because it
+/// may require extra memory or may be partial for filtered and projected views.
+///
+/// # Performance
+///
+/// Lookup should be `O(1)` unless an implementation documents a weaker
+/// contract.
+pub trait LocalRelationIdentity: CanonicalRelationIdentity {
+    /// Returns the visible local relation for `canonical`, if present.
+    ///
+    /// # Performance
+    ///
+    /// Expected `O(1)` unless the implementation documents otherwise.
+    fn local_relation_id(&self, canonical: Self::CanonicalRelationId) -> Option<Self::RelationId>;
+}
+
 /// Incidence identity and role vocabulary for topology views with incidences.
 ///
 /// Incidence support is separate from [`TopologyBase`] so graph-only views can
@@ -126,6 +267,79 @@ pub trait IncidenceBase: TopologyBase {
     /// values or compact role handles; rich metadata should be reached through
     /// separate payload access traits.
     type Role;
+}
+
+/// Optional total weight capability for topology incidences.
+///
+/// A view implements this trait only when every visible incidence has a weight
+/// representation. The topology layer does not interpret the value; algorithms
+/// define their own numeric contracts separately.
+///
+/// # Performance
+///
+/// Lookup should be `O(1)` unless an implementation documents a weaker
+/// contract.
+pub trait IncidenceWeight: IncidenceBase {
+    /// Copyable weight representation attached to each visible incidence.
+    ///
+    /// # Performance
+    ///
+    /// Values should be `O(1)` to copy.
+    type Weight: Copy;
+
+    /// Returns the weight attached to `incidence`.
+    ///
+    /// # Performance
+    ///
+    /// Expected `O(1)` unless the implementation documents otherwise.
+    fn incidence_weight(&self, incidence: Self::IncidenceId) -> Self::Weight;
+}
+
+/// Optional local-to-canonical incidence identity capability.
+///
+/// Views implement this trait only when they guarantee a stable canonical ID for
+/// every visible incidence in the view's documented identity scope.
+///
+/// # Performance
+///
+/// Lookup should be `O(1)` unless an implementation documents a weaker
+/// contract.
+pub trait CanonicalIncidenceIdentity: IncidenceBase {
+    /// Canonical incidence ID guaranteed by this view.
+    ///
+    /// # Performance
+    ///
+    /// Values should be `O(1)` to copy, compare, order, hash, and debug-format.
+    type CanonicalIncidenceId: TopologyId;
+
+    /// Returns the canonical ID for a visible local `incidence`.
+    ///
+    /// # Performance
+    ///
+    /// Expected `O(1)` unless the implementation documents otherwise.
+    fn canonical_incidence_id(&self, incidence: Self::IncidenceId) -> Self::CanonicalIncidenceId;
+}
+
+/// Optional canonical-to-local incidence identity capability.
+///
+/// This reverse lookup is separate from [`CanonicalIncidenceIdentity`] because
+/// it may require extra memory or may be partial for filtered and projected
+/// views.
+///
+/// # Performance
+///
+/// Lookup should be `O(1)` unless an implementation documents a weaker
+/// contract.
+pub trait LocalIncidenceIdentity: CanonicalIncidenceIdentity {
+    /// Returns the visible local incidence for `canonical`, if present.
+    ///
+    /// # Performance
+    ///
+    /// Expected `O(1)` unless the implementation documents otherwise.
+    fn local_incidence_id(
+        &self,
+        canonical: Self::CanonicalIncidenceId,
+    ) -> Option<Self::IncidenceId>;
 }
 
 /// Count capability for a topology view.

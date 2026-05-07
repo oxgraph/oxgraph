@@ -1,29 +1,30 @@
 id: 9
 name: substrate agnostic algorithms
 description: |
-  Algorithms expressed over oxgraph-topology trait bounds, not over specific layouts.
+  Algorithms expressed over OxGraph capability bounds, not over specific owned layouts.
   The same BFS implementation runs unchanged on oxgraph-csr::CsrGraph and on
   oxgraph-hyper-bcsr::BcsrHypergraph, and on any future view that exposes
-  ElementSuccessors / ElementPredecessors. no_std with optional alloc and std tiers.
-  Substrate-agnostic by design — does not pick a domain (graph vs. hypergraph) at the
-  trait-bound level.
+  ElementSuccessors / ElementPredecessors. PageRank adds alloc-tier ordinary graph and
+  incidence/bipartite hypergraph ranking over graph/hypergraph capability views and
+  selected topology weights. no_std baseline with optional alloc and std tiers.
 profile: 1
 status: canonical
 intent:
   kind: module
-  summary: Algorithms over topology trait bounds — BFS today, more later
+  summary: Algorithms over capability bounds — BFS plus PageRank ranking
   source: human
   goals: |
     - Bind algorithms on oxgraph-topology capability traits, not on graph or hypergraph
       specializations, so the same code runs across substrates.
     - Provide a tiered storage model so strict no_std callers, alloc callers without
       dense indexes, and std callers all have a path that fits their environment.
-    - Forward and reverse variants for every algorithm where direction matters; share
-      the underlying scratch and workspace types across directions.
+    - Forward and reverse variants for every traversal algorithm where direction matters;
+      share the underlying scratch and workspace types across directions.
+    - Provide PageRank under the canonical name with typed errors and no Arrow dependency.
   non_goals: |
-    No graph- or hypergraph-specific algorithms here. No mutation algorithms. No
-    parallel/distributed traversal. No algorithms that require capability tiers the
-    substrate has not added yet.
+    No mutation algorithms. No parallel/distributed traversal. No algorithms that require
+    capability tiers the substrate has not added yet. No Arrow/property lookup inside
+    algorithms; selected views provide weights.
   rationale: |
     Algorithms targeting concrete graph types lock the substrate's value behind one
     layout. Targeting topology trait bounds is what lets the same BFS produce both
@@ -35,15 +36,19 @@ realization:
   - scheme: path
     value: crates/oxgraph-algo
     metadata:
-      summary: The crate root. Substrate-agnostic algorithms over oxgraph-topology trait bounds.
+      summary: The crate root. Substrate-agnostic algorithms over OxGraph capability bounds, including BFS and alloc-gated PageRank.
   - scheme: path
     value: crates/oxgraph-algo/src/lib.rs
     metadata:
-      summary: Crate-level documentation; re-exports of the BFS module.
+      summary: Crate-level documentation; re-exports of BFS and alloc-gated PageRank APIs.
   role: primary
+amendment_log:
+- 8
 parents:
 - id: 1
   role: component
 children:
 - shape: 10
+  role: component
+- shape: 22
   role: component

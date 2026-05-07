@@ -1,0 +1,26 @@
+id: 11
+name: Generic PageRank scalar and workspace completion
+description: Generic PageRank scalar and workspace completion
+targets:
+  shape_ids:
+  - 22
+  - 23
+  - 24
+status: proposed
+intent:
+  kind: amendment
+  summary: Finish PageRank generic rank-scalar APIs and reusable scratch/workspace tiers so PageRank no longer allocates by default-only APIs or fossilizes f64 rank state.
+  source: human
+  goals: |
+    - Make PageRank configuration, reports, errors, personalization, output ranks, teleport vectors, and scratch storage generic over rank scalar S.
+    - Keep PageRank arithmetic in OxGraph-owned PageRankScalar traits rather than topology traits or a public num-traits dependency.
+    - Convert selected topology relation/incidence weights into S through IntoPageRankScalar<S> at the algorithm boundary.
+    - Add borrowed scratch APIs and owned PageRank workspaces for graph and incidence/bipartite hypergraph PageRank, mirroring BFS allocation-tier discipline.
+    - Preserve existing allocating convenience function names as wrappers over the generic implementation.
+    - Keep Python as an explicit f64 specialization over generic Rust PageRank APIs.
+  non_goals: |
+    No arithmetic semantics in oxgraph-topology weight traits, no Arrow/property lookup inside PageRank, no projected hypergraph PageRank policy, no third-party numeric dependency exposed in public APIs, and no Python-visible behavior change beyond the generic Rust implementation underneath.
+  rationale: |
+    The generic foundation overhaul removed f64-only weight inputs but PageRank still kept f64 rank/config/output surfaces and internally allocated scratch buffers. This amendment completes the original rank-scalar and workspace intent without changing the topology/property boundary.
+initiated_by:
+  type: human

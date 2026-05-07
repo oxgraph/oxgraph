@@ -25,18 +25,19 @@ use oxgraph_csr::{
     SNAPSHOT_KIND_CSR_OFFSETS_U32, SNAPSHOT_KIND_CSR_TARGETS_U32,
 };
 use oxgraph_hyper_bcsr::{
-    BcsrError, BcsrHypergraph, BcsrSnapshotError, BcsrVertexId, SNAPSHOT_KIND_BCSR_HEAD_OFFSETS,
-    SNAPSHOT_KIND_BCSR_HEAD_PARTICIPANTS, SNAPSHOT_KIND_BCSR_TAIL_OFFSETS,
-    SNAPSHOT_KIND_BCSR_TAIL_PARTICIPANTS, SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_HYPEREDGES,
-    SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_OFFSETS, SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_HYPEREDGES,
-    SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_OFFSETS,
+    BcsrError, BcsrSnapshotError, BcsrSnapshotHypergraph, BcsrVertexId,
+    SNAPSHOT_KIND_BCSR_HEAD_OFFSETS_U32, SNAPSHOT_KIND_BCSR_HEAD_PARTICIPANTS_U32,
+    SNAPSHOT_KIND_BCSR_TAIL_OFFSETS_U32, SNAPSHOT_KIND_BCSR_TAIL_PARTICIPANTS_U32,
+    SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_HYPEREDGES_U32,
+    SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_OFFSETS_U32,
+    SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_HYPEREDGES_U32,
+    SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_OFFSETS_U32,
 };
 use oxgraph_snapshot::{Snapshot, SnapshotBuilder, SnapshotError};
 use oxgraph_topology::{
     ContainsElement, ElementId, ElementIndex, ElementPredecessors, ElementSuccessors, TopologyBase,
 };
 use proptest::prelude::*;
-use zerocopy::byteorder::{LE, U32};
 
 /// Error returned while opening snapshot-backed CSR fixtures.
 #[derive(Debug, Eq, PartialEq)]
@@ -838,36 +839,44 @@ fn bcsr_snapshot_bytes() -> Vec<u8> {
         }
     };
 
-    add(&mut builder, SNAPSHOT_KIND_BCSR_HEAD_OFFSETS, head_offsets);
     add(
         &mut builder,
-        SNAPSHOT_KIND_BCSR_HEAD_PARTICIPANTS,
+        SNAPSHOT_KIND_BCSR_HEAD_OFFSETS_U32,
+        head_offsets,
+    );
+    add(
+        &mut builder,
+        SNAPSHOT_KIND_BCSR_HEAD_PARTICIPANTS_U32,
         head_participants,
     );
-    add(&mut builder, SNAPSHOT_KIND_BCSR_TAIL_OFFSETS, tail_offsets);
     add(
         &mut builder,
-        SNAPSHOT_KIND_BCSR_TAIL_PARTICIPANTS,
+        SNAPSHOT_KIND_BCSR_TAIL_OFFSETS_U32,
+        tail_offsets,
+    );
+    add(
+        &mut builder,
+        SNAPSHOT_KIND_BCSR_TAIL_PARTICIPANTS_U32,
         tail_participants,
     );
     add(
         &mut builder,
-        SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_OFFSETS,
+        SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_OFFSETS_U32,
         vertex_outgoing_offsets,
     );
     add(
         &mut builder,
-        SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_HYPEREDGES,
+        SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_HYPEREDGES_U32,
         vertex_outgoing_hyperedges,
     );
     add(
         &mut builder,
-        SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_OFFSETS,
+        SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_OFFSETS_U32,
         vertex_incoming_offsets,
     );
     add(
         &mut builder,
-        SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_HYPEREDGES,
+        SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_HYPEREDGES_U32,
         vertex_incoming_hyperedges,
     );
 
@@ -878,14 +887,14 @@ fn bcsr_snapshot_bytes() -> Vec<u8> {
 }
 
 /// Opens a BCSR hypergraph from bytes produced by [`bcsr_snapshot_bytes`].
-fn open_bcsr(bytes: &[u8]) -> Result<BcsrHypergraph<'_, U32<LE>>, BcsrFixtureError> {
+fn open_bcsr(bytes: &[u8]) -> Result<BcsrSnapshotHypergraph<'_, u32, u32, u32>, BcsrFixtureError> {
     let snapshot = Snapshot::open(bytes)?;
-    let view = BcsrHypergraph::<U32<LE>>::from_snapshot(&snapshot)?;
+    let view = BcsrSnapshotHypergraph::<u32, u32, u32>::from_snapshot(&snapshot)?;
     Ok(view)
 }
 
 /// Opens a BCSR hypergraph from `bytes` or panics with the underlying error.
-fn open_bcsr_or_panic(bytes: &[u8]) -> BcsrHypergraph<'_, U32<LE>> {
+fn open_bcsr_or_panic(bytes: &[u8]) -> BcsrSnapshotHypergraph<'_, u32, u32, u32> {
     match open_bcsr(bytes) {
         Ok(view) => view,
         Err(error) => panic!("BCSR fixture open failed: {error}"),
@@ -894,9 +903,9 @@ fn open_bcsr_or_panic(bytes: &[u8]) -> BcsrHypergraph<'_, U32<LE>> {
 
 /// Runs forward scratch BFS on a BCSR view or panics with the underlying error.
 fn scratch_order_bcsr(
-    view: &BcsrHypergraph<'_, U32<LE>>,
-    start: BcsrVertexId,
-) -> Vec<BcsrVertexId> {
+    view: &BcsrSnapshotHypergraph<'_, u32, u32, u32>,
+    start: BcsrVertexId<u32>,
+) -> Vec<BcsrVertexId<u32>> {
     match scratch_order(view, start) {
         Ok(order) => order,
         Err(error) => panic!("forward scratch BFS on BCSR failed: {error}"),
@@ -905,9 +914,9 @@ fn scratch_order_bcsr(
 
 /// Runs reverse scratch BFS on a BCSR view or panics with the underlying error.
 fn reverse_scratch_order_bcsr(
-    view: &BcsrHypergraph<'_, U32<LE>>,
-    start: BcsrVertexId,
-) -> Vec<BcsrVertexId> {
+    view: &BcsrSnapshotHypergraph<'_, u32, u32, u32>,
+    start: BcsrVertexId<u32>,
+) -> Vec<BcsrVertexId<u32>> {
     match reverse_scratch_order(view, start) {
         Ok(order) => order,
         Err(error) => panic!("reverse scratch BFS on BCSR failed: {error}"),

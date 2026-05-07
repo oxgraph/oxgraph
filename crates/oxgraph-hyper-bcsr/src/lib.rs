@@ -18,22 +18,9 @@
 //!
 //! | Section kind                            | Logical content                                                            |
 //! | --------------------------------------- | -------------------------------------------------------------------------- |
-//! | [`SNAPSHOT_KIND_BCSR_HEAD_OFFSETS`]     | hyperedge-major head offsets, length `hyperedge_count + 1`                 |
-//! | [`SNAPSHOT_KIND_BCSR_HEAD_PARTICIPANTS`]| flat vertex IDs in head sets, length `P_head`                              |
-//! | [`SNAPSHOT_KIND_BCSR_TAIL_OFFSETS`]     | hyperedge-major tail offsets, length `hyperedge_count + 1`                 |
-//! | [`SNAPSHOT_KIND_BCSR_TAIL_PARTICIPANTS`]| flat vertex IDs in tail sets, length `P_tail`                              |
-//! | [`SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_OFFSETS`] | vertex-major outgoing offsets, length `vertex_count + 1`            |
-//! | [`SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_HYPEREDGES`] | flat hyperedge IDs where v is in head, length `P_outgoing`        |
-//! | [`SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_OFFSETS`] | vertex-major incoming offsets, length `vertex_count + 1`            |
-//! | [`SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_HYPEREDGES`] | flat hyperedge IDs where v is in tail, length `P_incoming`        |
-//!
-//! # v1.0 caps
-//!
-//! Vertex IDs, hyperedge IDs, and offsets are 32-bit. The container therefore
-//! supports at most `2^32 − 1` vertices, `2^32 − 1` hyperedges, and `2^32 − 1`
-//! participants in each of `P_head`, `P_tail`, `P_outgoing`, and `P_incoming`.
-//! `u64`-offset variants are reserved at section kinds `0x0018..=0x001F` and
-//! will land as a separate slice if a producer needs them.
+//! Snapshot section kinds are width-specific. Vertex participant sections use
+//! the selected vertex width, relation sections use the selected relation
+//! width, and all offset sections use the selected incidence width.
 //!
 //! # Validation
 //!
@@ -71,10 +58,54 @@ pub use crate::{
     role::BcsrRole,
     sections::BcsrSections,
     snapshot::{
-        SNAPSHOT_KIND_BCSR_HEAD_OFFSETS, SNAPSHOT_KIND_BCSR_HEAD_PARTICIPANTS,
-        SNAPSHOT_KIND_BCSR_TAIL_OFFSETS, SNAPSHOT_KIND_BCSR_TAIL_PARTICIPANTS,
-        SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_HYPEREDGES, SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_OFFSETS,
-        SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_HYPEREDGES, SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_OFFSETS,
+        SNAPSHOT_KIND_BCSR_HEAD_OFFSETS_U16, SNAPSHOT_KIND_BCSR_HEAD_OFFSETS_U32,
+        SNAPSHOT_KIND_BCSR_HEAD_OFFSETS_U64, SNAPSHOT_KIND_BCSR_HEAD_PARTICIPANTS_U16,
+        SNAPSHOT_KIND_BCSR_HEAD_PARTICIPANTS_U32, SNAPSHOT_KIND_BCSR_HEAD_PARTICIPANTS_U64,
+        SNAPSHOT_KIND_BCSR_TAIL_OFFSETS_U16, SNAPSHOT_KIND_BCSR_TAIL_OFFSETS_U32,
+        SNAPSHOT_KIND_BCSR_TAIL_OFFSETS_U64, SNAPSHOT_KIND_BCSR_TAIL_PARTICIPANTS_U16,
+        SNAPSHOT_KIND_BCSR_TAIL_PARTICIPANTS_U32, SNAPSHOT_KIND_BCSR_TAIL_PARTICIPANTS_U64,
+        SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_HYPEREDGES_U16,
+        SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_HYPEREDGES_U32,
+        SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_HYPEREDGES_U64,
+        SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_OFFSETS_U16,
+        SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_OFFSETS_U32,
+        SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_OFFSETS_U64,
+        SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_HYPEREDGES_U16,
+        SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_HYPEREDGES_U32,
+        SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_HYPEREDGES_U64,
+        SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_OFFSETS_U16,
+        SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_OFFSETS_U32,
+        SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_OFFSETS_U64,
     },
-    word::BcsrWord,
+    word::{BcsrIndex, BcsrSnapshotIndex, BcsrSnapshotWord, BcsrWord},
 };
+
+/// Native borrowed BCSR hypergraph alias.
+///
+/// # Performance
+///
+/// `perf: unspecified`; this alias carries no runtime cost.
+pub type BcsrNativeHypergraph<'view, VertexIndex, RelationIndex, IncidenceIndex> = BcsrHypergraph<
+    'view,
+    VertexIndex,
+    RelationIndex,
+    IncidenceIndex,
+    IncidenceIndex,
+    VertexIndex,
+    RelationIndex,
+>;
+
+/// Snapshot-backed BCSR hypergraph alias.
+///
+/// # Performance
+///
+/// `perf: unspecified`; this alias carries no runtime cost.
+pub type BcsrSnapshotHypergraph<'view, VertexIndex, RelationIndex, IncidenceIndex> = BcsrHypergraph<
+    'view,
+    VertexIndex,
+    RelationIndex,
+    IncidenceIndex,
+    <IncidenceIndex as BcsrSnapshotIndex>::LittleEndianWord,
+    <VertexIndex as BcsrSnapshotIndex>::LittleEndianWord,
+    <RelationIndex as BcsrSnapshotIndex>::LittleEndianWord,
+>;

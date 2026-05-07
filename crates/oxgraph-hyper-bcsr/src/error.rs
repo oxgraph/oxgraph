@@ -18,7 +18,7 @@ pub enum BcsrError {
     /// `count + 1` overflowed `usize`, so the offset slice length cannot fit.
     OffsetLengthOverflow {
         /// The count for which `count + 1` overflowed.
-        count: u32,
+        count: usize,
     },
     /// An offset slice has the wrong length.
     OffsetLength {
@@ -49,7 +49,7 @@ pub enum BcsrError {
         /// Which offset section this error came from.
         section: BcsrSection,
         /// Actual first offset.
-        actual: u32,
+        actual: usize,
     },
     /// Offsets were not monotonically non-decreasing.
     NonMonotonicOffset {
@@ -58,16 +58,16 @@ pub enum BcsrError {
         /// Offset index where monotonicity failed.
         index: usize,
         /// Previous offset value.
-        previous: u32,
+        previous: usize,
         /// Actual offset value at `index`.
-        actual: u32,
+        actual: usize,
     },
     /// Final offset does not match the corresponding value slice length.
     FinalOffset {
         /// Which offset section this error came from.
         section: BcsrSection,
         /// Final offset value.
-        final_offset: u32,
+        final_offset: usize,
         /// Length of the value slice this offset references.
         value_len: usize,
     },
@@ -78,9 +78,9 @@ pub enum BcsrError {
         /// Position within that section.
         index: usize,
         /// The bad vertex ID.
-        vertex: u32,
+        vertex: usize,
         /// `vertex_count`.
-        vertex_count: u32,
+        vertex_count: usize,
     },
     /// A hyperedge ID was outside `0..hyperedge_count`.
     HyperedgeOutOfRange {
@@ -89,9 +89,9 @@ pub enum BcsrError {
         /// Position within that section.
         index: usize,
         /// The bad hyperedge ID.
-        hyperedge: u32,
+        hyperedge: usize,
         /// `hyperedge_count`.
-        hyperedge_count: u32,
+        hyperedge_count: usize,
     },
     /// `head_participants.len()` and `vertex_outgoing_hyperedges.len()`
     /// disagree on the total outgoing-incidence count.
@@ -121,22 +121,22 @@ pub enum BcsrError {
         /// Position of the offending value within the section.
         index: usize,
         /// Previous value at `index - 1`.
-        previous: u32,
+        previous: usize,
         /// Actual value at `index`.
-        actual: u32,
+        actual: usize,
     },
-    /// A `u32` value did not fit in `usize` on this target platform.
+    /// A stored index value did not fit in `usize` on this target platform.
     UsizeOverflow {
         /// Value that could not be represented as `usize`.
-        value: u32,
+        value: usize,
     },
-    /// `P_head + P_tail` overflowed `u32`, so the incidence ID space cannot
-    /// be encoded as a single dense `u32` index.
+    /// `P_head + P_tail` overflowed `usize`, so the incidence ID space cannot
+    /// be indexed on this target.
     TotalIncidenceCountOverflow {
         /// Total head-side incidences (`P_head == P_outgoing`).
-        p_head: u32,
+        p_head: usize,
         /// Total tail-side incidences (`P_tail == P_incoming`).
-        p_tail: u32,
+        p_tail: usize,
     },
     /// Cross-CSR consistency check (Strict-only) found a hyperedge that is
     /// recorded in one direction but missing from the other.
@@ -144,9 +144,9 @@ pub enum BcsrError {
         /// Which side of the bipartite index disagreed.
         side: BcsrRoleSide,
         /// The hyperedge ID that did not match across the two indexes.
-        hyperedge: u32,
+        hyperedge: usize,
         /// The vertex ID that did not match across the two indexes.
-        vertex: u32,
+        vertex: usize,
     },
 }
 
@@ -348,11 +348,11 @@ fn fmt_total_variant(error: &BcsrError, formatter: &mut fmt::Formatter<'_>) -> f
             "tail_participants length {tail_participants_len} disagrees with vertex_incoming_hyperedges length {incoming_hyperedges_len}"
         ),
         BcsrError::UsizeOverflow { value } => {
-            write!(formatter, "u32 value {value} does not fit usize")
+            write!(formatter, "BCSR index value {value} does not fit usize")
         }
         BcsrError::TotalIncidenceCountOverflow { p_head, p_tail } => write!(
             formatter,
-            "incidence ID space P_head ({p_head}) + P_tail ({p_tail}) overflows u32"
+            "incidence ID space P_head ({p_head}) + P_tail ({p_tail}) overflows usize"
         ),
         BcsrError::CrossDirectionMismatch {
             side,

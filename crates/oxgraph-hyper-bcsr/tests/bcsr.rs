@@ -16,7 +16,7 @@ use oxgraph_hyper_bcsr::{
 /// hyperedge h0:  head={v0}     tail={v1, v2}
 /// hyperedge h1:  head={v1}     tail={v2}
 /// ```
-fn canonical_sections() -> BcsrSections<'static, u32> {
+fn canonical_sections() -> BcsrSections<'static, u32, u32, u32> {
     static HEAD_OFFSETS: &[u32] = &[0, 1, 2];
     static HEAD_PARTICIPANTS: &[u32] = &[0, 1];
     static TAIL_OFFSETS: &[u32] = &[0, 2, 3];
@@ -44,6 +44,35 @@ fn canonical_fixture_validates_at_layout() -> Result<(), BcsrError> {
     assert_eq!(view.hyperedge_count(), 2);
     assert_eq!(view.outgoing_incidence_count(), 2);
     assert_eq!(view.incoming_incidence_count(), 3);
+    Ok(())
+}
+
+#[test]
+fn validates_mixed_u32_vertices_relations_u64_incidences() -> Result<(), BcsrError> {
+    static HEAD_OFFSETS: &[u64] = &[0, 1, 2];
+    static HEAD_PARTICIPANTS: &[u32] = &[0, 1];
+    static TAIL_OFFSETS: &[u64] = &[0, 2, 3];
+    static TAIL_PARTICIPANTS: &[u32] = &[1, 2, 2];
+    static VERTEX_OUTGOING_OFFSETS: &[u64] = &[0, 1, 2, 2];
+    static VERTEX_OUTGOING_HYPEREDGES: &[u32] = &[0, 1];
+    static VERTEX_INCOMING_OFFSETS: &[u64] = &[0, 0, 1, 3];
+    static VERTEX_INCOMING_HYPEREDGES: &[u32] = &[0, 0, 1];
+
+    let view = BcsrHypergraph::open(BcsrSections {
+        head_offsets: HEAD_OFFSETS,
+        head_participants: HEAD_PARTICIPANTS,
+        tail_offsets: TAIL_OFFSETS,
+        tail_participants: TAIL_PARTICIPANTS,
+        vertex_outgoing_offsets: VERTEX_OUTGOING_OFFSETS,
+        vertex_outgoing_hyperedges: VERTEX_OUTGOING_HYPEREDGES,
+        vertex_incoming_offsets: VERTEX_INCOMING_OFFSETS,
+        vertex_incoming_hyperedges: VERTEX_INCOMING_HYPEREDGES,
+    })?;
+
+    assert_eq!(view.vertex_count(), 3);
+    assert_eq!(view.hyperedge_count(), 2);
+    assert!(view.contains_incidence(BcsrParticipantId(4_u64)));
+    assert!(!view.contains_incidence(BcsrParticipantId(5_u64)));
     Ok(())
 }
 

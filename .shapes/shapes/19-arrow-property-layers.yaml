@@ -1,0 +1,52 @@
+id: 19
+name: Arrow property layers
+description: |
+  A higher-level std crate for named typed property layers keyed by topology ID family.
+  It depends on Arrow arrays and schemas, validates descriptor/data consistency, and
+  exposes selected total numeric layers as topology weight capability views. It is the
+  place for named weights and arbitrary properties; topology crates remain unaware of
+  Arrow and names.
+profile: 1
+status: proposed
+intent:
+  kind: module
+  summary: Arrow-backed named typed property layers above topology
+  source: ai
+  goals: |
+    - Add oxgraph-property as a std crate depending on arrow-array, arrow-schema, and Arrow persistence support.
+    - Implement PropertyLayerDescriptor with LayerId, LayerName, IdFamily, LayerRole,
+      StorageMode, and Arrow Field.
+    - Provide generic Arrow-backed dense layers and explicit sparse layers with Null or Arrow-scalar Default missing policy.
+    - Validate duplicate names, ID-family compatibility, layer length, full Arrow data type/schema, and nullability/default rules.
+    - Provide selected dense/sparse generic weight views implementing topology weight
+      capabilities without making algorithms depend on Arrow or any single scalar type.
+  non_goals: |
+    No property dictionaries in topology, no graph-database semantics, no Python labels,
+    no algorithm-specific probability normalization, and no stable snapshot ABI promise
+    for property sections in this slice.
+  rationale: |
+    Named weights and properties are first-class OxGraph concepts, but not topology.
+    Arrow gives a columnar, typed, extensible storage model that can represent both
+    weight-compatible numeric layers and heavier values while preserving the boundary
+    between topology and meaning.
+constraints:
+- 26
+- 29
+realization:
+- bindings:
+  - scheme: path
+    value: crates/oxgraph-property
+    metadata:
+      summary: Arrow-backed property layer crate, descriptors, validation, sparse defaults, and selected weight views.
+  - scheme: path
+    value: crates/oxgraph-property/src/lib.rs
+    metadata:
+      summary: Public property descriptors, layer validation errors, generic Arrow-backed dense/sparse layers, and selected weight adapters.
+  role: primary
+amendment_log:
+- 9
+- 10
+- 12
+parents:
+- id: 1
+  role: component

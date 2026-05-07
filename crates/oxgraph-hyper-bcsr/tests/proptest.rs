@@ -67,7 +67,7 @@ struct OwnedBcsr {
 
 impl OwnedBcsr {
     /// Returns a borrowed [`BcsrSections`] view over the owned buffers.
-    fn sections(&self) -> BcsrSections<'_, u32> {
+    fn sections(&self) -> BcsrSections<'_, u32, u32, u32> {
         BcsrSections {
             head_offsets: &self.head_offsets,
             head_participants: &self.head_participants,
