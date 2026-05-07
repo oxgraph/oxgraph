@@ -9,6 +9,8 @@ edition.workspace = true
 repository.workspace = true
 
 [dependencies]
+oxgraph-graph = { version = "0.0.0", path = "../oxgraph-graph" }
+oxgraph-hyper = { version = "0.0.0", path = "../oxgraph-hyper" }
 oxgraph-topology = { version = "0.0.0", path = "../oxgraph-topology" }
 
 [features]
@@ -17,16 +19,30 @@ alloc = []
 std = ["alloc"]
 
 [dev-dependencies]
+arrow-array = { workspace = true }
+arrow-schema = { workspace = true }
 criterion = { workspace = true }
 oxgraph-csr = { version = "0.0.0", path = "../oxgraph-csr" }
+oxgraph-graph-build = { version = "0.0.0", path = "../oxgraph-graph-build", features = [
+  "property-arrow",
+] }
 oxgraph-hyper = { version = "0.0.0", path = "../oxgraph-hyper" }
 oxgraph-hyper-bcsr = { version = "0.0.0", path = "../oxgraph-hyper-bcsr" }
+oxgraph-hyper-build = { version = "0.0.0", path = "../oxgraph-hyper-build", features = [
+  "property-arrow",
+] }
+oxgraph-property = { version = "0.0.0", path = "../oxgraph-property" }
 oxgraph-snapshot = { version = "0.0.0", path = "../oxgraph-snapshot", features = ["alloc"] }
 proptest = { workspace = true }
 zerocopy = { workspace = true }
 
 [[bench]]
 name = "bfs"
+harness = false
+required-features = ["std"]
+
+[[bench]]
+name = "pagerank"
 harness = false
 required-features = ["std"]
 

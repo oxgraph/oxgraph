@@ -11,5 +11,45 @@ authors.workspace = true
 edition.workspace = true
 repository.workspace = true
 
+[features]
+default = []
+topology = ["dep:oxgraph-topology"]
+graph = ["topology", "dep:oxgraph-graph"]
+hyper = ["topology", "dep:oxgraph-hyper"]
+csr = ["graph", "dep:oxgraph-csr"]
+hyper-bcsr = ["hyper", "dep:oxgraph-hyper-bcsr"]
+snapshot = ["dep:oxgraph-snapshot"]
+snapshot-alloc = ["snapshot", "oxgraph-snapshot?/alloc"]
+algo = ["topology", "dep:oxgraph-algo"]
+algo-alloc = ["algo", "oxgraph-algo?/alloc"]
+algo-std = ["algo-alloc", "oxgraph-algo?/std"]
+property-arrow = ["topology", "dep:oxgraph-property"]
+graph-build = ["graph", "dep:oxgraph-graph-build"]
+graph-snapshot = ["graph-build", "csr", "snapshot-alloc", "oxgraph-graph-build?/snapshot"]
+graph-property-arrow = ["graph-snapshot", "property-arrow", "oxgraph-graph-build?/property-arrow"]
+hyper-build = ["hyper", "dep:oxgraph-hyper-build"]
+hyper-snapshot = ["hyper-build", "hyper-bcsr", "snapshot-alloc", "oxgraph-hyper-build?/snapshot"]
+hyper-property-arrow = ["hyper-snapshot", "property-arrow", "oxgraph-hyper-build?/property-arrow"]
+full = [
+  "algo-std",
+  "csr",
+  "graph-property-arrow",
+  "hyper-bcsr",
+  "hyper-property-arrow",
+  "snapshot-alloc",
+]
+
+[dependencies]
+oxgraph-algo = { version = "0.0.0", path = "../oxgraph-algo", optional = true, default-features = false }
+oxgraph-csr = { version = "0.0.0", path = "../oxgraph-csr", optional = true }
+oxgraph-graph = { version = "0.0.0", path = "../oxgraph-graph", optional = true }
+oxgraph-graph-build = { version = "0.0.0", path = "../oxgraph-graph-build", optional = true }
+oxgraph-hyper = { version = "0.0.0", path = "../oxgraph-hyper", optional = true }
+oxgraph-hyper-bcsr = { version = "0.0.0", path = "../oxgraph-hyper-bcsr", optional = true }
+oxgraph-hyper-build = { version = "0.0.0", path = "../oxgraph-hyper-build", optional = true }
+oxgraph-property = { version = "0.0.0", path = "../oxgraph-property", optional = true }
+oxgraph-snapshot = { version = "0.0.0", path = "../oxgraph-snapshot", optional = true, default-features = false }
+oxgraph-topology = { version = "0.0.0", path = "../oxgraph-topology", optional = true }
+
 [lints]
 workspace = true
