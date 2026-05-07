@@ -1,5 +1,17 @@
 [workspace]
-members = ["crates/*"]
+members = [
+  "crates/oxgraph",
+  "crates/oxgraph-algo",
+  "crates/oxgraph-csr",
+  "crates/oxgraph-graph",
+  "crates/oxgraph-graph-build",
+  "crates/oxgraph-hyper",
+  "crates/oxgraph-hyper-bcsr",
+  "crates/oxgraph-hyper-build",
+  "crates/oxgraph-property",
+  "crates/oxgraph-snapshot",
+  "crates/oxgraph-topology",
+]
 resolver = "3"
 
 [workspace.package]

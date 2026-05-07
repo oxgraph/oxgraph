@@ -31,6 +31,19 @@ test:
 deny:
     cargo deny --all-features check advisories bans sources
 
+# --- Python facade ---
+
+python-build:
+    cd bindings/python && uv run maturin develop
+
+python-test:
+    cd bindings/python && uv run pytest tests
+
+python-unsafe-check:
+    ! rg -n "\\bunsafe\\b" bindings/python/src
+
+python-ci: python-build python-test python-unsafe-check
+
 # --- benches, miri, kani ---
 
 bench:
