@@ -12,7 +12,7 @@
 use std::hint::black_box;
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use oxgraph_csr::{CsrGraph, CsrNodeId};
+use oxgraph_csr::{CsrGraph, CsrNativeGraph, CsrNodeId};
 use oxgraph_graph::{EdgeTargetGraph, OutgoingGraph};
 
 /// Fixed out-degree used by the synthetic regular graph.
@@ -41,7 +41,7 @@ fn build_regular_csr(node_count: u32, degree: u32) -> (Vec<u32>, Vec<u32>) {
 }
 
 /// Traverses every outgoing target and returns a checksum to defeat dead-code elimination.
-fn traverse_targets(graph: &CsrGraph<'_>, node_count: u32) -> u64 {
+fn traverse_targets(graph: &CsrNativeGraph<'_, u32, u32>, node_count: u32) -> u64 {
     let mut checksum = 0u64;
     for node in 0..node_count {
         for edge in graph.outgoing_edges(CsrNodeId(node)) {

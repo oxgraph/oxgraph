@@ -1,0 +1,46 @@
+id: 26
+name: properties stay above topology
+description: |
+  Boundary for the Python-enabling slice: topology crates expose only domain-neutral
+  capability vocabulary, while named values, Arrow schemas, selected property layers,
+  Python labels, and stochastic interpretations live above the foundation. Algorithms
+  can consume a property only after a higher layer selects it into a topology weight
+  capability or passes an explicit policy.
+kind: boundary
+rule: |
+  Named property layers, Arrow schemas, Python labels, and stochastic probability
+  semantics must not be introduced into oxgraph-topology, oxgraph-graph,
+  oxgraph-hyper, oxgraph-csr, or oxgraph-hyper-bcsr; they live in higher layers and
+  are exposed to algorithms only through selected capability views.
+enforcement: manual
+profile: 1
+status: proposed
+intent:
+  kind: boundary
+  summary: Named properties and Arrow/Python semantics stay above foundation crates
+  source: ai
+  rationale: |
+    The project invariant is "Topology here. Meaning elsewhere. Storage anywhere."
+    Weight capability traits are topology primitives because many topology families can
+    attach a total Copy value to an element, relation, or incidence. Names, Arrow
+    schemas, labels, and probability semantics are meanings layered on top. Keeping the
+    boundary explicit prevents the Python and property work from contaminating no_std
+    foundation crates.
+  impact_if_violated: |
+    Foundation crates would inherit std/Arrow/Python dependencies or domain semantics;
+    no_std consumers would pay for features they do not use; algorithms would silently
+    conflate topology weights with probabilities or properties.
+  verification_method: |
+    Manual review of dependency DAGs, manifests, and public APIs. Foundation crate
+    manifests must not depend on oxgraph-property, Arrow, or PyO3.
+realization:
+- bindings:
+  - scheme: path
+    value: docs/architecture.md
+    metadata:
+      summary: Architecture boundary documenting topology weights versus Arrow-backed properties and Python labels.
+  - scheme: path
+    value: crates/oxgraph-property/src/lib.rs
+    metadata:
+      summary: Higher-layer property crate that depends on Arrow and adapts selected layers into topology weight capabilities.
+  role: primary

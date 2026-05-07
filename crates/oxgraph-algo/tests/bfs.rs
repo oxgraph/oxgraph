@@ -21,22 +21,23 @@ use oxgraph_algo::{
 #[cfg(feature = "std")]
 use oxgraph_algo::{breadth_first_search_generic_hash, reverse_breadth_first_search_generic_hash};
 use oxgraph_csr::{
-    CsrError, CsrGraph, CsrNodeId, CsrSnapshotError, SNAPSHOT_KIND_CSR_OFFSETS,
-    SNAPSHOT_KIND_CSR_TARGETS,
+    CsrError, CsrNativeGraph, CsrNodeId, CsrSnapshotError, CsrSnapshotGraph,
+    SNAPSHOT_KIND_CSR_OFFSETS_U32, SNAPSHOT_KIND_CSR_TARGETS_U32,
 };
 use oxgraph_hyper_bcsr::{
-    BcsrError, BcsrHypergraph, BcsrSnapshotError, BcsrVertexId, SNAPSHOT_KIND_BCSR_HEAD_OFFSETS,
-    SNAPSHOT_KIND_BCSR_HEAD_PARTICIPANTS, SNAPSHOT_KIND_BCSR_TAIL_OFFSETS,
-    SNAPSHOT_KIND_BCSR_TAIL_PARTICIPANTS, SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_HYPEREDGES,
-    SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_OFFSETS, SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_HYPEREDGES,
-    SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_OFFSETS,
+    BcsrError, BcsrSnapshotError, BcsrSnapshotHypergraph, BcsrVertexId,
+    SNAPSHOT_KIND_BCSR_HEAD_OFFSETS_U32, SNAPSHOT_KIND_BCSR_HEAD_PARTICIPANTS_U32,
+    SNAPSHOT_KIND_BCSR_TAIL_OFFSETS_U32, SNAPSHOT_KIND_BCSR_TAIL_PARTICIPANTS_U32,
+    SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_HYPEREDGES_U32,
+    SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_OFFSETS_U32,
+    SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_HYPEREDGES_U32,
+    SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_OFFSETS_U32,
 };
 use oxgraph_snapshot::{Snapshot, SnapshotBuilder, SnapshotError};
 use oxgraph_topology::{
     ContainsElement, ElementId, ElementIndex, ElementPredecessors, ElementSuccessors, TopologyBase,
 };
 use proptest::prelude::*;
-use zerocopy::byteorder::{LE, U32};
 
 /// Error returned while opening snapshot-backed CSR fixtures.
 #[derive(Debug, Eq, PartialEq)]
@@ -44,7 +45,7 @@ enum SnapshotFixtureError {
     /// Snapshot validation failed.
     Snapshot(SnapshotError),
     /// CSR snapshot adaptor failed.
-    Adaptor(CsrSnapshotError),
+    Adaptor(CsrSnapshotError<u32, u32>),
     /// BFS construction failed.
     Bfs(BfsError),
 }
@@ -55,8 +56,8 @@ impl From<SnapshotError> for SnapshotFixtureError {
     }
 }
 
-impl From<CsrSnapshotError> for SnapshotFixtureError {
-    fn from(error: CsrSnapshotError) -> Self {
+impl From<CsrSnapshotError<u32, u32>> for SnapshotFixtureError {
+    fn from(error: CsrSnapshotError<u32, u32>) -> Self {
         Self::Adaptor(error)
     }
 }
@@ -653,11 +654,11 @@ fn workspace_shares_between_forward_and_reverse() {
 }
 
 #[test]
-fn bfs_runs_over_csr_graph() -> Result<(), CsrError> {
+fn bfs_runs_over_csr_graph() -> Result<(), CsrError<u32, u32>> {
     static OFFSETS: &[u32] = &[0, 2, 3, 4, 4];
     static TARGETS: &[u32] = &[1, 2, 3, 3];
 
-    let graph = CsrGraph::validate(4, OFFSETS, TARGETS)?;
+    let graph = CsrNativeGraph::<u32, u32>::validate(4, OFFSETS, TARGETS)?;
 
     assert_eq!(
         scratch_order(&graph, CsrNodeId(0)),
@@ -673,11 +674,11 @@ fn bfs_runs_over_csr_graph() -> Result<(), CsrError> {
 
 #[cfg(feature = "alloc")]
 #[test]
-fn allocating_bfs_runs_over_csr_graph() -> Result<(), CsrError> {
+fn allocating_bfs_runs_over_csr_graph() -> Result<(), CsrError<u32, u32>> {
     static OFFSETS: &[u32] = &[0, 2, 3, 4, 4];
     static TARGETS: &[u32] = &[1, 2, 3, 3];
 
-    let graph = CsrGraph::validate(4, OFFSETS, TARGETS)?;
+    let graph = CsrNativeGraph::<u32, u32>::validate(4, OFFSETS, TARGETS)?;
 
     assert_eq!(
         breadth_first_search(&graph, CsrNodeId(0)).map(std::iter::Iterator::collect::<Vec<_>>),
@@ -693,11 +694,11 @@ fn allocating_bfs_runs_over_csr_graph() -> Result<(), CsrError> {
 
 #[cfg(feature = "std")]
 #[test]
-fn hash_bfs_runs_over_csr_graph() -> Result<(), CsrError> {
+fn hash_bfs_runs_over_csr_graph() -> Result<(), CsrError<u32, u32>> {
     static OFFSETS: &[u32] = &[0, 2, 3, 4, 4];
     static TARGETS: &[u32] = &[1, 2, 3, 3];
 
-    let graph = CsrGraph::validate(4, OFFSETS, TARGETS)?;
+    let graph = CsrNativeGraph::<u32, u32>::validate(4, OFFSETS, TARGETS)?;
 
     assert_eq!(
         breadth_first_search_generic_hash(&graph, CsrNodeId(0)).collect::<Vec<_>>(),
@@ -718,9 +719,9 @@ fn default_bfs_runs_over_snapshot_sections() {
 }
 
 /// Runs scratch-backed BFS on a CSR graph opened from snapshot fixture bytes.
-fn snapshot_csr_order(bytes: &[u8]) -> Result<Vec<CsrNodeId>, SnapshotFixtureError> {
+fn snapshot_csr_order(bytes: &[u8]) -> Result<Vec<CsrNodeId<u32>>, SnapshotFixtureError> {
     let snapshot = Snapshot::open(bytes)?;
-    let graph = CsrGraph::from_snapshot(&snapshot)?;
+    let graph = CsrSnapshotGraph::<u32, u32>::from_snapshot(&snapshot)?;
     scratch_order(&graph, CsrNodeId(0)).map_err(SnapshotFixtureError::Bfs)
 }
 
@@ -733,7 +734,7 @@ fn words_to_bytes(words: &[u32]) -> Vec<u8> {
 fn valid_snapshot_bytes() -> Vec<u8> {
     let mut builder = SnapshotBuilder::new();
     if let Err(error) = builder.add_section(
-        SNAPSHOT_KIND_CSR_OFFSETS,
+        SNAPSHOT_KIND_CSR_OFFSETS_U32,
         0,
         2,
         words_to_bytes(&[0, 2, 3, 4, 4]),
@@ -741,7 +742,7 @@ fn valid_snapshot_bytes() -> Vec<u8> {
         panic!("offsets section: {error:?}");
     }
     if let Err(error) = builder.add_section(
-        SNAPSHOT_KIND_CSR_TARGETS,
+        SNAPSHOT_KIND_CSR_TARGETS_U32,
         0,
         2,
         words_to_bytes(&[1, 2, 3, 3]),
@@ -838,36 +839,44 @@ fn bcsr_snapshot_bytes() -> Vec<u8> {
         }
     };
 
-    add(&mut builder, SNAPSHOT_KIND_BCSR_HEAD_OFFSETS, head_offsets);
     add(
         &mut builder,
-        SNAPSHOT_KIND_BCSR_HEAD_PARTICIPANTS,
+        SNAPSHOT_KIND_BCSR_HEAD_OFFSETS_U32,
+        head_offsets,
+    );
+    add(
+        &mut builder,
+        SNAPSHOT_KIND_BCSR_HEAD_PARTICIPANTS_U32,
         head_participants,
     );
-    add(&mut builder, SNAPSHOT_KIND_BCSR_TAIL_OFFSETS, tail_offsets);
     add(
         &mut builder,
-        SNAPSHOT_KIND_BCSR_TAIL_PARTICIPANTS,
+        SNAPSHOT_KIND_BCSR_TAIL_OFFSETS_U32,
+        tail_offsets,
+    );
+    add(
+        &mut builder,
+        SNAPSHOT_KIND_BCSR_TAIL_PARTICIPANTS_U32,
         tail_participants,
     );
     add(
         &mut builder,
-        SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_OFFSETS,
+        SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_OFFSETS_U32,
         vertex_outgoing_offsets,
     );
     add(
         &mut builder,
-        SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_HYPEREDGES,
+        SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_HYPEREDGES_U32,
         vertex_outgoing_hyperedges,
     );
     add(
         &mut builder,
-        SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_OFFSETS,
+        SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_OFFSETS_U32,
         vertex_incoming_offsets,
     );
     add(
         &mut builder,
-        SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_HYPEREDGES,
+        SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_HYPEREDGES_U32,
         vertex_incoming_hyperedges,
     );
 
@@ -878,14 +887,14 @@ fn bcsr_snapshot_bytes() -> Vec<u8> {
 }
 
 /// Opens a BCSR hypergraph from bytes produced by [`bcsr_snapshot_bytes`].
-fn open_bcsr(bytes: &[u8]) -> Result<BcsrHypergraph<'_, U32<LE>>, BcsrFixtureError> {
+fn open_bcsr(bytes: &[u8]) -> Result<BcsrSnapshotHypergraph<'_, u32, u32, u32>, BcsrFixtureError> {
     let snapshot = Snapshot::open(bytes)?;
-    let view = BcsrHypergraph::<U32<LE>>::from_snapshot(&snapshot)?;
+    let view = BcsrSnapshotHypergraph::<u32, u32, u32>::from_snapshot(&snapshot)?;
     Ok(view)
 }
 
 /// Opens a BCSR hypergraph from `bytes` or panics with the underlying error.
-fn open_bcsr_or_panic(bytes: &[u8]) -> BcsrHypergraph<'_, U32<LE>> {
+fn open_bcsr_or_panic(bytes: &[u8]) -> BcsrSnapshotHypergraph<'_, u32, u32, u32> {
     match open_bcsr(bytes) {
         Ok(view) => view,
         Err(error) => panic!("BCSR fixture open failed: {error}"),
@@ -894,9 +903,9 @@ fn open_bcsr_or_panic(bytes: &[u8]) -> BcsrHypergraph<'_, U32<LE>> {
 
 /// Runs forward scratch BFS on a BCSR view or panics with the underlying error.
 fn scratch_order_bcsr(
-    view: &BcsrHypergraph<'_, U32<LE>>,
-    start: BcsrVertexId,
-) -> Vec<BcsrVertexId> {
+    view: &BcsrSnapshotHypergraph<'_, u32, u32, u32>,
+    start: BcsrVertexId<u32>,
+) -> Vec<BcsrVertexId<u32>> {
     match scratch_order(view, start) {
         Ok(order) => order,
         Err(error) => panic!("forward scratch BFS on BCSR failed: {error}"),
@@ -905,9 +914,9 @@ fn scratch_order_bcsr(
 
 /// Runs reverse scratch BFS on a BCSR view or panics with the underlying error.
 fn reverse_scratch_order_bcsr(
-    view: &BcsrHypergraph<'_, U32<LE>>,
-    start: BcsrVertexId,
-) -> Vec<BcsrVertexId> {
+    view: &BcsrSnapshotHypergraph<'_, u32, u32, u32>,
+    start: BcsrVertexId<u32>,
+) -> Vec<BcsrVertexId<u32>> {
     match reverse_scratch_order(view, start) {
         Ok(order) => order,
         Err(error) => panic!("reverse scratch BFS on BCSR failed: {error}"),
@@ -1040,7 +1049,7 @@ proptest! {
             targets.push(seed % node_count);
         }
 
-        let graph = match CsrGraph::validate(node_count, &offsets, &targets) {
+        let graph = match CsrNativeGraph::<u32, u32>::validate(node_count, &offsets, &targets) {
             Ok(value) => value,
             Err(error) => return Err(TestCaseError::fail(format!("valid CSR rejected: {error:?}"))),
         };
@@ -1099,7 +1108,7 @@ proptest! {
         target_seed in proptest::collection::vec(0u32..64, 0..64),
     ) {
         let (offsets, targets, node_count) = build_csr_arrays(&degrees, &target_seed);
-        let graph = match CsrGraph::validate(node_count, &offsets, &targets) {
+        let graph = match CsrNativeGraph::<u32, u32>::validate(node_count, &offsets, &targets) {
             Ok(value) => value,
             Err(error) => return Err(TestCaseError::fail(format!("valid CSR rejected: {error:?}"))),
         };
@@ -1132,7 +1141,7 @@ proptest! {
         target_seed in proptest::collection::vec(0u32..64, 0..64),
     ) {
         let (offsets, targets, node_count) = build_csr_arrays(&degrees, &target_seed);
-        let graph = match CsrGraph::validate(node_count, &offsets, &targets) {
+        let graph = match CsrNativeGraph::<u32, u32>::validate(node_count, &offsets, &targets) {
             Ok(value) => value,
             Err(error) => return Err(TestCaseError::fail(format!("valid CSR rejected: {error:?}"))),
         };
@@ -1150,7 +1159,7 @@ proptest! {
 /// Builds CSR offset and target arrays from generated degree and target seeds,
 /// mirroring the construction used by the variant-equivalence proptest above.
 /// Returns `(offsets, targets, node_count)`. The caller owns the storage and
-/// can pass it through `CsrGraph::validate` whose result borrows from it.
+/// can pass it through `CsrNativeGraph::validate` whose result borrows from it.
 fn build_csr_arrays(degrees: &[u32], target_seed: &[u32]) -> (Vec<u32>, Vec<u32>, u32) {
     let node_count = u32::try_from(degrees.len()).unwrap_or(0);
     let mut offsets = Vec::with_capacity(degrees.len() + 1);

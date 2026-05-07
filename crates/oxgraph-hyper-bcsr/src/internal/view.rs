@@ -2,9 +2,7 @@
 
 use crate::{
     error::BcsrError,
-    internal::validation::{
-        BcsrValidation, DerivedCounts, u32_to_usize_validated, validate_sections,
-    },
+    internal::validation::{BcsrValidation, DerivedCounts, validate_sections},
     sections::BcsrSections,
     word::BcsrWord,
 };
@@ -23,14 +21,46 @@ use crate::{
 /// `O((P_head + P_tail) · log d)` cross-direction walk where `d` is the
 /// maximum vertex outgoing or incoming degree.
 #[derive(Clone, Copy, Debug)]
-pub struct BcsrHypergraph<'view, Word: BcsrWord = u32> {
+pub struct BcsrHypergraph<
+    'view,
+    VertexIndex,
+    RelationIndex,
+    IncidenceIndex,
+    OffsetWord,
+    VertexWord,
+    RelationWord,
+> where
+    OffsetWord: BcsrWord<Index = IncidenceIndex>,
+    VertexWord: BcsrWord<Index = VertexIndex>,
+    RelationWord: BcsrWord<Index = RelationIndex>,
+    VertexIndex: crate::word::BcsrIndex,
+    RelationIndex: crate::word::BcsrIndex,
+    IncidenceIndex: crate::word::BcsrIndex,
+{
     /// Validated counts cached for `O(1)` access.
     counts: DerivedCounts,
     /// The eight borrowed sections backing this view.
-    sections: BcsrSections<'view, Word>,
+    sections: BcsrSections<'view, OffsetWord, VertexWord, RelationWord>,
 }
 
-impl<'view, Word: BcsrWord> BcsrHypergraph<'view, Word> {
+impl<'view, VertexIndex, RelationIndex, IncidenceIndex, OffsetWord, VertexWord, RelationWord>
+    BcsrHypergraph<
+        'view,
+        VertexIndex,
+        RelationIndex,
+        IncidenceIndex,
+        OffsetWord,
+        VertexWord,
+        RelationWord,
+    >
+where
+    OffsetWord: BcsrWord<Index = IncidenceIndex>,
+    VertexWord: BcsrWord<Index = VertexIndex>,
+    RelationWord: BcsrWord<Index = RelationIndex>,
+    VertexIndex: crate::word::BcsrIndex,
+    RelationIndex: crate::word::BcsrIndex,
+    IncidenceIndex: crate::word::BcsrIndex,
+{
     /// Validates `sections` at [`BcsrValidation::Layout`] and returns a view.
     ///
     /// # Errors
@@ -41,7 +71,9 @@ impl<'view, Word: BcsrWord> BcsrHypergraph<'view, Word> {
     /// # Performance
     ///
     /// `O(P_head + P_tail + P_outgoing + P_incoming)`.
-    pub fn open(sections: BcsrSections<'view, Word>) -> Result<Self, BcsrError> {
+    pub fn open(
+        sections: BcsrSections<'view, OffsetWord, VertexWord, RelationWord>,
+    ) -> Result<Self, BcsrError> {
         Self::open_with(sections, BcsrValidation::Layout)
     }
 
@@ -57,7 +89,7 @@ impl<'view, Word: BcsrWord> BcsrHypergraph<'view, Word> {
     /// [`BcsrValidation::Layout`]; adds `O((P_head + P_tail) · log d)` at
     /// [`BcsrValidation::Strict`].
     pub fn open_with(
-        sections: BcsrSections<'view, Word>,
+        sections: BcsrSections<'view, OffsetWord, VertexWord, RelationWord>,
         level: BcsrValidation,
     ) -> Result<Self, BcsrError> {
         let counts = validate_sections(&sections, level)?;
@@ -70,8 +102,8 @@ impl<'view, Word: BcsrWord> BcsrHypergraph<'view, Word> {
     ///
     /// This method is `O(1)`.
     #[must_use]
-    pub fn vertex_count(&self) -> usize {
-        u32_to_usize_validated(self.counts.vertex_count)
+    pub const fn vertex_count(&self) -> usize {
+        self.counts.vertex_count
     }
 
     /// Returns the number of hyperedges in this view.
@@ -80,8 +112,8 @@ impl<'view, Word: BcsrWord> BcsrHypergraph<'view, Word> {
     ///
     /// This method is `O(1)`.
     #[must_use]
-    pub fn hyperedge_count(&self) -> usize {
-        u32_to_usize_validated(self.counts.hyperedge_count)
+    pub const fn hyperedge_count(&self) -> usize {
+        self.counts.hyperedge_count
     }
 
     /// Returns the number of outgoing incidences (`P_head == P_outgoing`).
@@ -90,8 +122,8 @@ impl<'view, Word: BcsrWord> BcsrHypergraph<'view, Word> {
     ///
     /// This method is `O(1)`.
     #[must_use]
-    pub fn outgoing_incidence_count(&self) -> usize {
-        u32_to_usize_validated(self.counts.p_outgoing)
+    pub const fn outgoing_incidence_count(&self) -> usize {
+        self.counts.p_outgoing
     }
 
     /// Returns the number of incoming incidences (`P_tail == P_incoming`).
@@ -100,8 +132,8 @@ impl<'view, Word: BcsrWord> BcsrHypergraph<'view, Word> {
     ///
     /// This method is `O(1)`.
     #[must_use]
-    pub fn incoming_incidence_count(&self) -> usize {
-        u32_to_usize_validated(self.counts.p_incoming)
+    pub const fn incoming_incidence_count(&self) -> usize {
+        self.counts.p_incoming
     }
 
     /// Returns the validated count cache.
@@ -110,7 +142,9 @@ impl<'view, Word: BcsrWord> BcsrHypergraph<'view, Word> {
     }
 
     /// Returns the borrowed sections.
-    pub(in crate::internal) const fn sections(&self) -> &BcsrSections<'view, Word> {
+    pub(in crate::internal) const fn sections(
+        &self,
+    ) -> &BcsrSections<'view, OffsetWord, VertexWord, RelationWord> {
         &self.sections
     }
 }

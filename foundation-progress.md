@@ -47,7 +47,7 @@ oxgraph-snapshot
 
 `oxgraph-topology` has no direct downstream impl-crate consumers: `oxgraph-csr` lists only `oxgraph-graph` and `oxgraph-snapshot`; `oxgraph-hyper-bcsr` lists only `oxgraph-hyper` and `oxgraph-snapshot`. Both wrapper crates `pub use` the topology trait surface so impl crates can `use oxgraph_graph::ElementIndex` (or `oxgraph_hyper::IncidenceElement`, etc.) without naming `oxgraph-topology` in their `Cargo.toml` or source. `oxgraph-algo` is the one crate that depends on `oxgraph-topology` directly — it is substrate-agnostic by design and does not pick a domain (graph vs. hypergraph) at the trait-bound level.
 
-`oxgraph-snapshot` is the topology-agnostic container; it has no graph or hypergraph deps. `oxgraph-csr` depends on `oxgraph-snapshot` to expose `CsrGraph::from_snapshot`, which reads CSR offsets and targets from snapshot sections without copying. `oxgraph-hyper-bcsr` likewise depends on `oxgraph-snapshot` to expose `BcsrHypergraph::from_snapshot`, which reads the eight bipartite-CSR sections without copying. The snapshot crate's own tests, benches, and example exercise only the agnostic surface (header parsing, section table, builder/reader roundtrip, typed-slice views).
+`oxgraph-snapshot` is the topology-agnostic container; it has no graph or hypergraph deps. `oxgraph-csr` depends on `oxgraph-snapshot` to expose `CsrSnapshotGraph::<Index>::from_snapshot`, which reads typed little-endian CSR offsets and targets from snapshot sections without copying. `oxgraph-hyper-bcsr` likewise depends on `oxgraph-snapshot` to expose `BcsrHypergraph::from_snapshot`, which reads the eight bipartite-CSR sections without copying. The snapshot crate's own tests, benches, and example exercise only the agnostic surface (header parsing, section table, builder/reader roundtrip, typed-slice views).
 
 ## Vision Alignment
 
@@ -225,7 +225,7 @@ Every added crate is expected to include executable examples.
 
 `oxgraph-csr` currently includes:
 
-- `examples/open_snapshot.rs`: builds a CSR snapshot using `oxgraph-csr`'s registered section kinds, opens it, validates the CSR layout via `CsrGraph::from_snapshot`, and runs BFS over the borrowed sections without heap reconstruction.
+- `examples/open_snapshot.rs`: builds a `u32` CSR snapshot using `oxgraph-csr`'s registered section kinds, opens it, validates the CSR layout via `CsrSnapshotGraph::<u32>::from_snapshot`, and runs BFS over the borrowed sections without heap reconstruction.
 
 The examples are intentionally educational. They are not optimized graph or hypergraph storage implementations.
 
@@ -297,7 +297,7 @@ The examples are intentionally educational. They are not optimized graph or hype
 
 `oxgraph-csr` includes `tests/snapshot_section.rs`, which verifies:
 
-- valid CSR snapshots open as `CsrGraph` via `from_snapshot` (with `node_count` derived from `offsets.len() - 1`, no separate metadata section);
+- valid CSR snapshots open as typed `CsrSnapshotGraph::<Index>` views via `from_snapshot` (with `node_count` derived from `offsets.len() - 1`, no separate metadata section);
 - directed BFS runs over a CSR view opened from snapshot sections;
 - missing offsets, empty offsets, target-out-of-range, and non-monotonic offsets are surfaced as typed `CsrSnapshotError` variants.
 

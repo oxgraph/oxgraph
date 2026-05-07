@@ -1,10 +1,12 @@
 //! Tests that `oxgraph-topology` traits support static-dispatch generic consumers.
 
 use oxgraph_topology::{
+    CanonicalElementIdentity, CanonicalIncidenceIdentity, CanonicalRelationIdentity,
     ContainsElement, ContainsIncidence, ContainsRelation, ElementIncidenceCount, ElementIndex,
-    IncidenceBase, IncidenceCounts, IncidenceElement, IncidenceIndex, IncidenceRelation,
-    IncidenceRole, IncidenceView, RelationIncidenceCount, RelationIncidences, RelationIndex,
-    TopologyBase, TopologyCounts,
+    ElementWeight, IncidenceBase, IncidenceCounts, IncidenceElement, IncidenceIndex,
+    IncidenceRelation, IncidenceRole, IncidenceView, IncidenceWeight, LocalElementIdentity,
+    LocalIncidenceIdentity, LocalRelationIdentity, RelationIncidenceCount, RelationIncidences,
+    RelationIndex, RelationWeight, TopologyBase, TopologyCounts,
 };
 use proptest::prelude::*;
 
@@ -173,6 +175,75 @@ impl ElementIncidenceCount for FixtureTopology {
     }
 }
 
+impl ElementWeight for FixtureTopology {
+    type Weight = usize;
+
+    fn element_weight(&self, element: Element) -> Self::Weight {
+        element.0 + 10
+    }
+}
+
+impl RelationWeight for FixtureTopology {
+    type Weight = usize;
+
+    fn relation_weight(&self, relation: Relation) -> Self::Weight {
+        relation.0 + 20
+    }
+}
+
+impl IncidenceWeight for FixtureTopology {
+    type Weight = usize;
+
+    fn incidence_weight(&self, incidence: Incidence) -> Self::Weight {
+        incidence.0 + 30
+    }
+}
+
+impl CanonicalElementIdentity for FixtureTopology {
+    type CanonicalElementId = Element;
+
+    fn canonical_element_id(&self, element: Element) -> Self::CanonicalElementId {
+        element
+    }
+}
+
+impl LocalElementIdentity for FixtureTopology {
+    fn local_element_id(&self, canonical: Self::CanonicalElementId) -> Option<Self::ElementId> {
+        self.contains_element(canonical).then_some(canonical)
+    }
+}
+
+impl CanonicalRelationIdentity for FixtureTopology {
+    type CanonicalRelationId = Relation;
+
+    fn canonical_relation_id(&self, relation: Relation) -> Self::CanonicalRelationId {
+        relation
+    }
+}
+
+impl LocalRelationIdentity for FixtureTopology {
+    fn local_relation_id(&self, canonical: Self::CanonicalRelationId) -> Option<Self::RelationId> {
+        self.contains_relation(canonical).then_some(canonical)
+    }
+}
+
+impl CanonicalIncidenceIdentity for FixtureTopology {
+    type CanonicalIncidenceId = Incidence;
+
+    fn canonical_incidence_id(&self, incidence: Incidence) -> Self::CanonicalIncidenceId {
+        incidence
+    }
+}
+
+impl LocalIncidenceIdentity for FixtureTopology {
+    fn local_incidence_id(
+        &self,
+        canonical: Self::CanonicalIncidenceId,
+    ) -> Option<Self::IncidenceId> {
+        self.contains_incidence(canonical).then_some(canonical)
+    }
+}
+
 /// Iterator over contiguous incidence IDs for one fixture relation.
 #[derive(Debug)]
 struct RelationIncidenceIter {
@@ -216,6 +287,34 @@ where
         .relation_incidences(relation)
         .map(|incidence| topology.incidence_role(incidence))
         .collect()
+}
+
+/// Reads all optional weight capabilities through static dispatch.
+fn total_fixture_weight<T>(topology: &T) -> usize
+where
+    T: TopologyBase<ElementId = Element, RelationId = Relation>
+        + IncidenceBase<IncidenceId = Incidence>
+        + ElementWeight<Weight = usize>
+        + RelationWeight<Weight = usize>
+        + IncidenceWeight<Weight = usize>,
+{
+    topology.element_weight(Element(0))
+        + topology.relation_weight(Relation(0))
+        + topology.incidence_weight(Incidence(0))
+}
+
+/// Roundtrips all optional identity capabilities through static dispatch.
+fn identity_roundtrip<T>(topology: &T) -> bool
+where
+    T: LocalElementIdentity<CanonicalElementId = Element, ElementId = Element>
+        + LocalRelationIdentity<CanonicalRelationId = Relation, RelationId = Relation>
+        + LocalIncidenceIdentity<CanonicalIncidenceId = Incidence, IncidenceId = Incidence>,
+{
+    topology.local_element_id(topology.canonical_element_id(Element(0))) == Some(Element(0))
+        && topology.local_relation_id(topology.canonical_relation_id(Relation(0)))
+            == Some(Relation(0))
+        && topology.local_incidence_id(topology.canonical_incidence_id(Incidence(0)))
+            == Some(Incidence(0))
 }
 
 /// Returns a fixture shaped like one binary edge and one ternary hyperedge.
@@ -344,6 +443,14 @@ fn incidence_view_blanket_impl_resolves_roles() {
         relation_roles(&topology, Relation(1)),
         [FixtureRole::First, FixtureRole::Second, FixtureRole::Extra]
     );
+}
+
+#[test]
+fn weight_and_identity_capabilities_are_static_dispatch() {
+    let topology = fixture();
+
+    assert_eq!(total_fixture_weight(&topology), 60);
+    assert!(identity_roundtrip(&topology));
 }
 
 proptest! {

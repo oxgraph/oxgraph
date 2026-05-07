@@ -1,0 +1,55 @@
+id: 20
+name: construction builders
+description: |
+  Append/update-only construction systems for ordinary directed graphs and directed
+  hypergraphs. Builders assign dense append-only canonical IDs, accept isolated
+  elements and parallel graph edges, split unweighted from explicitly weighted
+  builders, and freeze to owned immutable views. Snapshot/property export is an
+  adapter layer behind explicit features. They are builders, not general mutation
+  overlays.
+profile: 1
+status: proposed
+intent:
+  kind: module
+  summary: Append/update-only graph and hypergraph builders that freeze to immutable views
+  source: ai
+  goals: |
+    - Add oxgraph-graph-build with isolated-node support, parallel edges, generic
+      explicit ID widths, unweighted and explicitly weighted variants, canonical
+      IDs, and owned freeze to a directed view.
+    - Add oxgraph-hyper-build with directed source/target participants, incidence IDs,
+      generic explicit ID widths, unweighted and explicitly weighted variants,
+      canonical IDs, and owned freeze to a directed view.
+    - Keep Arrow/property snapshot export out of core builders and behind explicit
+      snapshot/property-arrow features.
+    - Deletion, tombstones, ID reuse, compaction, and overlay mutation remain out of
+      scope.
+  non_goals: |
+    No full mutable graph API, no deletion, no stale-handle mutation policy beyond
+    owned freeze/export boundaries, no cross-snapshot lineage, and no third-party
+    exporters.
+  rationale: |
+    Python and downstream integrations need an ergonomic way to construct topology while
+    preserving OxGraph's read-side view model. Append/update builders provide that
+    producer-side path without prematurely committing to general mutation semantics.
+constraints:
+- 26
+- 29
+realization:
+- bindings:
+  - scheme: path
+    value: crates/oxgraph-graph-build
+    metadata:
+      summary: no_std + alloc graph builders split into unweighted/weighted cores with feature-gated CSR/property export helpers.
+  - scheme: path
+    value: crates/oxgraph-hyper-build
+    metadata:
+      summary: no_std + alloc hypergraph builders split into unweighted/weighted cores with feature-gated BCSR/property export helpers.
+  role: primary
+amendment_log:
+- 9
+- 10
+- 12
+parents:
+- id: 16
+  role: component

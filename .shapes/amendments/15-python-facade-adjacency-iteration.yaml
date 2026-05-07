@@ -1,0 +1,46 @@
+id: 15
+name: Python facade clean topology iteration
+description: Python facade clean topology iteration
+targets:
+  shape_ids:
+  - 23
+status: proposed
+intent:
+  kind: amendment
+  summary: Expose clean frozen graph and hypergraph topology iteration from the Python facade without compatibility aliases or third-party graph semantics
+  source: human
+  goals: |
+    - Add Python methods on FrozenGraph for nodes, edge tuples, single-edge
+      endpoints, outgoing edge tuples, and successor nodes.
+    - Add matching frozen hypergraph methods for vertices, hyperedge tuples,
+      single-hyperedge participants, source/target vertices, source/target
+      incidences, outgoing hyperedge IDs, and successor vertices.
+    - Use graph-family names in Python instead of substrate-neutral element and
+      relation vocabulary because the facade exposes concrete FrozenGraph and
+      FrozenHypergraph classes.
+    - Remove temporary label and iteration names instead of preserving
+      backwards-compatibility wrappers in this greenfield branch.
+    - Keep the methods OxGraph-native: local integer IDs only, no NetworkX-shaped
+      attribute dictionaries or domain labels beyond existing label lookup helpers.
+    - Cover the new Python surface with facade tests that build, freeze, and inspect
+      graph and hypergraph topology.
+  non_goals: |
+    No Python graph-export adapters, no mutation through frozen views, no owned
+    property bags, and no changes to Rust topology semantics.
+  rationale: |
+    Python users need to inspect frozen topology without keeping a parallel edge
+    table. Exposing local-ID iteration closes that usability gap while preserving
+    OxGraph's storage-agnostic facade boundary.
+realization:
+- bindings:
+  - scheme: path
+    value: bindings/python/src/lib.rs
+    metadata:
+      summary: PyO3 frozen graph and hypergraph clean topology iteration methods.
+  - scheme: path
+    value: bindings/python/tests/test_oxgraph.py
+    metadata:
+      summary: Python facade tests for graph and hypergraph topology iteration and absence of removed compatibility names.
+  role: primary
+initiated_by:
+  type: human

@@ -14,10 +14,13 @@
 extern crate kani;
 
 pub use oxgraph_topology::{
+    CanonicalElementIdentity, CanonicalIncidenceIdentity, CanonicalRelationIdentity,
     ContainsElement, ContainsIncidence, ContainsRelation, ElementIncidenceCount, ElementIncidences,
-    ElementIndex, ElementPredecessors, ElementSuccessors, IncidenceBase, IncidenceCounts,
-    IncidenceElement, IncidenceIndex, IncidenceRelation, IncidenceRole, RelationIncidenceCount,
-    RelationIncidences, RelationIndex, TopologyBase, TopologyCounts, TopologyId,
+    ElementIndex, ElementPredecessors, ElementSuccessors, ElementWeight, IncidenceBase,
+    IncidenceCounts, IncidenceElement, IncidenceIndex, IncidenceRelation, IncidenceRole,
+    IncidenceWeight, LocalElementIdentity, LocalIncidenceIdentity, LocalRelationIdentity,
+    RelationIncidenceCount, RelationIncidences, RelationIndex, RelationWeight, TopologyBase,
+    TopologyCounts, TopologyId,
 };
 
 /// Graph-facing alias for a topology element ID.

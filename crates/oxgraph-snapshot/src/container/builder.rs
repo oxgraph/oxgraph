@@ -135,6 +135,33 @@ impl SnapshotBuilder {
         self.add_section(kind, version, alignment_log2, bytes)
     }
 
+    /// Appends a section containing explicit little-endian typed words.
+    ///
+    /// This is a naming-level guardrail for snapshot exporters: callers should
+    /// pass portable byteorder words such as `zerocopy::byteorder::U32<LE>`,
+    /// not native integer slices. The payload is copied via
+    /// [`zerocopy::IntoBytes`] and the alignment is derived from `T`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PlanError`] for the same reasons as
+    /// [`add_section_typed`](Self::add_section_typed).
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(s + payload.len() * size_of::<T>())`.
+    pub fn add_section_little_endian<T>(
+        &mut self,
+        kind: u32,
+        version: u32,
+        payload: &[T],
+    ) -> Result<&mut Self, PlanError>
+    where
+        T: zerocopy::IntoBytes + zerocopy::Immutable,
+    {
+        self.add_section_typed(kind, version, payload)
+    }
+
     /// Returns the number of pending sections.
     ///
     /// # Performance
