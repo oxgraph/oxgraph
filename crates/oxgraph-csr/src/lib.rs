@@ -180,7 +180,8 @@ impl CsrIndex for usize {
 ///
 /// # Performance
 ///
-/// `perf: unspecified`; this trait carries compile-time metadata only.
+/// `perf: unspecified`; implementations provide `O(1)` metadata access and
+/// little-endian word conversion.
 pub trait CsrSnapshotIndex: sealed::CsrSnapshotIndex + CsrIndex {
     /// Little-endian zerocopy storage word for this logical index type.
     ///
@@ -202,6 +203,13 @@ pub trait CsrSnapshotIndex: sealed::CsrSnapshotIndex + CsrIndex {
     ///
     /// Reading this constant is `O(1)`.
     const TARGETS_KIND: u32;
+
+    /// Converts this value into its little-endian CSR snapshot word.
+    ///
+    /// # Performance
+    ///
+    /// This function is `O(1)`.
+    fn to_le_word(self) -> Self::LittleEndianWord;
 }
 
 /// Implements [`CsrSnapshotIndex`] for one portable snapshot width.
@@ -214,6 +222,10 @@ macro_rules! impl_csr_snapshot_index {
 
             const OFFSETS_KIND: u32 = $offsets_kind;
             const TARGETS_KIND: u32 = $targets_kind;
+
+            fn to_le_word(self) -> Self::LittleEndianWord {
+                <$little_endian>::new(self)
+            }
         }
     };
 }

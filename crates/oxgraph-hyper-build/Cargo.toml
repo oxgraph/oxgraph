@@ -15,11 +15,10 @@ oxgraph-property = { version = "0.0.0", path = "../oxgraph-property", optional =
 oxgraph-snapshot = { version = "0.0.0", path = "../oxgraph-snapshot", features = [
   "alloc",
 ], optional = true }
-zerocopy = { workspace = true, optional = true }
 
 [features]
 default = []
-snapshot = ["dep:oxgraph-hyper-bcsr", "dep:oxgraph-snapshot", "dep:zerocopy"]
+snapshot = ["dep:oxgraph-hyper-bcsr", "dep:oxgraph-snapshot"]
 property-arrow = ["snapshot", "dep:oxgraph-property"]
 
 [dev-dependencies]
@@ -30,7 +29,6 @@ oxgraph-hyper-bcsr = { version = "0.0.0", path = "../oxgraph-hyper-bcsr" }
 oxgraph-property = { version = "0.0.0", path = "../oxgraph-property" }
 oxgraph-snapshot = { version = "0.0.0", path = "../oxgraph-snapshot", features = ["alloc"] }
 proptest = { workspace = true }
-zerocopy = { workspace = true }
 
 [[bench]]
 name = "builder"

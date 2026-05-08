@@ -1,0 +1,44 @@
+id: 17
+name: Miri-compatible proptest persistence
+description: Miri-compatible proptest persistence
+targets:
+  shape_ids:
+  - 15
+  - 19
+  - 20
+  - 22
+status: proposed
+version_impact: patch
+intent:
+  kind: amendment
+  summary: Disable file-backed proptest failure persistence in remaining generated-input tests so the mandatory Miri leg of just verify can run under isolation without changing tested invariants.
+  source: human
+  goals: |
+    - Keep the existing generated-input proptest strategies and assertions intact.
+    - Set `failure_persistence: None` for remaining proptest groups that still tried to read cwd-backed regression files under Miri isolation.
+    - Preserve `just verify` as the required heavy gate instead of depending on environment overrides or bypasses.
+  non_goals: |
+    No weakening of strategy ranges, no removal of tests, no Miri flag changes, and no alteration to production code behavior.
+  rationale: |
+    Miri runs with filesystem isolation by default, while proptest's file-backed failure persistence calls `std::env::current_dir`. Other tests in the workspace already disable that persistence. Applying the same test-runner configuration to the remaining proptest groups keeps verification runnable without changing what inputs or invariants are exercised.
+realization:
+- bindings:
+  - scheme: path
+    value: crates/oxgraph-algo/tests/pagerank.rs
+    metadata:
+      summary: PageRank generated graph proptest keeps its strategy and assertions while disabling file-backed failure persistence for Miri.
+  - scheme: path
+    value: crates/oxgraph-graph-build/tests/proptest.rs
+    metadata:
+      summary: Graph builder generated freeze/export proptest keeps its strategy and assertions while disabling file-backed failure persistence for Miri.
+  - scheme: path
+    value: crates/oxgraph-hyper-build/tests/proptest.rs
+    metadata:
+      summary: Hypergraph builder generated freeze/export proptest keeps its strategy and assertions while disabling file-backed failure persistence for Miri.
+  - scheme: path
+    value: crates/oxgraph-property/tests/proptest.rs
+    metadata:
+      summary: Property-layer generated descriptor/rekey/snapshot proptests keep their strategies and assertions while disabling file-backed failure persistence for Miri.
+  role: test
+initiated_by:
+  type: human

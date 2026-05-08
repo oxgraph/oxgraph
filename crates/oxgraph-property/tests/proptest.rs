@@ -51,6 +51,11 @@ fn prop_ok<T, E: fmt::Display>(result: Result<T, E>) -> Result<T, TestCaseError>
 }
 
 proptest! {
+    #![proptest_config(ProptestConfig {
+        failure_persistence: None,
+        ..ProptestConfig::default()
+    })]
+
     /// Non-empty generated names are accepted and duplicate family/name pairs are rejected.
     #[test]
     fn duplicate_name_validation_is_family_scoped(name in "[a-z][a-z0-9_]{0,12}") {

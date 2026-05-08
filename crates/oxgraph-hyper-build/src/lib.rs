@@ -41,8 +41,6 @@ use oxgraph_property::{
 };
 #[cfg(feature = "snapshot")]
 use oxgraph_snapshot::{PlanError, SnapshotBuilder};
-#[cfg(feature = "snapshot")]
-use zerocopy::byteorder::{LE, U16, U32, U64};
 
 /// Result returned by unweighted hypergraph freeze operations.
 type FrozenHypergraphResult<VertexIndex, RelationIndex, IncidenceIndex> = Result<
@@ -1810,38 +1808,6 @@ where
     }
 }
 
-/// Snapshot export index with local little-endian conversion.
-#[cfg(feature = "snapshot")]
-pub trait HyperSnapshotIndex: BuildIndex + BcsrSnapshotIndex {
-    /// Converts this value into its little-endian BCSR/property word.
-    ///
-    /// # Performance
-    ///
-    /// This function is `O(1)`.
-    fn to_le_word(self) -> Self::LittleEndianWord;
-}
-
-#[cfg(feature = "snapshot")]
-impl HyperSnapshotIndex for u16 {
-    fn to_le_word(self) -> Self::LittleEndianWord {
-        U16::<LE>::new(self)
-    }
-}
-
-#[cfg(feature = "snapshot")]
-impl HyperSnapshotIndex for u32 {
-    fn to_le_word(self) -> Self::LittleEndianWord {
-        U32::<LE>::new(self)
-    }
-}
-
-#[cfg(feature = "snapshot")]
-impl HyperSnapshotIndex for u64 {
-    fn to_le_word(self) -> Self::LittleEndianWord {
-        U64::<LE>::new(self)
-    }
-}
-
 /// Converts a BCSR payload slice into explicit little-endian words.
 ///
 /// # Performance
@@ -1850,12 +1816,12 @@ impl HyperSnapshotIndex for u64 {
 #[cfg(feature = "snapshot")]
 pub fn bcsr_slice_to_le<I>(values: &[I]) -> Vec<I::LittleEndianWord>
 where
-    I: HyperSnapshotIndex,
+    I: BcsrSnapshotIndex,
 {
     values
         .iter()
         .copied()
-        .map(HyperSnapshotIndex::to_le_word)
+        .map(BcsrSnapshotIndex::to_le_word)
         .collect()
 }
 
@@ -1892,9 +1858,9 @@ pub fn export_bcsr_snapshot<VertexIndex, RelationIndex, IncidenceIndex>(
     graph: &FrozenHypergraph<VertexIndex, RelationIndex, IncidenceIndex>,
 ) -> Result<Vec<u8>, HyperBuildError<VertexIndex, RelationIndex, IncidenceIndex>>
 where
-    VertexIndex: HyperSnapshotIndex,
-    RelationIndex: HyperSnapshotIndex,
-    IncidenceIndex: HyperSnapshotIndex,
+    VertexIndex: BuildIndex + BcsrSnapshotIndex,
+    RelationIndex: BuildIndex + BcsrSnapshotIndex,
+    IncidenceIndex: BuildIndex + BcsrSnapshotIndex,
 {
     export_topology_snapshot(&graph.topology)
 }
@@ -1917,9 +1883,9 @@ pub fn export_weighted_bcsr_snapshot<VertexIndex, RelationIndex, IncidenceIndex,
     graph: &FrozenWeightedHypergraph<VertexIndex, RelationIndex, IncidenceIndex, EW, RW, IW>,
 ) -> Result<Vec<u8>, HyperBuildError<VertexIndex, RelationIndex, IncidenceIndex>>
 where
-    VertexIndex: HyperSnapshotIndex,
-    RelationIndex: HyperSnapshotIndex,
-    IncidenceIndex: HyperSnapshotIndex,
+    VertexIndex: BuildIndex + BcsrSnapshotIndex,
+    RelationIndex: BuildIndex + BcsrSnapshotIndex,
+    IncidenceIndex: BuildIndex + BcsrSnapshotIndex,
 {
     export_topology_snapshot(&graph.topology)
 }
@@ -1940,9 +1906,9 @@ pub fn export_bcsr_snapshot_with_properties<VertexIndex, RelationIndex, Incidenc
     layers: HyperPropertyLayers<'_, Id, VertexIndex, RelationIndex, IncidenceIndex>,
 ) -> Result<Vec<u8>, HyperBuildError<VertexIndex, RelationIndex, IncidenceIndex>>
 where
-    VertexIndex: HyperSnapshotIndex + oxgraph_property::PropertyIndex,
-    RelationIndex: HyperSnapshotIndex + oxgraph_property::PropertyIndex,
-    IncidenceIndex: HyperSnapshotIndex + PropertySnapshotMetaWord,
+    VertexIndex: BuildIndex + BcsrSnapshotIndex + oxgraph_property::PropertyIndex,
+    RelationIndex: BuildIndex + BcsrSnapshotIndex + oxgraph_property::PropertyIndex,
+    IncidenceIndex: BuildIndex + BcsrSnapshotIndex + PropertySnapshotMetaWord,
     Id: Clone + Copy + Into<u64> + Ord + TryInto<IncidenceIndex>,
 {
     let property = encode_hyper_properties(&graph.topology, layers)?;
@@ -1973,9 +1939,9 @@ pub fn export_weighted_bcsr_snapshot_with_properties<
     layers: HyperPropertyLayers<'_, Id, VertexIndex, RelationIndex, IncidenceIndex>,
 ) -> Result<Vec<u8>, HyperBuildError<VertexIndex, RelationIndex, IncidenceIndex>>
 where
-    VertexIndex: HyperSnapshotIndex + oxgraph_property::PropertyIndex,
-    RelationIndex: HyperSnapshotIndex + oxgraph_property::PropertyIndex,
-    IncidenceIndex: HyperSnapshotIndex + PropertySnapshotMetaWord,
+    VertexIndex: BuildIndex + BcsrSnapshotIndex + oxgraph_property::PropertyIndex,
+    RelationIndex: BuildIndex + BcsrSnapshotIndex + oxgraph_property::PropertyIndex,
+    IncidenceIndex: BuildIndex + BcsrSnapshotIndex + PropertySnapshotMetaWord,
     Id: Clone + Copy + Into<u64> + Ord + TryInto<IncidenceIndex>,
 {
     let property = encode_hyper_properties(&graph.topology, layers)?;
@@ -2260,9 +2226,9 @@ fn export_topology_snapshot<VertexIndex, RelationIndex, IncidenceIndex>(
     topology: &FrozenTopology<VertexIndex, RelationIndex, IncidenceIndex>,
 ) -> Result<Vec<u8>, HyperBuildError<VertexIndex, RelationIndex, IncidenceIndex>>
 where
-    VertexIndex: HyperSnapshotIndex,
-    RelationIndex: HyperSnapshotIndex,
-    IncidenceIndex: HyperSnapshotIndex,
+    VertexIndex: BuildIndex + BcsrSnapshotIndex,
+    RelationIndex: BuildIndex + BcsrSnapshotIndex,
+    IncidenceIndex: BuildIndex + BcsrSnapshotIndex,
 {
     let head_offsets = bcsr_slice_to_le(&topology.head_offsets);
     let head_participants = bcsr_slice_to_le(&topology.head_participants);
@@ -2314,9 +2280,9 @@ fn encode_hyper_properties<VertexIndex, RelationIndex, IncidenceIndex, Id>(
     layers: HyperPropertyLayers<'_, Id, VertexIndex, RelationIndex, IncidenceIndex>,
 ) -> Result<EncodedPropertySnapshot, HyperBuildError<VertexIndex, RelationIndex, IncidenceIndex>>
 where
-    VertexIndex: HyperSnapshotIndex + oxgraph_property::PropertyIndex,
-    RelationIndex: HyperSnapshotIndex + oxgraph_property::PropertyIndex,
-    IncidenceIndex: HyperSnapshotIndex + PropertySnapshotMetaWord,
+    VertexIndex: BuildIndex + BcsrSnapshotIndex + oxgraph_property::PropertyIndex,
+    RelationIndex: BuildIndex + BcsrSnapshotIndex + oxgraph_property::PropertyIndex,
+    IncidenceIndex: BuildIndex + BcsrSnapshotIndex + PropertySnapshotMetaWord,
     Id: Clone + Copy + Into<u64> + Ord + TryInto<IncidenceIndex>,
 {
     validate_property_lengths(topology, layers.element, IdFamily::Element)?;
@@ -2381,9 +2347,9 @@ fn export_topology_property_snapshot<VertexIndex, RelationIndex, IncidenceIndex>
     property: EncodedPropertySnapshot,
 ) -> Result<Vec<u8>, HyperBuildError<VertexIndex, RelationIndex, IncidenceIndex>>
 where
-    VertexIndex: HyperSnapshotIndex,
-    RelationIndex: HyperSnapshotIndex,
-    IncidenceIndex: HyperSnapshotIndex + PropertySnapshotMetaWord,
+    VertexIndex: BuildIndex + BcsrSnapshotIndex,
+    RelationIndex: BuildIndex + BcsrSnapshotIndex,
+    IncidenceIndex: BuildIndex + BcsrSnapshotIndex + PropertySnapshotMetaWord,
 {
     let head_offsets = bcsr_slice_to_le(&topology.head_offsets);
     let head_participants = bcsr_slice_to_le(&topology.head_participants);

@@ -861,6 +861,11 @@ fn hypergraph_non_convergence_reports_last_nonzero_delta() -> Result<(), PageRan
 }
 
 proptest! {
+    #![proptest_config(ProptestConfig {
+        failure_persistence: None,
+        ..ProptestConfig::default()
+    })]
+
     /// Generated CSR fixtures preserve probability mass and tier equivalence.
     #[test]
     fn generated_graph_pagerank_preserves_mass_visibility_and_tier_equivalence(

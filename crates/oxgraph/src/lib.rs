@@ -207,8 +207,7 @@ pub mod graph_build {
     };
     #[cfg(feature = "graph-snapshot")]
     pub use oxgraph_graph_build::{
-        GraphSnapshotIndex, csr_slice_to_le, export_csr_snapshot, export_weighted_csr_snapshot,
-        identity_slice_to_le,
+        csr_slice_to_le, export_csr_snapshot, export_weighted_csr_snapshot, identity_slice_to_le,
     };
     #[cfg(feature = "graph-property-arrow")]
     pub use oxgraph_graph_build::{
@@ -231,7 +230,7 @@ pub mod hyper_build {
     };
     #[cfg(feature = "hyper-snapshot")]
     pub use oxgraph_hyper_build::{
-        HyperSnapshotIndex, bcsr_slice_to_le, export_bcsr_snapshot, export_weighted_bcsr_snapshot,
+        bcsr_slice_to_le, export_bcsr_snapshot, export_weighted_bcsr_snapshot,
     };
     #[cfg(feature = "hyper-property-arrow")]
     pub use oxgraph_hyper_build::{

@@ -30,8 +30,6 @@ use oxgraph_property::{
 use oxgraph_property::{PropertyError, PropertyLayer};
 #[cfg(feature = "snapshot")]
 use oxgraph_snapshot::{PlanError, SnapshotBuilder};
-#[cfg(feature = "snapshot")]
-use zerocopy::byteorder::{LE, U16, U32, U64};
 
 /// Result returned by weighted graph freeze operations.
 type FrozenWeightedGraphResult<NodeIndex, EdgeIndex, EW, RW> = Result<
@@ -1123,38 +1121,6 @@ where
     start..end
 }
 
-/// Snapshot export index with local little-endian conversion.
-#[cfg(feature = "snapshot")]
-pub trait GraphSnapshotIndex: BuildIndex + CsrSnapshotIndex {
-    /// Converts this value into its little-endian CSR/property word.
-    ///
-    /// # Performance
-    ///
-    /// This function is `O(1)`.
-    fn to_le_word(self) -> Self::LittleEndianWord;
-}
-
-#[cfg(feature = "snapshot")]
-impl GraphSnapshotIndex for u16 {
-    fn to_le_word(self) -> Self::LittleEndianWord {
-        U16::<LE>::new(self)
-    }
-}
-
-#[cfg(feature = "snapshot")]
-impl GraphSnapshotIndex for u32 {
-    fn to_le_word(self) -> Self::LittleEndianWord {
-        U32::<LE>::new(self)
-    }
-}
-
-#[cfg(feature = "snapshot")]
-impl GraphSnapshotIndex for u64 {
-    fn to_le_word(self) -> Self::LittleEndianWord {
-        U64::<LE>::new(self)
-    }
-}
-
 /// Converts a CSR payload slice into explicit little-endian words.
 ///
 /// # Performance
@@ -1163,12 +1129,12 @@ impl GraphSnapshotIndex for u64 {
 #[cfg(feature = "snapshot")]
 pub fn csr_slice_to_le<I>(values: &[I]) -> Vec<I::LittleEndianWord>
 where
-    I: GraphSnapshotIndex,
+    I: CsrSnapshotIndex,
 {
     values
         .iter()
         .copied()
-        .map(GraphSnapshotIndex::to_le_word)
+        .map(CsrSnapshotIndex::to_le_word)
         .collect()
 }
 
@@ -1180,7 +1146,7 @@ where
 #[cfg(feature = "snapshot")]
 pub fn identity_slice_to_le<I>(values: &[I]) -> Vec<I::LittleEndianWord>
 where
-    I: GraphSnapshotIndex,
+    I: CsrSnapshotIndex,
 {
     csr_slice_to_le(values)
 }
@@ -1200,8 +1166,8 @@ pub fn export_csr_snapshot<NodeIndex, EdgeIndex>(
     graph: &FrozenGraph<NodeIndex, EdgeIndex>,
 ) -> Result<Vec<u8>, GraphBuildError<NodeIndex, EdgeIndex>>
 where
-    NodeIndex: GraphSnapshotIndex,
-    EdgeIndex: GraphSnapshotIndex,
+    NodeIndex: BuildIndex + CsrSnapshotIndex,
+    EdgeIndex: BuildIndex + CsrSnapshotIndex,
 {
     export_topology_snapshot(&graph.topology)
 }
@@ -1224,8 +1190,8 @@ pub fn export_weighted_csr_snapshot<NodeIndex, EdgeIndex, EW, RW>(
     graph: &FrozenWeightedGraph<NodeIndex, EdgeIndex, EW, RW>,
 ) -> Result<Vec<u8>, GraphBuildError<NodeIndex, EdgeIndex>>
 where
-    NodeIndex: GraphSnapshotIndex,
-    EdgeIndex: GraphSnapshotIndex,
+    NodeIndex: BuildIndex + CsrSnapshotIndex,
+    EdgeIndex: BuildIndex + CsrSnapshotIndex,
 {
     export_topology_snapshot(&graph.topology)
 }
@@ -1246,8 +1212,8 @@ pub fn export_csr_snapshot_with_properties<NodeIndex, EdgeIndex, Id>(
     layers: GraphPropertyLayers<'_, Id, NodeIndex, EdgeIndex>,
 ) -> Result<Vec<u8>, GraphBuildError<NodeIndex, EdgeIndex>>
 where
-    NodeIndex: GraphSnapshotIndex + oxgraph_property::PropertyIndex,
-    EdgeIndex: GraphSnapshotIndex + PropertySnapshotMetaWord,
+    NodeIndex: BuildIndex + CsrSnapshotIndex + oxgraph_property::PropertyIndex,
+    EdgeIndex: BuildIndex + CsrSnapshotIndex + PropertySnapshotMetaWord,
     Id: Clone + Copy + Into<u64> + Ord + TryInto<EdgeIndex>,
 {
     let property = encode_graph_properties(&graph.topology, layers)?;
@@ -1270,8 +1236,8 @@ pub fn export_weighted_csr_snapshot_with_properties<NodeIndex, EdgeIndex, EW, RW
     layers: GraphPropertyLayers<'_, Id, NodeIndex, EdgeIndex>,
 ) -> Result<Vec<u8>, GraphBuildError<NodeIndex, EdgeIndex>>
 where
-    NodeIndex: GraphSnapshotIndex + oxgraph_property::PropertyIndex,
-    EdgeIndex: GraphSnapshotIndex + PropertySnapshotMetaWord,
+    NodeIndex: BuildIndex + CsrSnapshotIndex + oxgraph_property::PropertyIndex,
+    EdgeIndex: BuildIndex + CsrSnapshotIndex + PropertySnapshotMetaWord,
     Id: Clone + Copy + Into<u64> + Ord + TryInto<EdgeIndex>,
 {
     let property = encode_graph_properties(&graph.topology, layers)?;
@@ -1285,8 +1251,8 @@ fn encode_graph_properties<NodeIndex, EdgeIndex, Id>(
     layers: GraphPropertyLayers<'_, Id, NodeIndex, EdgeIndex>,
 ) -> Result<EncodedPropertySnapshot, GraphBuildError<NodeIndex, EdgeIndex>>
 where
-    NodeIndex: GraphSnapshotIndex + oxgraph_property::PropertyIndex,
-    EdgeIndex: GraphSnapshotIndex + PropertySnapshotMetaWord,
+    NodeIndex: BuildIndex + CsrSnapshotIndex + oxgraph_property::PropertyIndex,
+    EdgeIndex: BuildIndex + CsrSnapshotIndex + PropertySnapshotMetaWord,
     Id: Clone + Copy + Into<u64> + Ord + TryInto<EdgeIndex>,
 {
     validate_property_lengths(topology, layers.element, IdFamily::Element)?;
@@ -1347,8 +1313,8 @@ fn export_topology_snapshot<NodeIndex, EdgeIndex>(
     topology: &FrozenTopology<NodeIndex, EdgeIndex>,
 ) -> Result<Vec<u8>, GraphBuildError<NodeIndex, EdgeIndex>>
 where
-    NodeIndex: GraphSnapshotIndex,
-    EdgeIndex: GraphSnapshotIndex,
+    NodeIndex: BuildIndex + CsrSnapshotIndex,
+    EdgeIndex: BuildIndex + CsrSnapshotIndex,
 {
     let offsets = csr_slice_to_le(&topology.offsets);
     let targets = csr_slice_to_le(&topology.targets);
@@ -1365,8 +1331,8 @@ fn export_topology_property_snapshot<NodeIndex, EdgeIndex>(
     property: EncodedPropertySnapshot,
 ) -> Result<Vec<u8>, GraphBuildError<NodeIndex, EdgeIndex>>
 where
-    NodeIndex: GraphSnapshotIndex,
-    EdgeIndex: GraphSnapshotIndex + PropertySnapshotMetaWord,
+    NodeIndex: BuildIndex + CsrSnapshotIndex,
+    EdgeIndex: BuildIndex + CsrSnapshotIndex + PropertySnapshotMetaWord,
 {
     let offsets = csr_slice_to_le(&topology.offsets);
     let targets = csr_slice_to_le(&topology.targets);

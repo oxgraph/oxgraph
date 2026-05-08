@@ -30,6 +30,11 @@ fn prop_property<T>(
 }
 
 proptest! {
+    #![proptest_config(ProptestConfig {
+        failure_persistence: None,
+        ..ProptestConfig::default()
+    })]
+
     /// Random edge lists freeze into views with stable local/canonical IDs and validating snapshots.
     #[test]
     fn random_graph_freeze_preserves_identity(

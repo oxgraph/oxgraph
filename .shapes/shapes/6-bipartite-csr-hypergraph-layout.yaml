@@ -47,6 +47,10 @@ realization:
     metadata:
       summary: BcsrHypergraph, BcsrValidation, eight registered section kinds, error enums, and directed relation/incidence traversal trait implementations.
   - scheme: path
+    value: crates/oxgraph-hyper-bcsr/src/word.rs
+    metadata:
+      summary: BcsrIndex, BcsrSnapshotIndex endian conversion, and little-endian snapshot word traits for BCSR payloads.
+  - scheme: path
     value: crates/oxgraph-hyper-bcsr/src/internal/validation.rs
     metadata:
       summary: Layout and Strict validators — Strict adds cross-direction multiset equality.
@@ -58,3 +62,4 @@ amendment_log:
 - 4
 - 8
 - 12
+- 16

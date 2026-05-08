@@ -190,7 +190,8 @@ impl_little_endian_bcsr_word!(U64<LE>, u64);
 ///
 /// # Performance
 ///
-/// `perf: unspecified`; this trait carries compile-time metadata only.
+/// `perf: unspecified`; implementations provide `O(1)` metadata access and
+/// little-endian word conversion.
 pub trait BcsrSnapshotIndex: sealed::BcsrSnapshotIndex + BcsrIndex {
     /// Little-endian zerocopy storage word for this logical index type.
     ///
@@ -215,6 +216,13 @@ pub trait BcsrSnapshotIndex: sealed::BcsrSnapshotIndex + BcsrIndex {
     const VERTEX_INCOMING_OFFSETS_KIND: u32;
     /// Vertex incoming hyperedges section kind for this width.
     const VERTEX_INCOMING_HYPEREDGES_KIND: u32;
+
+    /// Converts this value into its little-endian BCSR snapshot word.
+    ///
+    /// # Performance
+    ///
+    /// This function is `O(1)`.
+    fn to_le_word(self) -> Self::LittleEndianWord;
 }
 
 /// Implements [`BcsrSnapshotIndex`] for one portable snapshot width.
@@ -244,6 +252,10 @@ macro_rules! impl_bcsr_snapshot_index {
             const VERTEX_OUTGOING_HYPEREDGES_KIND: u32 = $vertex_outgoing_hyperedges;
             const VERTEX_INCOMING_OFFSETS_KIND: u32 = $vertex_incoming_offsets;
             const VERTEX_INCOMING_HYPEREDGES_KIND: u32 = $vertex_incoming_hyperedges;
+
+            fn to_le_word(self) -> Self::LittleEndianWord {
+                <$word>::new(self)
+            }
         }
     };
 }

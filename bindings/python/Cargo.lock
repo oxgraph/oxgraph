@@ -52,7 +52,6 @@ dependencies = [
  "oxgraph-csr",
  "oxgraph-graph",
  "oxgraph-snapshot",
- "zerocopy",
 ]
 
 [[package]]
@@ -78,7 +77,6 @@ dependencies = [
  "oxgraph-hyper",
  "oxgraph-hyper-bcsr",
  "oxgraph-snapshot",
- "zerocopy",
 ]
 
 [[package]]

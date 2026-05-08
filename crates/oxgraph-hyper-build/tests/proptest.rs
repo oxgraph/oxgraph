@@ -30,6 +30,11 @@ fn prop_property<T>(
 }
 
 proptest! {
+    #![proptest_config(ProptestConfig {
+        failure_persistence: None,
+        ..ProptestConfig::default()
+    })]
+
     /// Generated directed hyperedges freeze to strict BCSR snapshots.
     #[test]
     fn random_hypergraph_exports_strict_bcsr(

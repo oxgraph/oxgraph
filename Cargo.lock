@@ -700,7 +700,6 @@ dependencies = [
  "oxgraph-property",
  "oxgraph-snapshot",
  "proptest",
- "zerocopy",
 ]
 
 [[package]]
@@ -734,7 +733,6 @@ dependencies = [
  "oxgraph-property",
  "oxgraph-snapshot",
  "proptest",
- "zerocopy",
 ]
 
 [[package]]

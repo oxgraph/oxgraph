@@ -1,0 +1,44 @@
+id: 16
+name: Layout-owned snapshot word conversion
+description: Layout-owned snapshot word conversion
+targets:
+  shape_ids:
+  - 5
+  - 6
+  - 20
+status: proposed
+version_impact: major
+intent:
+  kind: amendment
+  summary: Move CSR/BCSR little-endian snapshot word conversion from builder-local traits into the layout snapshot-index traits so builders reuse the layout boundary instead of duplicating conversion traits.
+  source: human
+  goals: |
+    - Put `to_le_word` on `CsrSnapshotIndex` and `BcsrSnapshotIndex`, alongside the width-specific section-kind metadata those layout traits already own.
+    - Remove the builder-local `GraphSnapshotIndex` and `HyperSnapshotIndex` public traits instead of preserving compatibility wrappers in the greenfield branch.
+    - Keep graph and hypergraph builder snapshot export helpers and section bytes unchanged; only the conversion boundary moves.
+    - Keep `usize` native-memory-only for snapshots by continuing to rely on the layout snapshot-index traits.
+  non_goals: |
+    No snapshot ABI promotion, no section-kind renumbering, no new workspace crate, no property/Arrow dependency movement into layout crates, and no macro-generated public API.
+  rationale: |
+    CSR and BCSR layout crates already define the portable snapshot index widths and section-kind metadata. Keeping a second builder-local trait solely to add little-endian conversion duplicates the same width boundary and makes builders own a layout concern. Moving conversion to the layout traits leaves builders as append/freeze/export adapters and makes the snapshot width story easier to audit.
+realization:
+- bindings:
+  - scheme: path
+    value: crates/oxgraph-csr/src/lib.rs
+    metadata:
+      summary: CsrSnapshotIndex owns little-endian word conversion alongside CSR snapshot section-kind metadata.
+  - scheme: path
+    value: crates/oxgraph-hyper-bcsr/src/word.rs
+    metadata:
+      summary: BcsrSnapshotIndex owns little-endian word conversion alongside BCSR snapshot section-kind metadata.
+  - scheme: path
+    value: crates/oxgraph-graph-build/src/lib.rs
+    metadata:
+      summary: Graph builder snapshot export helpers use CsrSnapshotIndex directly and no longer define GraphSnapshotIndex.
+  - scheme: path
+    value: crates/oxgraph-hyper-build/src/lib.rs
+    metadata:
+      summary: Hypergraph builder snapshot export helpers use BcsrSnapshotIndex directly and no longer define HyperSnapshotIndex.
+  role: primary
+initiated_by:
+  type: human

@@ -45,7 +45,7 @@ realization:
   - scheme: path
     value: crates/oxgraph-csr/src/lib.rs
     metadata:
-      summary: CsrGraph, CsrSnapshotGraph, CsrOutEdges, CsrOutNeighbors, CSR validation, CsrSnapshotError, from_snapshot, registered SNAPSHOT_KIND_CSR_* constants.
+      summary: CsrGraph, CsrSnapshotGraph, CsrOutEdges, CsrOutNeighbors, CSR validation, CsrSnapshotIndex endian conversion, CsrSnapshotError, from_snapshot, registered SNAPSHOT_KIND_CSR_* constants.
   role: primary
 parents:
 - id: 1
@@ -53,3 +53,4 @@ parents:
 amendment_log:
 - 3
 - 12
+- 16
