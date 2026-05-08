@@ -81,20 +81,108 @@ const DEFAULT_PAGERANK_TOLERANCE: f64 = 1.0e-12;
 /// Default Python PageRank iteration cap.
 const DEFAULT_PAGERANK_MAX_ITERATIONS: usize = 100;
 
+/// Private label-to-ID index for the Python facade.
+///
+/// Python labels are owned by this index as `String` values and are never
+/// interpreted as Rust topology IDs. The index enforces uniqueness at insert
+/// time through [`ensure_available`](Self::ensure_available); callers check
+/// availability before mutating builders so duplicate-label errors cannot
+/// leave a partially mutated builder.
+///
+/// # Performance
+///
+/// Insertion and lookup are `O(log n)` in the number of labels via `BTreeMap`.
+/// Cloning is `O(n log n)`.
+#[derive(Clone, Debug, Default)]
+struct LabelIndex {
+    /// Label-to-u32-ID mapping.
+    entries: BTreeMap<String, u32>,
+}
+
+impl LabelIndex {
+    /// Creates an empty label index.
+    ///
+    /// # Performance
+    ///
+    /// This function is `O(1)`.
+    fn new() -> Self {
+        Self::default()
+    }
+
+    /// Returns `Ok(())` when `label` is `None` or absent from the index.
+    ///
+    /// Returns `Err(message)` when `label` is `Some(name)` and `name` already
+    /// maps to an ID so callers can surface a typed Python error before
+    /// mutating the Rust builder.
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(log n)`.
+    fn ensure_available(&self, label: Option<&str>) -> Result<(), String> {
+        if let Some(name) = label
+            && self.entries.contains_key(name)
+        {
+            return Err(format!("duplicate label '{name}'"));
+        }
+        Ok(())
+    }
+
+    /// Inserts `label → id` when `label` is `Some(name)`.
+    ///
+    /// The caller must have already confirmed availability via
+    /// [`ensure_available`](Self::ensure_available); this method does not
+    /// re-check. A `None` label is a no-op.
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(log n)`.
+    fn insert_checked(&mut self, label: Option<String>, id: u32) {
+        if let Some(name) = label {
+            let prev = self.entries.insert(name, id);
+            debug_assert!(
+                prev.is_none(),
+                "insert_checked called without prior ensure_available"
+            );
+        }
+    }
+
+    /// Returns the ID for a label string, or `None` when absent.
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(log n)`.
+    #[must_use]
+    fn id(&self, label: &str) -> Option<u32> {
+        self.entries.get(label).copied()
+    }
+
+    /// Returns the first label that maps to `id`, or `None`.
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(n)` in the number of labels.
+    #[must_use]
+    fn label(&self, id: u32) -> Option<String> {
+        self.entries
+            .iter()
+            .find_map(|(label, &value)| (value == id).then(|| label.clone()))
+    }
+}
+
 /// Python wrapper around a weighted directed graph builder.
 #[pyclass(name = "GraphBuilder")]
 struct PyGraphBuilder {
     /// Rust graph builder.
     inner: PythonGraphBuilder,
     /// Python label to canonical node ID map.
-    labels: BTreeMap<String, u32>,
+    labels: LabelIndex,
 }
 
 impl Default for PyGraphBuilder {
     fn default() -> Self {
         Self {
             inner: PythonGraphBuilder::new(),
-            labels: BTreeMap::new(),
+            labels: LabelIndex::new(),
         }
     }
 }
@@ -110,14 +198,14 @@ impl PyGraphBuilder {
     /// Adds a node with an optional Python-owned label and element weight.
     #[pyo3(signature = (label=None, weight=None))]
     fn add_node(&mut self, label: Option<String>, weight: Option<f64>) -> PyResult<u32> {
-        check_label_available(&self.labels, label.as_deref()).map_err(graph_message)?;
+        self.labels
+            .ensure_available(label.as_deref())
+            .map_err(graph_message)?;
         let node = self
             .inner
             .add_node(weight.unwrap_or(DEFAULT_ELEMENT_WEIGHT))
             .map_err(py_graph_error)?;
-        if let Some(name) = label {
-            self.labels.insert(name, node.0);
-        }
+        self.labels.insert_checked(label, node.0);
         Ok(node.0)
     }
 
@@ -151,7 +239,7 @@ impl PyGraphBuilder {
 
     /// Returns the node ID for a Python label, if present.
     fn node(&self, label: &str) -> Option<u32> {
-        self.labels.get(label).copied()
+        self.labels.id(label)
     }
 
     /// Returns the number of nodes added so far.
@@ -179,7 +267,7 @@ struct PyFrozenGraph {
     /// Rust frozen graph.
     inner: PythonFrozenGraph,
     /// Python label to canonical node ID map carried from the builder.
-    labels: BTreeMap<String, u32>,
+    labels: LabelIndex,
 }
 
 #[pymethods]
@@ -250,13 +338,13 @@ impl PyFrozenGraph {
 
     /// Returns the node ID for a Python label, if present.
     fn node(&self, label: &str) -> Option<u32> {
-        self.labels.get(label).copied()
+        self.labels.id(label)
     }
 
     /// Returns the first Python label for a node, if present.
     fn node_label(&self, node: u32) -> PyResult<Option<String>> {
         ensure_graph_node(&self.inner, node)?;
-        Ok(label_for_id(&self.labels, node))
+        Ok(self.labels.label(node))
     }
 
     /// Returns `(source_node, target_node)` for a local edge ID.
@@ -354,14 +442,14 @@ struct PyHypergraphBuilder {
     /// Rust hypergraph builder.
     inner: PythonHypergraphBuilder,
     /// Python label to canonical vertex ID map.
-    labels: BTreeMap<String, u32>,
+    labels: LabelIndex,
 }
 
 impl Default for PyHypergraphBuilder {
     fn default() -> Self {
         Self {
             inner: PythonHypergraphBuilder::new(),
-            labels: BTreeMap::new(),
+            labels: LabelIndex::new(),
         }
     }
 }
@@ -377,14 +465,14 @@ impl PyHypergraphBuilder {
     /// Adds an isolated vertex with an optional Python label and element weight.
     #[pyo3(signature = (label=None, weight=None))]
     fn add_vertex(&mut self, label: Option<String>, weight: Option<f64>) -> PyResult<u32> {
-        check_label_available(&self.labels, label.as_deref()).map_err(hyper_message)?;
+        self.labels
+            .ensure_available(label.as_deref())
+            .map_err(hyper_message)?;
         let vertex = self
             .inner
             .add_vertex(weight.unwrap_or(DEFAULT_ELEMENT_WEIGHT))
             .map_err(py_hyper_error)?;
-        if let Some(name) = label {
-            self.labels.insert(name, vertex.0);
-        }
+        self.labels.insert_checked(label, vertex.0);
         Ok(vertex.0)
     }
 
@@ -451,7 +539,7 @@ impl PyHypergraphBuilder {
 
     /// Returns the vertex ID for a Python label, if present.
     fn vertex(&self, label: &str) -> Option<u32> {
-        self.labels.get(label).copied()
+        self.labels.id(label)
     }
 
     /// Returns the number of vertices added so far.
@@ -479,7 +567,7 @@ struct PyFrozenHypergraph {
     /// Rust frozen hypergraph.
     inner: PythonFrozenHypergraph,
     /// Python label to canonical vertex ID map carried from the builder.
-    labels: BTreeMap<String, u32>,
+    labels: LabelIndex,
 }
 
 #[pymethods]
@@ -562,13 +650,13 @@ impl PyFrozenHypergraph {
 
     /// Returns the vertex ID for a Python label, if present.
     fn vertex(&self, label: &str) -> Option<u32> {
-        self.labels.get(label).copied()
+        self.labels.id(label)
     }
 
     /// Returns the first Python label for a vertex, if present.
     fn vertex_label(&self, vertex: u32) -> PyResult<Option<String>> {
         ensure_hyper_vertex(&self.inner, vertex)?;
-        Ok(label_for_id(&self.labels, vertex))
+        Ok(self.labels.label(vertex))
     }
 
     /// Returns `(source_vertices, target_vertices)` for a local hyperedge ID.
@@ -838,26 +926,6 @@ fn pagerank_config(
         tolerance.unwrap_or(DEFAULT_PAGERANK_TOLERANCE),
         max_iterations.unwrap_or(DEFAULT_PAGERANK_MAX_ITERATIONS),
     )
-}
-
-/// Checks that an optional label is not already present.
-fn check_label_available(
-    labels: &BTreeMap<String, u32>,
-    label: Option<&str>,
-) -> Result<(), String> {
-    if let Some(name) = label
-        && labels.contains_key(name)
-    {
-        return Err(format!("duplicate label '{name}'"));
-    }
-    Ok(())
-}
-
-/// Returns the first label for a facade-owned ID.
-fn label_for_id(labels: &BTreeMap<String, u32>, id: u32) -> Option<String> {
-    labels
-        .iter()
-        .find_map(|(label, &value)| (value == id).then(|| label.clone()))
 }
 
 /// Checks a frozen graph node ID.
