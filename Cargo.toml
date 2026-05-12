@@ -2,7 +2,9 @@
 members = [
   "crates/oxgraph",
   "crates/oxgraph-algo",
+  "crates/oxgraph-build-util",
   "crates/oxgraph-csr",
+  "crates/oxgraph-csr-util",
   "crates/oxgraph-graph",
   "crates/oxgraph-graph-build",
   "crates/oxgraph-hyper",

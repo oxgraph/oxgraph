@@ -16,6 +16,7 @@ mod proofs;
 
 use core::{fmt, hash::Hash, marker::PhantomData};
 
+use oxgraph_csr_util::{OffsetIntegrityIssue, check_offset_section, check_value_range};
 use oxgraph_graph::{
     ContainsElement, ContainsRelation, EdgeTargetGraph, ElementIndex, ElementSuccessors,
     GraphCounts, OutgoingEdgeCount, OutgoingGraph, RelationIndex, TopologyBase, TopologyCounts,
@@ -256,10 +257,15 @@ impl_csr_snapshot_index!(
 /// wrappers such as [`U32<LE>`] and still expose the same host-endian graph ID
 /// type through [`Self::Index`].
 ///
+/// Implementors are also `oxgraph_csr_util::ZerocopyWord`, which exposes the
+/// shared `read_as_usize` predicate used by the layout-validation primitives
+/// in `oxgraph-csr-util`. The set of `ZerocopyWord` types is sealed in
+/// `oxgraph-csr-util`, so this supertrait does not widen the public surface.
+///
 /// # Performance
 ///
 /// Reading a word is expected to be `O(1)`.
-pub trait CsrWord: Copy {
+pub trait CsrWord: Copy + oxgraph_csr_util::ZerocopyWord {
     /// Host-endian logical index decoded from this word.
     ///
     /// # Performance
@@ -682,54 +688,15 @@ where
         let node_bound = node_count
             .to_usize()
             .ok_or(CsrError::NodeUsizeOverflow { value: node_count })?;
-        let expected_offsets = node_bound
-            .checked_add(1)
-            .ok_or(CsrError::OffsetLengthOverflow { node_count })?;
-
-        if offsets.len() != expected_offsets {
-            return Err(CsrError::OffsetLength {
-                expected: expected_offsets,
-                actual: offsets.len(),
-            });
+        if node_bound.checked_add(1).is_none() {
+            return Err(CsrError::OffsetLengthOverflow { node_count });
         }
 
-        let mut previous = EdgeIndex::ZERO;
-        for (index, offset_word) in offsets.iter().copied().enumerate() {
-            let offset = offset_word.get();
-            if index == 0 && offset != EdgeIndex::ZERO {
-                return Err(CsrError::FirstOffset { actual: offset });
-            }
-            if offset < previous {
-                return Err(CsrError::NonMonotonicOffset {
-                    index,
-                    previous,
-                    actual: offset,
-                });
-            }
-            previous = offset;
-        }
-
-        let final_offset = offsets[offsets.len() - 1].get();
-        let final_offset_usize = final_offset.to_usize().ok_or(CsrError::EdgeUsizeOverflow {
-            value: final_offset,
+        check_offset_section(offsets, node_bound, targets.len())
+            .map_err(|issue| map_offsets_issue::<NodeIndex, EdgeIndex, _>(offsets, issue))?;
+        check_value_range(targets, node_bound).map_err(|issue| {
+            map_targets_issue::<NodeIndex, EdgeIndex, _>(targets, node_count, issue)
         })?;
-        if final_offset_usize != targets.len() {
-            return Err(CsrError::FinalOffset {
-                final_offset,
-                target_len: targets.len(),
-            });
-        }
-
-        for (index, target_word) in targets.iter().copied().enumerate() {
-            let target = target_word.get();
-            if target >= node_count {
-                return Err(CsrError::TargetOutOfRange {
-                    index,
-                    target,
-                    node_count,
-                });
-            }
-        }
 
         Ok(Self {
             node_count,
@@ -1204,6 +1171,80 @@ where
 {
     fn len(&self) -> usize {
         self.targets.len()
+    }
+}
+
+/// Maps an offset-side [`OffsetIntegrityIssue`] into a typed [`CsrError`],
+/// reading the offending word out of `offsets` to populate typed fields.
+///
+/// `from_usize` fallbacks would zero-out diagnostic state, so we recover the
+/// typed offset by indexing back into the original word slice — that read is
+/// what produced the issue in the first place and is guaranteed in-bounds.
+fn map_offsets_issue<NodeIndex, EdgeIndex, OffsetWord>(
+    offsets: &[OffsetWord],
+    issue: OffsetIntegrityIssue,
+) -> CsrError<NodeIndex, EdgeIndex>
+where
+    NodeIndex: CsrIndex,
+    EdgeIndex: CsrIndex,
+    OffsetWord: CsrWord<Index = EdgeIndex>,
+{
+    match issue {
+        OffsetIntegrityIssue::Length { expected, actual } => {
+            CsrError::OffsetLength { expected, actual }
+        }
+        OffsetIntegrityIssue::FirstNonZero { .. } => CsrError::FirstOffset {
+            actual: offsets[0].get(),
+        },
+        OffsetIntegrityIssue::NonMonotonic { index, .. } => CsrError::NonMonotonicOffset {
+            index,
+            previous: offsets[index - 1].get(),
+            actual: offsets[index].get(),
+        },
+        OffsetIntegrityIssue::FinalMismatch { value_len, .. } => CsrError::FinalOffset {
+            final_offset: offsets[offsets.len() - 1].get(),
+            target_len: value_len,
+        },
+        OffsetIntegrityIssue::UsizeOverflow { index } => CsrError::EdgeUsizeOverflow {
+            value: offsets[index].get(),
+        },
+        OffsetIntegrityIssue::ValueOutOfRange { .. } => {
+            // Offset section never produces ValueOutOfRange; treat as overflow.
+            CsrError::EdgeUsizeOverflow {
+                value: EdgeIndex::ZERO,
+            }
+        }
+        _ => CsrError::EdgeUsizeOverflow {
+            value: EdgeIndex::ZERO,
+        },
+    }
+}
+
+/// Maps a target-side [`OffsetIntegrityIssue`] into a typed [`CsrError`],
+/// reading the offending word out of `targets` and preserving the typed
+/// `node_count` bound the caller supplied to `check_value_range`.
+fn map_targets_issue<NodeIndex, EdgeIndex, TargetWord>(
+    targets: &[TargetWord],
+    node_count: NodeIndex,
+    issue: OffsetIntegrityIssue,
+) -> CsrError<NodeIndex, EdgeIndex>
+where
+    NodeIndex: CsrIndex,
+    EdgeIndex: CsrIndex,
+    TargetWord: CsrWord<Index = NodeIndex>,
+{
+    match issue {
+        OffsetIntegrityIssue::ValueOutOfRange { index, .. }
+        | OffsetIntegrityIssue::UsizeOverflow { index } => CsrError::TargetOutOfRange {
+            index,
+            target: targets[index].get(),
+            node_count,
+        },
+        _ => CsrError::TargetOutOfRange {
+            index: 0,
+            target: NodeIndex::ZERO,
+            node_count,
+        },
     }
 }
 

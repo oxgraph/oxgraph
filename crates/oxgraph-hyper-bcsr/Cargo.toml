@@ -9,6 +9,7 @@ edition.workspace = true
 repository.workspace = true
 
 [dependencies]
+oxgraph-csr-util = { version = "0.0.0", path = "../oxgraph-csr-util" }
 oxgraph-hyper = { version = "0.0.0", path = "../oxgraph-hyper" }
 oxgraph-snapshot = { version = "0.0.0", path = "../oxgraph-snapshot" }
 zerocopy = { workspace = true }

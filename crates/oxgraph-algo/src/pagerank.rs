@@ -197,6 +197,169 @@ impl IntoPageRankScalar<f32> for f64 {
     }
 }
 
+/// Per-element outgoing rank-distribution rule used by graph `PageRank`.
+///
+/// Implementations decide how an element's current `rank` is split across its
+/// outgoing visible neighbors and how much of it (if any) flows to the
+/// dangling reservoir. Built-in [`Uniform`] divides equally over visible
+/// out-degree; built-in [`Weighted`] divides proportionally to relation
+/// weights. User crates can implement this trait for custom rules — for
+/// example, attenuated decay, top-k filtering, or caller-supplied
+/// per-element shares — without forking the kernel.
+///
+/// # Contract
+///
+/// On success, `distribute_outgoing` writes per-target shares into `next`
+/// (visible-masked) and returns the dangling contribution. The sum of `next`
+/// increments plus the returned dangling contribution must equal `rank` when
+/// at least one visible target exists; when no visible targets exist, the
+/// implementation must return `rank` and write nothing. Failures are surfaced
+/// as [`PageRankError`].
+///
+/// # Performance
+///
+/// `perf: unspecified`; built-in implementations document their per-element
+/// cost. Most do `O(degree)` work per element with one or two passes over
+/// the outgoing-edge iterator.
+pub trait OutgoingDistribution<G, S>
+where
+    G: ForwardGraph + ElementIndex,
+    S: PageRankScalar,
+{
+    /// Distributes `rank` from `element` to its outgoing visible neighbors.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PageRankError`] when a topology index is invalid, when a
+    /// caller-supplied weight is invalid, or when an arithmetic boundary is
+    /// crossed.
+    ///
+    /// # Performance
+    ///
+    /// `perf: unspecified`; implementations document their cost.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "distribution kernel needs graph, element, rank, output buffer, and visibility mask explicitly"
+    )]
+    fn distribute_outgoing(
+        &self,
+        graph: &G,
+        element: G::ElementId,
+        rank: S,
+        next: &mut [S],
+        visible: &[u8],
+    ) -> Result<S, PageRankError<S>>;
+}
+
+/// Distributes outgoing rank uniformly across visible out-degree.
+///
+/// Built-in [`OutgoingDistribution`] implementation matching the unweighted
+/// `PageRank` semantics. Two passes over the outgoing-edge iterator: one to
+/// count visible degree, one to write the share `rank / degree`.
+///
+/// # Performance
+///
+/// Each call is `O(degree)`.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Uniform;
+
+impl<G, S> OutgoingDistribution<G, S> for Uniform
+where
+    G: ForwardGraph + ElementIndex,
+    S: PageRankScalar,
+{
+    fn distribute_outgoing(
+        &self,
+        graph: &G,
+        element: G::ElementId,
+        rank: S,
+        next: &mut [S],
+        visible: &[u8],
+    ) -> Result<S, PageRankError<S>> {
+        let mut degree = 0_usize;
+        for edge in graph.outgoing_edges(element) {
+            let target = graph.target(edge);
+            let target_index = checked_element_index(graph, target)?;
+            if is_visible(visible, target_index) {
+                degree += 1;
+            }
+        }
+        if degree == 0 {
+            return Ok(rank);
+        }
+        let share = rank / S::from_usize(degree);
+        for edge in graph.outgoing_edges(element) {
+            let target = graph.target(edge);
+            let target_index = checked_element_index(graph, target)?;
+            if is_visible(visible, target_index) {
+                next[target_index] += share;
+            }
+        }
+        Ok(S::ZERO)
+    }
+}
+
+/// Distributes outgoing rank proportionally to caller-supplied weights.
+///
+/// Built-in [`OutgoingDistribution`] implementation matching the weighted
+/// `PageRank` semantics. Holds a borrowed [`RelationWeight`] adapter and uses
+/// two passes over the outgoing-edge iterator: one to compute the visible
+/// outgoing-weight total, one to write per-edge shares `rank * weight /
+/// total`. Dangling rows (zero or non-positive total) flow the entire `rank`
+/// to the dangling reservoir.
+///
+/// # Performance
+///
+/// Each call is `O(degree)`.
+#[derive(Clone, Copy, Debug)]
+pub struct Weighted<'w, W> {
+    /// Borrowed relation-weight adapter.
+    weights: &'w W,
+}
+
+impl<'w, W> Weighted<'w, W> {
+    /// Constructs a [`Weighted`] distribution borrowing `weights`.
+    ///
+    /// # Performance
+    ///
+    /// This function is `O(1)`.
+    #[must_use]
+    pub const fn new(weights: &'w W) -> Self {
+        Self { weights }
+    }
+}
+
+impl<G, W, S> OutgoingDistribution<G, S> for Weighted<'_, W>
+where
+    G: ForwardGraph + ElementIndex + RelationIndex,
+    W: RelationWeight<ElementId = G::ElementId, RelationId = G::RelationId>,
+    W::Weight: IntoPageRankScalar<S>,
+    S: PageRankScalar,
+{
+    fn distribute_outgoing(
+        &self,
+        graph: &G,
+        element: G::ElementId,
+        rank: S,
+        next: &mut [S],
+        visible: &[u8],
+    ) -> Result<S, PageRankError<S>> {
+        let total = outgoing_weight_total(graph, self.weights, element, visible)?;
+        if total <= S::ZERO {
+            return Ok(rank);
+        }
+        for edge in graph.outgoing_edges(element) {
+            let target = graph.target(edge);
+            let target_index = checked_element_index(graph, target)?;
+            if is_visible(visible, target_index) {
+                let weight = checked_relation_weight(graph, self.weights, edge)?;
+                next[target_index] += rank * (weight / total);
+            }
+        }
+        Ok(S::ZERO)
+    }
+}
+
 /// `PageRank` configuration shared by graph and hypergraph policies.
 ///
 /// # Performance
@@ -780,10 +943,14 @@ impl<H, S: PageRankScalar> HypergraphPageRankWorkspace<H, S> {
     }
 }
 
-/// Computes unweighted ordinary directed graph `PageRank`, allocating temporary scratch.
+/// Computes ordinary directed graph `PageRank` with the supplied outgoing
+/// distribution policy, allocating temporary scratch.
 ///
-/// `elements` defines the visible state iteration order. Edge multiplicity is
-/// preserved: parallel outgoing edges each receive a unit transition weight.
+/// `distribution` selects the per-edge rank-transfer rule:
+/// [`Uniform`] reproduces the textbook unweighted `PageRank` (every parallel
+/// outgoing edge carries a unit transition weight), while [`Weighted`]
+/// reads a caller-supplied edge weight. Any [`OutgoingDistribution`] impl
+/// is accepted. `elements` defines the visible state iteration order.
 ///
 /// # Errors
 ///
@@ -792,12 +959,19 @@ impl<H, S: PageRankScalar> HypergraphPageRankWorkspace<H, S> {
 ///
 /// # Performance
 ///
-/// Each iteration is `O(n + m)` for `n` visible elements and `m` outgoing edge
-/// entries yielded from those elements. Scratch allocation is `O(b)` where `b`
-/// is `graph.element_bound()`.
+/// Each iteration is `O(n + m · cost(D))` for `n` visible elements, `m`
+/// outgoing edge entries yielded from those elements, and `cost(D)` the
+/// per-edge cost of [`OutgoingDistribution::distribute_outgoing`]
+/// (`O(1)` for the built-in [`Uniform`] and [`Weighted`] impls).
+/// Scratch allocation is `O(b)` where `b` is `graph.element_bound()`.
 #[cfg(feature = "alloc")]
-pub fn pagerank<G, I, S>(
+#[expect(
+    clippy::too_many_arguments,
+    reason = "PageRank entry point keeps graph, distribution, elements, config, personalization, and output explicit"
+)]
+pub fn pagerank_graph<G, D, I, S>(
     graph: &G,
+    distribution: &D,
     elements: I,
     config: PageRankConfig<S>,
     personalization: Option<&[S]>,
@@ -805,6 +979,7 @@ pub fn pagerank<G, I, S>(
 ) -> Result<PageRankReport<S>, PageRankError<S>>
 where
     G: ForwardGraph + ElementIndex,
+    D: OutgoingDistribution<G, S>,
     I: Clone + IntoIterator<Item = ElementId<G>>,
     S: PageRankScalar,
 {
@@ -812,8 +987,9 @@ where
     let mut teleport = vec![S::ZERO; bound];
     let mut next = vec![S::ZERO; bound];
     let mut visible_elements = vec![0; bound];
-    pagerank_with_scratch(
+    pagerank_graph_with_scratch(
         graph,
+        distribution,
         elements,
         config,
         personalization,
@@ -822,7 +998,10 @@ where
     )
 }
 
-/// Computes unweighted graph `PageRank` with caller-provided borrowed scratch.
+/// Computes graph `PageRank` under the supplied outgoing distribution
+/// policy with caller-provided borrowed scratch.
+///
+/// See [`pagerank_graph`] for the role of `distribution`.
 ///
 /// # Errors
 ///
@@ -832,14 +1011,15 @@ where
 /// # Performance
 ///
 /// Performs no heap allocation after caller scratch has been provided. Each
-/// iteration is `O(n + m)`.
+/// iteration is `O(n + m · cost(D))`.
 #[expect(
     clippy::too_many_arguments,
     clippy::needless_pass_by_value,
     reason = "PageRank scratch API consumes a scratch handle and keeps policy inputs explicit"
 )]
-pub fn pagerank_with_scratch<G, I, S>(
+pub fn pagerank_graph_with_scratch<G, D, I, S>(
     graph: &G,
+    distribution: &D,
     elements: I,
     config: PageRankConfig<S>,
     personalization: Option<&[S]>,
@@ -848,6 +1028,7 @@ pub fn pagerank_with_scratch<G, I, S>(
 ) -> Result<PageRankReport<S>, PageRankError<S>>
 where
     G: ForwardGraph + ElementIndex,
+    D: OutgoingDistribution<G, S>,
     I: Clone + IntoIterator<Item = ElementId<G>>,
     S: PageRankScalar,
 {
@@ -866,8 +1047,9 @@ where
         scratch.visible_elements,
     )?;
     initialize_ranks(elements.clone(), graph, scratch.teleport, ranks)?;
-    iterate_graph_unweighted(
+    iterate_graph(
         graph,
+        distribution,
         elements,
         config,
         scratch.teleport,
@@ -877,7 +1059,10 @@ where
     )
 }
 
-/// Computes unweighted graph `PageRank` with reusable owned workspace.
+/// Computes graph `PageRank` under the supplied outgoing distribution
+/// policy with a reusable owned workspace.
+///
+/// See [`pagerank_graph`] for the role of `distribution`.
 ///
 /// # Errors
 ///
@@ -887,14 +1072,15 @@ where
 /// # Performance
 ///
 /// Grows workspace storage to `graph.element_bound()` if needed, then performs no
-/// additional heap allocation. Each iteration is `O(n + m)`.
+/// additional heap allocation. Each iteration is `O(n + m · cost(D))`.
 #[cfg(feature = "alloc")]
 #[expect(
     clippy::too_many_arguments,
     reason = "PageRank workspace API keeps policy and reusable storage inputs explicit"
 )]
-pub fn pagerank_with_workspace<G, I, S>(
+pub fn pagerank_graph_with_workspace<G, D, I, S>(
     graph: &G,
+    distribution: &D,
     elements: I,
     config: PageRankConfig<S>,
     personalization: Option<&[S]>,
@@ -903,167 +1089,14 @@ pub fn pagerank_with_workspace<G, I, S>(
 ) -> Result<PageRankReport<S>, PageRankError<S>>
 where
     G: ForwardGraph + ElementIndex,
+    D: OutgoingDistribution<G, S>,
     I: Clone + IntoIterator<Item = ElementId<G>>,
     S: PageRankScalar,
 {
     workspace.ensure_element_bound(graph.element_bound());
-    pagerank_with_scratch(
+    pagerank_graph_with_scratch(
         graph,
-        elements,
-        config,
-        personalization,
-        ranks,
-        workspace.as_scratch(),
-    )
-}
-
-/// Computes relation-weighted ordinary directed graph `PageRank`, allocating scratch.
-///
-/// Weights are row-normalized per source element. Weights must be finite and
-/// non-negative; zero-total outgoing rows are dangling rows.
-///
-/// # Errors
-///
-/// Returns [`PageRankError`] for invalid configuration, personalization,
-/// topology indexes, invalid weights, output length, scratch length, or non-convergence.
-///
-/// # Performance
-///
-/// Each iteration is `O(n + m)` for `n` visible elements and `m` outgoing edge
-/// entries, with two outgoing-edge passes for non-dangling weighted rows.
-#[cfg(feature = "alloc")]
-#[expect(
-    clippy::too_many_arguments,
-    reason = "weighted PageRank entry point keeps graph, weights, policy, personalization, and output explicit"
-)]
-pub fn pagerank_weighted<G, W, I, S>(
-    graph: &G,
-    weights: &W,
-    elements: I,
-    config: PageRankConfig<S>,
-    personalization: Option<&[S]>,
-    ranks: &mut [S],
-) -> Result<PageRankReport<S>, PageRankError<S>>
-where
-    G: ForwardGraph + ElementIndex + RelationIndex,
-    W: RelationWeight<ElementId = G::ElementId, RelationId = G::RelationId>,
-    W::Weight: IntoPageRankScalar<S>,
-    I: Clone + IntoIterator<Item = ElementId<G>>,
-    S: PageRankScalar,
-{
-    let bound = graph.element_bound();
-    let mut teleport = vec![S::ZERO; bound];
-    let mut next = vec![S::ZERO; bound];
-    let mut visible_elements = vec![0; bound];
-    pagerank_weighted_with_scratch(
-        graph,
-        weights,
-        elements,
-        config,
-        personalization,
-        ranks,
-        PageRankScratch::new(&mut teleport, &mut next, &mut visible_elements),
-    )
-}
-
-/// Computes weighted graph `PageRank` with caller-provided borrowed scratch.
-///
-/// # Errors
-///
-/// Returns [`PageRankError`] for invalid configuration, personalization,
-/// topology indexes, invalid weights, output length, scratch length, or non-convergence.
-///
-/// # Performance
-///
-/// Performs no heap allocation after caller scratch has been provided. Each
-/// iteration is `O(n + m)` with two outgoing-edge passes for weighted rows.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "weighted PageRank scratch entry point keeps all policy and storage inputs explicit"
-)]
-#[expect(
-    clippy::needless_pass_by_value,
-    reason = "PageRank scratch API consumes a scratch handle and keeps policy inputs explicit"
-)]
-pub fn pagerank_weighted_with_scratch<G, W, I, S>(
-    graph: &G,
-    weights: &W,
-    elements: I,
-    config: PageRankConfig<S>,
-    personalization: Option<&[S]>,
-    ranks: &mut [S],
-    scratch: PageRankScratch<'_, S>,
-) -> Result<PageRankReport<S>, PageRankError<S>>
-where
-    G: ForwardGraph + ElementIndex + RelationIndex,
-    W: RelationWeight<ElementId = G::ElementId, RelationId = G::RelationId>,
-    W::Weight: IntoPageRankScalar<S>,
-    I: Clone + IntoIterator<Item = ElementId<G>>,
-    S: PageRankScalar,
-{
-    validate_config(config)?;
-    let bound = graph.element_bound();
-    ensure_output_len(ranks.len(), bound)?;
-    ensure_scratch_len("teleport", scratch.teleport.len(), bound)?;
-    ensure_scratch_len("next", scratch.next.len(), bound)?;
-    ensure_scratch_len("visible_elements", scratch.visible_elements.len(), bound)?;
-    build_personalization_into(
-        elements.clone(),
-        bound,
-        personalization,
-        |element| graph.element_index(element),
-        scratch.teleport,
-        scratch.visible_elements,
-    )?;
-    initialize_ranks(elements.clone(), graph, scratch.teleport, ranks)?;
-    iterate_graph_weighted(
-        graph,
-        weights,
-        elements,
-        config,
-        scratch.teleport,
-        scratch.visible_elements,
-        ranks,
-        scratch.next,
-    )
-}
-
-/// Computes weighted graph `PageRank` with reusable owned workspace.
-///
-/// # Errors
-///
-/// Returns [`PageRankError`] for invalid configuration, personalization,
-/// topology indexes, invalid weights, output length, or non-convergence.
-///
-/// # Performance
-///
-/// Grows workspace storage to `graph.element_bound()` if needed, then performs no
-/// additional heap allocation.
-#[cfg(feature = "alloc")]
-#[expect(
-    clippy::too_many_arguments,
-    reason = "weighted PageRank workspace entry point keeps all policy and storage inputs explicit"
-)]
-pub fn pagerank_weighted_with_workspace<G, W, I, S>(
-    graph: &G,
-    weights: &W,
-    elements: I,
-    config: PageRankConfig<S>,
-    personalization: Option<&[S]>,
-    ranks: &mut [S],
-    workspace: &mut PageRankWorkspace<G, S>,
-) -> Result<PageRankReport<S>, PageRankError<S>>
-where
-    G: ForwardGraph + ElementIndex + RelationIndex,
-    W: RelationWeight<ElementId = G::ElementId, RelationId = G::RelationId>,
-    W::Weight: IntoPageRankScalar<S>,
-    I: Clone + IntoIterator<Item = ElementId<G>>,
-    S: PageRankScalar,
-{
-    workspace.ensure_element_bound(graph.element_bound());
-    pagerank_weighted_with_scratch(
-        graph,
-        weights,
+        distribution,
         elements,
         config,
         personalization,
@@ -1886,18 +1919,15 @@ where
 
 #[expect(
     clippy::too_many_arguments,
-    reason = "iteration helper keeps scratch and policy inputs explicit"
-)]
-#[expect(
-    clippy::excessive_nesting,
-    reason = "power iteration has row, dangling, and edge-distribution branches"
+    reason = "graph iteration helper keeps distribution, scratch, and policy inputs explicit"
 )]
 #[expect(
     clippy::needless_pass_by_value,
     reason = "iteration helpers own cloneable iterator values and clone them each power iteration"
 )]
-fn iterate_graph_unweighted<G, I, S>(
+fn iterate_graph<G, D, I, S>(
     graph: &G,
+    distribution: &D,
     elements: I,
     config: PageRankConfig<S>,
     teleport: &[S],
@@ -1907,6 +1937,7 @@ fn iterate_graph_unweighted<G, I, S>(
 ) -> Result<PageRankReport<S>, PageRankError<S>>
 where
     G: ForwardGraph + ElementIndex,
+    D: OutgoingDistribution<G, S>,
     I: Clone + IntoIterator<Item = ElementId<G>>,
     S: PageRankScalar,
 {
@@ -1917,99 +1948,7 @@ where
         for element in elements.clone() {
             let index = checked_element_index(graph, element)?;
             let rank = ranks[index];
-            let mut degree = 0_usize;
-            for edge in graph.outgoing_edges(element) {
-                let target = graph.target(edge);
-                let target_index = checked_element_index(graph, target)?;
-                if is_visible(visible, target_index) {
-                    degree += 1;
-                }
-            }
-            if degree == 0 {
-                dangling += rank;
-            } else {
-                let share = rank / S::from_usize(degree);
-                for edge in graph.outgoing_edges(element) {
-                    let target = graph.target(edge);
-                    let target_index = checked_element_index(graph, target)?;
-                    if is_visible(visible, target_index) {
-                        next[target_index] += share;
-                    }
-                }
-            }
-        }
-        let delta = apply_graph_teleport(
-            graph,
-            elements.clone(),
-            config,
-            teleport,
-            dangling,
-            ranks,
-            next,
-        )?;
-        last_delta = delta;
-        if delta <= config.tolerance {
-            return Ok(PageRankReport {
-                iterations: iteration,
-                delta,
-            });
-        }
-    }
-    Err(PageRankError::NonConverged {
-        iterations: config.max_iterations,
-        delta: last_delta,
-    })
-}
-
-#[expect(
-    clippy::too_many_arguments,
-    reason = "weighted iteration helper keeps weights, scratch, and policy inputs explicit"
-)]
-#[expect(
-    clippy::excessive_nesting,
-    reason = "power iteration has row, dangling, and edge-distribution branches"
-)]
-#[expect(
-    clippy::needless_pass_by_value,
-    reason = "iteration helpers own cloneable iterator values and clone them each power iteration"
-)]
-fn iterate_graph_weighted<G, W, I, S>(
-    graph: &G,
-    weights: &W,
-    elements: I,
-    config: PageRankConfig<S>,
-    teleport: &[S],
-    visible: &[u8],
-    ranks: &mut [S],
-    next: &mut [S],
-) -> Result<PageRankReport<S>, PageRankError<S>>
-where
-    G: ForwardGraph + ElementIndex + RelationIndex,
-    W: RelationWeight<ElementId = G::ElementId, RelationId = G::RelationId>,
-    W::Weight: IntoPageRankScalar<S>,
-    I: Clone + IntoIterator<Item = ElementId<G>>,
-    S: PageRankScalar,
-{
-    let mut last_delta = S::INFINITY;
-    for iteration in 1..=config.max_iterations {
-        clear(next, graph.element_bound());
-        let mut dangling = S::ZERO;
-        for element in elements.clone() {
-            let index = checked_element_index(graph, element)?;
-            let rank = ranks[index];
-            let total = outgoing_weight_total(graph, weights, element, visible)?;
-            if total <= S::ZERO {
-                dangling += rank;
-            } else {
-                for edge in graph.outgoing_edges(element) {
-                    let target = graph.target(edge);
-                    let target_index = checked_element_index(graph, target)?;
-                    if is_visible(visible, target_index) {
-                        let weight = checked_relation_weight(graph, weights, edge)?;
-                        next[target_index] += rank * (weight / total);
-                    }
-                }
-            }
+            dangling += distribution.distribute_outgoing(graph, element, rank, next, visible)?;
         }
         let delta = apply_graph_teleport(
             graph,

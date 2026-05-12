@@ -1,0 +1,77 @@
+id: 20
+name: PageRank distribution traits and entry-point collapse
+description: PageRank distribution traits and entry-point collapse
+targets:
+  shape_ids:
+  - 22
+  - 9
+status: proposed
+version_impact: major
+intent:
+  kind: amendment
+  summary: Introduce OutgoingDistribution trait with built-in Uniform and Weighted impls. Replace 2 graph-side iterate kernels with one generic kernel parameterized by the trait. Collapse 6 graph entry points (pagerank, pagerank_with_scratch, pagerank_with_workspace, pagerank_weighted, pagerank_weighted_with_scratch, pagerank_weighted_with_workspace) into 3 generic ones (pagerank_graph, pagerank_graph_with_scratch, pagerank_graph_with_workspace). Hyper kernels and entry points stay unchanged for now (future work).
+  source: human
+  goals: |
+    - Add `pub trait OutgoingDistribution<G, S>` with method `distribute_outgoing`
+      capturing the per-element rank-distribution rule. Built-in `Uniform` and
+      `Weighted<W>` impls match today's unweighted and weighted semantics.
+    - Replace `iterate_graph_unweighted` and `iterate_graph_weighted` (pagerank.rs:1899-2035)
+      with a single `iterate_graph<D>` that delegates per-element distribution to
+      the trait.
+    - Replace 6 graph entry points with 3 generic entry points: `pagerank_graph`,
+      `pagerank_graph_with_scratch`, `pagerank_graph_with_workspace`. Each takes
+      `&D: OutgoingDistribution<G, S>` so callers pass `&Uniform` for the
+      unweighted path or `&Weighted::new(&weights)` for the weighted path.
+    - Open the trait so users can plug in custom rank-distribution rules without
+      forking the kernel — the user-extensibility surface that was missing.
+    - Update callers in `oxgraph` umbrella re-exports, the Python facade, and the
+      algo tests/benches to use the new entry points.
+  non_goals: |
+    No changes to hypergraph PageRank — `iterate_hyper_unweighted`,
+    `iterate_hyper_weighted`, and the 6 hypergraph entry points stay as-is.
+    Their similar consolidation is flagged as future work in the plan's risks.
+    No changes to `PageRankConfig`, `PageRankReport`, `PageRankError`,
+    `PageRankScratch`, or `PageRankWorkspace` shapes.
+  rationale: |
+    The two graph-side iteration kernels differ only in the per-element rank
+    distribution rule (uniform vs. weighted). Collapsing them into a generic
+    kernel parameterized by `OutgoingDistribution` removes the kernel
+    duplication while opening a real user-extensibility surface that the prior
+    fixed-pair public API closed off. LLVM monomorphizes the generic kernel
+    per built-in impl, so the per-iteration cost matches today's specialized
+    kernels (perf contract preserved). User impls inherit a documented
+    rank-mass conservation contract; built-in impls remain provable under
+    kani when the existing kani-skip is eventually lifted.
+realization:
+- bindings:
+  - scheme: path
+    value: crates/oxgraph-algo/src/pagerank.rs
+    metadata:
+      summary: Adds OutgoingDistribution trait, Uniform and Weighted built-in impls, generic iterate_graph kernel, and 3 graph entry points (pagerank_graph, pagerank_graph_with_scratch, pagerank_graph_with_workspace). Removes iterate_graph_unweighted, iterate_graph_weighted, and the 6 prior graph entry points.
+  - scheme: path
+    value: crates/oxgraph-algo/src/lib.rs
+    metadata:
+      summary: Re-exports OutgoingDistribution, Uniform, Weighted, and the 3 new graph entry points; removes the 6 retired graph entries.
+  - scheme: path
+    value: crates/oxgraph-algo/tests/pagerank.rs
+    metadata:
+      summary: All graph PageRank call sites use the new entry points with &Uniform or &Weighted::new(&weights).
+  - scheme: path
+    value: crates/oxgraph-algo/tests/transition_fixture.rs
+    metadata:
+      summary: Updated to call pagerank_graph with &Weighted::new(&graph).
+  - scheme: path
+    value: crates/oxgraph-algo/benches/pagerank.rs
+    metadata:
+      summary: Updated to call pagerank_graph and pagerank_graph_with_workspace.
+  - scheme: path
+    value: crates/oxgraph/src/lib.rs
+    metadata:
+      summary: Umbrella re-exports updated.
+  - scheme: path
+    value: bindings/python/src/lib.rs
+    metadata:
+      summary: Python facade pagerank methods call the new entry points.
+  role: primary
+initiated_by:
+  type: human

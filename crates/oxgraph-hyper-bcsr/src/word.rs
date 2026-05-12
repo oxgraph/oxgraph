@@ -116,10 +116,15 @@ impl BcsrIndex for usize {
 /// views use unaligned little-endian zerocopy wrappers and expose the same
 /// host-endian logical index through [`Self::Index`].
 ///
+/// Implementors are also `oxgraph_csr_util::ZerocopyWord`, which exposes the
+/// shared `read_as_usize` predicate used by the layout-validation primitives
+/// in `oxgraph-csr-util`. The set of `ZerocopyWord` types is sealed in
+/// `oxgraph-csr-util`, so this supertrait does not widen the public surface.
+///
 /// # Performance
 ///
 /// Reading a word is expected to be `O(1)`.
-pub trait BcsrWord: Copy {
+pub trait BcsrWord: Copy + oxgraph_csr_util::ZerocopyWord {
     /// Host-endian logical index decoded from this word.
     ///
     /// # Performance

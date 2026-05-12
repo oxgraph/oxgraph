@@ -15,9 +15,9 @@ use std::{
 
 use oxgraph_algo::{
     HypergraphPageRankWorkspace, PageRankConfig, PageRankError, PageRankScalar, PageRankScratch,
-    PageRankWorkspace, hypergraph_pagerank, hypergraph_pagerank_weighted,
-    hypergraph_pagerank_with_workspace, pagerank, pagerank_weighted,
-    pagerank_weighted_with_workspace, pagerank_with_scratch, pagerank_with_workspace,
+    PageRankWorkspace, Uniform, Weighted, hypergraph_pagerank, hypergraph_pagerank_weighted,
+    hypergraph_pagerank_with_workspace, pagerank_graph, pagerank_graph_with_scratch,
+    pagerank_graph_with_workspace,
 };
 use oxgraph_csr::{CsrEdgeId, CsrError, CsrNativeGraph, CsrNodeId};
 use oxgraph_hyper_bcsr::{
@@ -246,7 +246,7 @@ fn pagerank_runs_over_csr_layout() -> Result<(), PageRankFixtureError> {
     let elements = [CsrNodeId(0), CsrNodeId(1), CsrNodeId(2), CsrNodeId(3)];
     let mut ranks = [0.0; 4];
 
-    let report = pagerank(&graph, elements, CONFIG, None, &mut ranks)?;
+    let report = pagerank_graph(&graph, &Uniform, elements, CONFIG, None, &mut ranks)?;
 
     assert!(report.iterations > 0);
     assert!(report.delta <= CONFIG.tolerance);
@@ -268,7 +268,14 @@ fn weighted_pagerank_runs_over_csr_layout() -> Result<(), PageRankFixtureError> 
     };
     let mut ranks = [0.0; 4];
 
-    let report = pagerank_weighted(&graph, &weights, elements, CONFIG, None, &mut ranks)?;
+    let report = pagerank_graph(
+        &graph,
+        &Weighted::new(&weights),
+        elements,
+        CONFIG,
+        None,
+        &mut ranks,
+    )?;
 
     assert!(report.iterations > 0);
     assert!(report.delta <= CONFIG.tolerance);
@@ -288,7 +295,7 @@ fn pagerank_runs_with_f32_rank_scalar() -> Result<(), Box<dyn Error>> {
     let config = PageRankConfig::new(0.85_f32, 1.0e-6_f32, 500);
     let mut ranks = [0.0_f32; 4];
 
-    let report = pagerank(&graph, elements, config, None, &mut ranks)?;
+    let report = pagerank_graph(&graph, &Uniform, elements, config, None, &mut ranks)?;
 
     assert!(report.iterations > 0);
     assert!(report.delta <= config.tolerance);
@@ -305,7 +312,7 @@ fn pagerank_compiles_with_custom_rank_scalar() -> Result<(), Box<dyn Error>> {
     let config = PageRankConfig::new(TestScalar(0.85), TestScalar(1.0e-10), 500);
     let mut ranks = [TestScalar::ZERO; 4];
 
-    let report = pagerank(&graph, elements, config, None, &mut ranks)?;
+    let report = pagerank_graph(&graph, &Uniform, elements, config, None, &mut ranks)?;
 
     assert!(report.iterations > 0);
     assert!(report.delta <= config.tolerance);
@@ -324,13 +331,20 @@ fn weighted_pagerank_accepts_integer_weights_into_f32_ranks() -> Result<(), Box<
     let config = PageRankConfig::new(0.85_f32, 1.0e-6_f32, 500);
     let mut ranks = [0.0_f32; 4];
 
-    let report = pagerank_weighted(&graph, &weights, elements, config, None, &mut ranks)?;
+    let report = pagerank_graph(
+        &graph,
+        &Weighted::new(&weights),
+        elements,
+        config,
+        None,
+        &mut ranks,
+    )?;
 
     let mut workspace = PageRankWorkspace::for_graph(&graph);
     let mut workspace_ranks = [0.0_f32; 4];
-    pagerank_weighted_with_workspace(
+    pagerank_graph_with_workspace(
         &graph,
-        &weights,
+        &Weighted::new(&weights),
         elements,
         config,
         None,
@@ -353,14 +367,15 @@ fn graph_scratch_and_workspace_match_allocating() -> Result<(), Box<dyn Error>> 
     let graph = csr_fixture()?;
     let elements = [CsrNodeId(0), CsrNodeId(1), CsrNodeId(2), CsrNodeId(3)];
     let mut allocating = [0.0; 4];
-    pagerank(&graph, elements, CONFIG, None, &mut allocating)?;
+    pagerank_graph(&graph, &Uniform, elements, CONFIG, None, &mut allocating)?;
 
     let mut teleport = [0.0; 4];
     let mut next = [0.0; 4];
     let mut visible = [0; 4];
     let mut scratch_ranks = [0.0; 4];
-    pagerank_with_scratch(
+    pagerank_graph_with_scratch(
         &graph,
+        &Uniform,
         elements,
         CONFIG,
         None,
@@ -370,8 +385,9 @@ fn graph_scratch_and_workspace_match_allocating() -> Result<(), Box<dyn Error>> 
 
     let mut workspace = PageRankWorkspace::for_graph(&graph);
     let mut workspace_ranks = [0.0; 4];
-    pagerank_with_workspace(
+    pagerank_graph_with_workspace(
         &graph,
+        &Uniform,
         elements,
         CONFIG,
         None,
@@ -400,8 +416,9 @@ fn borrowed_scratch_rejects_undersized_storage() -> Result<(), Box<dyn Error>> {
     let mut next = [0.0; 2];
     let mut visible = [0; 4];
 
-    let error = pagerank_with_scratch(
+    let error = pagerank_graph_with_scratch(
         &graph,
+        &Uniform,
         elements,
         CONFIG,
         None,
@@ -530,8 +547,9 @@ fn invalid_graph_config_is_rejected() -> Result<(), PageRankFixtureError> {
     let mut ranks = [0.0; 4];
 
     assert!(matches!(
-        pagerank(
+        pagerank_graph(
             &graph,
+            &Uniform,
             elements,
             PageRankConfig::new(f64::NAN, 1.0e-9, 10),
             None,
@@ -540,8 +558,9 @@ fn invalid_graph_config_is_rejected() -> Result<(), PageRankFixtureError> {
         Err(PageRankError::InvalidDamping { .. })
     ));
     assert!(matches!(
-        pagerank(
+        pagerank_graph(
             &graph,
+            &Uniform,
             elements,
             PageRankConfig::new(0.85, -1.0, 10),
             None,
@@ -550,8 +569,9 @@ fn invalid_graph_config_is_rejected() -> Result<(), PageRankFixtureError> {
         Err(PageRankError::InvalidTolerance { .. })
     ));
     assert!(matches!(
-        pagerank(
+        pagerank_graph(
             &graph,
+            &Uniform,
             elements,
             PageRankConfig::new(0.85, 1.0e-9, 0),
             None,
@@ -567,8 +587,9 @@ fn graph_personalization_and_lengths_are_validated() -> Result<(), PageRankFixtu
     let graph = csr_fixture()?;
     let elements = [CsrNodeId(0), CsrNodeId(1), CsrNodeId(2), CsrNodeId(3)];
     let mut ranks = [0.0; 4];
-    let report = pagerank(
+    let report = pagerank_graph(
         &graph,
+        &Uniform,
         elements,
         CONFIG,
         Some(&[1.0, 0.0, 0.0, 0.0]),
@@ -577,8 +598,9 @@ fn graph_personalization_and_lengths_are_validated() -> Result<(), PageRankFixtu
     assert!(report.delta <= CONFIG.tolerance);
     assert_probability_mass(&[&ranks]);
     assert!(matches!(
-        pagerank(
+        pagerank_graph(
             &graph,
+            &Uniform,
             elements,
             CONFIG,
             Some(&[0.0, 0.0, 0.0, 0.0]),
@@ -587,12 +609,12 @@ fn graph_personalization_and_lengths_are_validated() -> Result<(), PageRankFixtu
         Err(PageRankError::ZeroPersonalization)
     ));
     assert!(matches!(
-        pagerank(&graph, elements, CONFIG, Some(&[1.0]), &mut ranks),
+        pagerank_graph(&graph, &Uniform, elements, CONFIG, Some(&[1.0]), &mut ranks),
         Err(PageRankError::PersonalizationTooShort { .. })
     ));
     let mut short = [0.0; 2];
     assert!(matches!(
-        pagerank(&graph, elements, CONFIG, None, &mut short),
+        pagerank_graph(&graph, &Uniform, elements, CONFIG, None, &mut short),
         Err(PageRankError::OutputTooShort { .. })
     ));
     Ok(())
@@ -604,7 +626,7 @@ fn graph_visible_subset_ignores_omitted_targets() -> Result<(), PageRankFixtureE
     let elements = [CsrNodeId(0), CsrNodeId(1)];
     let mut ranks = [0.0; 4];
 
-    let report = pagerank(&graph, elements, CONFIG, None, &mut ranks)?;
+    let report = pagerank_graph(&graph, &Uniform, elements, CONFIG, None, &mut ranks)?;
 
     assert!(report.delta <= CONFIG.tolerance);
     assert_close(ranks[0], 0.350_877_192_982_456_1);
@@ -617,9 +639,9 @@ fn graph_visible_subset_ignores_omitted_targets() -> Result<(), PageRankFixtureE
         values: &[1.0, f64::NAN, 1.0, 1.0],
     };
     let mut weighted_ranks = [0.0; 4];
-    pagerank_weighted(
+    pagerank_graph(
         &graph,
-        &weights,
+        &Weighted::new(&weights),
         elements,
         CONFIG,
         None,
@@ -637,7 +659,7 @@ fn graph_duplicate_visible_elements_are_rejected() -> Result<(), PageRankFixture
     let elements = [CsrNodeId(0), CsrNodeId(1), CsrNodeId(1)];
     let mut ranks = [0.0; 4];
 
-    let error = pagerank(&graph, elements, CONFIG, None, &mut ranks);
+    let error = pagerank_graph(&graph, &Uniform, elements, CONFIG, None, &mut ranks);
 
     assert!(matches!(
         error,
@@ -656,7 +678,14 @@ fn graph_invalid_weights_are_rejected() -> Result<(), PageRankFixtureError> {
             values: &[1.0, invalid, 1.0, 1.0],
         };
         assert!(matches!(
-            pagerank_weighted(&graph, &weights, elements, CONFIG, None, &mut ranks),
+            pagerank_graph(
+                &graph,
+                &Weighted::new(&weights),
+                elements,
+                CONFIG,
+                None,
+                &mut ranks
+            ),
             Err(PageRankError::InvalidRelationWeight { .. })
         ));
     }
@@ -671,7 +700,14 @@ fn zero_weight_rows_are_dangling_rows() -> Result<(), PageRankFixtureError> {
         values: &[0.0, 0.0, 0.0, 0.0],
     };
     let mut ranks = [0.0; 4];
-    let report = pagerank_weighted(&graph, &weights, elements, CONFIG, None, &mut ranks)?;
+    let report = pagerank_graph(
+        &graph,
+        &Weighted::new(&weights),
+        elements,
+        CONFIG,
+        None,
+        &mut ranks,
+    )?;
     assert!(report.delta <= CONFIG.tolerance);
     assert_probability_mass(&[&ranks]);
     for rank in ranks {
@@ -685,8 +721,9 @@ fn non_convergence_reports_last_nonzero_delta() -> Result<(), PageRankFixtureErr
     let graph = csr_fixture()?;
     let elements = [CsrNodeId(0), CsrNodeId(1), CsrNodeId(2), CsrNodeId(3)];
     let mut ranks = [0.0; 4];
-    let error = pagerank(
+    let error = pagerank_graph(
         &graph,
+        &Uniform,
         elements,
         PageRankConfig::new(0.85, 0.0, 1),
         None,
@@ -705,8 +742,8 @@ fn deterministic_output_repeats() -> Result<(), PageRankFixtureError> {
     let elements = [CsrNodeId(0), CsrNodeId(1), CsrNodeId(2), CsrNodeId(3)];
     let mut first = [0.0; 4];
     let mut second = [0.0; 4];
-    pagerank(&graph, elements, CONFIG, None, &mut first)?;
-    pagerank(&graph, elements, CONFIG, None, &mut second)?;
+    pagerank_graph(&graph, &Uniform, elements, CONFIG, None, &mut first)?;
+    pagerank_graph(&graph, &Uniform, elements, CONFIG, None, &mut second)?;
     for (left, right) in first.into_iter().zip(second) {
         assert_close(left, right);
     }
@@ -894,15 +931,16 @@ proptest! {
         let config = PageRankConfig::new(0.85, 1.0e-9, 1_000);
 
         let mut allocating = vec![0.0; node_len];
-        pagerank(&graph, elements.iter().copied(), config, None, &mut allocating)
+        pagerank_graph(&graph, &Uniform, elements.iter().copied(), config, None, &mut allocating)
             .map_err(|error| TestCaseError::fail(error.to_string()))?;
 
         let mut teleport = vec![0.0; node_len];
         let mut next = vec![0.0; node_len];
         let mut visible_scratch = vec![0; node_len];
         let mut scratch = vec![0.0; node_len];
-        pagerank_with_scratch(
+        pagerank_graph_with_scratch(
             &graph,
+            &Uniform,
             elements.iter().copied(),
             config,
             None,
@@ -913,8 +951,9 @@ proptest! {
 
         let mut workspace = PageRankWorkspace::for_graph(&graph);
         let mut workspace_ranks = vec![0.0; node_len];
-        pagerank_with_workspace(
+        pagerank_graph_with_workspace(
             &graph,
+            &Uniform,
             elements.iter().copied(),
             config,
             None,

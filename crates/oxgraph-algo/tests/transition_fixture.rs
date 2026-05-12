@@ -11,7 +11,7 @@ use std::{error::Error, sync::Arc};
 use arrow_array::Float64Array;
 use arrow_schema::{DataType, Field};
 use oxgraph_algo::{
-    PageRankConfig, breadth_first_search, hypergraph_pagerank_weighted, pagerank_weighted,
+    PageRankConfig, Weighted, breadth_first_search, hypergraph_pagerank_weighted, pagerank_graph,
 };
 use oxgraph_graph_build::{WeightedGraphBuilder, export_weighted_csr_snapshot_with_properties};
 use oxgraph_hyper::HypergraphCounts;
@@ -62,7 +62,14 @@ fn weighted_graph_transition_fixture_covers_algorithms_identity_and_snapshot()
 
     let elements = vec![idle, queued, running, done];
     let mut ranks = vec![0.0; graph.element_count()];
-    pagerank_weighted(&graph, &graph, elements, CONFIG, None, &mut ranks)?;
+    pagerank_graph(
+        &graph,
+        &Weighted::new(&graph),
+        elements,
+        CONFIG,
+        None,
+        &mut ranks,
+    )?;
     assert_probability_mass(&ranks);
 
     let bytes = export_weighted_csr_snapshot_with_properties(

@@ -1,0 +1,53 @@
+id: 21
+name: PropertyAxis trait and unified weight adapters
+description: PropertyAxis trait and unified weight adapters
+targets:
+  shape_ids:
+  - 19
+status: proposed
+version_impact: major
+intent:
+  kind: amendment
+  summary: Replace 6 weight adapter types (DenseElementWeights, DenseRelationWeights, DenseIncidenceWeights, SparseElementWeights, SparseRelationWeights, SparseIncidenceWeights) with 2 generic storage types (DenseWeights, SparseWeights) parameterized by a PropertyAxis marker (ElementAxis, RelationAxis, IncidenceAxis). Friendly type aliases preserve the ergonomic call-site names. Per-axis output trait impls (ElementWeight/RelationWeight/IncidenceWeight) live on (axis, storage) pairs and remain non-overlapping under Rust's coherence rules.
+  source: human
+  goals: |
+    - Add `pub trait PropertyAxis` with one method `id_family() -> IdFamily`,
+      and 3 marker structs `ElementAxis`, `RelationAxis`, `IncidenceAxis`.
+    - Replace `DenseElementWeights` / `DenseRelationWeights` /
+      `DenseIncidenceWeights` with one `DenseWeights<'view, A, T, Id, I, P>`
+      parameterized by an axis marker. Per-axis inherent `new()` impls keep
+      the topology-axis-specific bound (`ElementIndex` / `RelationIndex` /
+      `IncidenceIndex`) and call the corresponding `*_bound()` accessor.
+    - Replace the 3 sparse weight types analogously with
+      `SparseWeights<'view, A, T, Id, I, P>`.
+    - Per-axis trait impls (`TopologyBase`, `ElementWeight`, `RelationWeight`,
+      `IncidenceBase`, `IncidenceWeight`) on `(axis, storage)` pairs keep the
+      output-side capability surface non-overlapping (Rust coherence
+      satisfied because each axis marker is a distinct concrete type).
+    - Add 6 type aliases (`pub type DenseElementWeights<'view, T, Id, I, P> =
+      DenseWeights<'view, ElementAxis, T, Id, I, P>;` and equivalents)
+      preserving ergonomic call-site names.
+  non_goals: |
+    No public API change to property layer descriptors, snapshot encode/decode
+    helpers, or `IdFamily` / `LayerRole` enums. No changes to `PropertyLayer`,
+    `PropertyLayerDescriptor`, or the validation helpers
+    `validate_dense_primitive_selection` / `validate_sparse_primitive_selection`.
+  rationale: |
+    The six weight adapter types differed only in which axis of the topology
+    view their constructor queried (element_bound / relation_bound /
+    incidence_bound) and which output trait they implemented. Collapsing the
+    storage struct + 3 inherent constructors per shape preserves Rust's
+    coherence rules (non-overlapping trait impls on distinct axis markers)
+    while opening a real user-extensibility surface: an external crate can
+    define its own axis marker implementing PropertyAxis, then add inherent
+    impls on `DenseWeights<MyAxis, ...>` to plug a custom storage flavor
+    into the same per-axis output trait dispatch.
+realization:
+- bindings:
+  - scheme: path
+    value: crates/oxgraph-property/src/lib.rs
+    metadata:
+      summary: Adds PropertyAxis trait with ElementAxis / RelationAxis / IncidenceAxis markers. Replaces six (Dense|Sparse)(Element|Relation|Incidence)Weights types with DenseWeights / SparseWeights generic in axis. Adds 6 type aliases for ergonomic names. Output trait impls live on (axis, storage) pairs.
+  role: primary
+initiated_by:
+  type: human

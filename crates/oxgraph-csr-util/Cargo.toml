@@ -1,0 +1,18 @@
+[package]
+name = "oxgraph-csr-util"
+version = "0.0.0"
+description = "Offset-integrity primitives shared by oxgraph CSR and BCSR layouts."
+publish = false
+
+authors.workspace = true
+edition.workspace = true
+repository.workspace = true
+
+[dependencies]
+zerocopy = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+
+[lints]
+workspace = true

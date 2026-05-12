@@ -1,0 +1,68 @@
+id: 19
+name: Shared offset-integrity primitives in oxgraph-csr-util
+description: Shared offset-integrity primitives in oxgraph-csr-util
+targets:
+  shape_ids:
+  - 5
+  - 6
+  - 26
+  - 1
+status: proposed
+version_impact: major
+intent:
+  kind: amendment
+  summary: Promote the offset-walk predicates duplicated between oxgraph-csr::CsrGraph::validate and oxgraph-hyper-bcsr::internal::validation into a new oxgraph-csr-util workspace crate. Both layouts depend on it via a sealed ZerocopyWord supertrait on CsrWord and BcsrWord. Predicate-level kani proofs unify in oxgraph-csr-util; existing end-to-end proofs in csr/proofs.rs and hyper-bcsr/proofs.rs stay.
+  source: human
+  goals: |
+    - Add `crates/oxgraph-csr-util` (shape:26) hosting the canonical
+      ZerocopyWord sealed trait, OffsetIntegrityIssue data enum, and the
+      three predicate fns: check_offsets_monotonic, check_value_range,
+      check_offset_section.
+    - CsrWord and BcsrWord gain `oxgraph_csr_util::ZerocopyWord` as a
+      supertrait, opting their leaf types (native u16/u32/u64/usize and
+      LE wrappers U16<LE>/U32<LE>/U64<LE>) into the seal.
+    - CsrGraph::validate (csr/src/lib.rs:677-740) calls check_offset_section
+      and check_value_range, mapping OffsetIntegrityIssue to typed CsrError
+      variants (FirstOffset, NonMonotonicOffset, FinalOffset, TargetOutOfRange,
+      EdgeUsizeOverflow) by reading the offending word out of the original
+      slice for typed-value reconstruction.
+    - BCSR's validate_one_offsets, check_offsets_monotonic, check_vertex_values,
+      and check_hyperedge_values become thin maps over the shared helpers,
+      stamping a BcsrSection discriminator on the returned issue.
+  non_goals: |
+    No public API change to CsrError or BcsrError variants; both error types
+    keep their existing shapes. No movement of existing end-to-end proofs in
+    csr/proofs.rs or hyper-bcsr/proofs.rs. No changes to BCSR-specific
+    primitives (cross-direction multiset equality, strictly-ascending bucket
+    checks).
+  rationale: |
+    The five offset-walk predicates (length, first-zero, monotonic,
+    final-offset, value-range) were duplicated between CsrGraph::validate
+    inline and BCSR's internal/validation.rs helpers. Promoting them to a
+    shared crate replaces two implementations with one set of pure functions
+    and one set of predicate-level kani proofs. Per shape:2, topology
+    explicitly excludes CSR/snapshot-format primitives, so the canonical
+    home is a dedicated utility crate. Each layout maps the issue to its
+    typed error at the boundary, preserving the typed surface that callers
+    rely on.
+realization:
+- bindings:
+  - scheme: path
+    value: crates/oxgraph-csr-util
+    metadata:
+      summary: New crate hosting ZerocopyWord, OffsetIntegrityIssue, and the three predicate fns.
+  - scheme: path
+    value: crates/oxgraph-csr/src/lib.rs
+    metadata:
+      summary: CsrWord gains oxgraph_csr_util::ZerocopyWord supertrait. CsrGraph::validate replaced with calls to check_offset_section and check_value_range, mapping OffsetIntegrityIssue to typed CsrError variants via map_offsets_issue / map_targets_issue.
+  - scheme: path
+    value: crates/oxgraph-hyper-bcsr/src/word.rs
+    metadata:
+      summary: BcsrWord gains oxgraph_csr_util::ZerocopyWord supertrait via the existing leaf-type impls.
+  - scheme: path
+    value: crates/oxgraph-hyper-bcsr/src/internal/validation.rs
+    metadata:
+      summary: validate_one_offsets / check_vertex_values / check_hyperedge_values become thin maps over the shared helpers, stamping BcsrSection on the returned issue. The local check_offsets_monotonic helper is removed.
+  role: primary
+initiated_by:
+  type: human

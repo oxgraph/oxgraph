@@ -40,11 +40,11 @@ realization:
   - scheme: path
     value: crates/oxgraph-graph-build
     metadata:
-      summary: no_std + alloc graph builders split into unweighted/weighted cores with feature-gated CSR/property export helpers that reuse layout-owned CsrSnapshotIndex conversion.
+      summary: no_std + alloc graph builders split into unweighted/weighted cores with feature-gated CSR/property export helpers that reuse layout-owned CsrSnapshotIndex conversion. BuildIndex and id-to-slot / index_from_usize / build_offset_index helpers come from oxgraph-build-util (shape:25).
   - scheme: path
     value: crates/oxgraph-hyper-build
     metadata:
-      summary: no_std + alloc hypergraph builders split into unweighted/weighted cores with feature-gated BCSR/property export helpers that reuse layout-owned BcsrSnapshotIndex conversion.
+      summary: no_std + alloc hypergraph builders split into unweighted/weighted cores with feature-gated BCSR/property export helpers that reuse layout-owned BcsrSnapshotIndex conversion. BuildIndex and id-to-slot / index_from_usize / build_offset_index helpers come from oxgraph-build-util (shape:25).
   role: primary
 amendment_log:
 - 9
@@ -52,6 +52,7 @@ amendment_log:
 - 12
 - 16
 - 17
+- 18
 parents:
 - id: 16
   role: component

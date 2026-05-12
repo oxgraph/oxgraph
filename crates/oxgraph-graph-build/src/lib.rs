@@ -10,8 +10,12 @@
 extern crate alloc;
 
 use alloc::{boxed::Box, vec, vec::Vec};
-use core::{error::Error, fmt, hash::Hash};
+use core::{error::Error, fmt};
 
+pub use oxgraph_build_util::BuildIndex;
+use oxgraph_build_util::{
+    IdOutOfBounds, OffsetOverflow, id_to_slot, index_from_usize, slot_or_max,
+};
 #[cfg(feature = "snapshot")]
 use oxgraph_csr::CsrSnapshotIndex;
 use oxgraph_graph::{
@@ -36,66 +40,6 @@ type FrozenWeightedGraphResult<NodeIndex, EdgeIndex, EW, RW> = Result<
     FrozenWeightedGraph<NodeIndex, EdgeIndex, EW, RW>,
     GraphBuildError<NodeIndex, EdgeIndex>,
 >;
-
-/// Sealed trait module for builder index widths.
-mod sealed {
-    /// Seals [`super::BuildIndex`] to supported unsigned index widths.
-    pub trait BuildIndex {}
-}
-
-/// Unsigned dense ID width usable by graph builders.
-///
-/// # Performance
-///
-/// Implementations perform checked conversions in `O(1)`.
-pub trait BuildIndex: sealed::BuildIndex + Copy + Eq + Ord + fmt::Debug + Hash {
-    /// Converts this ID to `usize` when representable on the current target.
-    ///
-    /// # Performance
-    ///
-    /// This function is `O(1)`.
-    fn to_usize(self) -> Option<usize>;
-
-    /// Converts a `usize` into this ID width when representable.
-    ///
-    /// # Performance
-    ///
-    /// This function is `O(1)`.
-    fn from_usize(value: usize) -> Option<Self>;
-}
-
-/// Implements [`BuildIndex`] for one unsigned width.
-macro_rules! impl_build_index {
-    ($index:ty) => {
-        impl sealed::BuildIndex for $index {}
-
-        impl BuildIndex for $index {
-            fn to_usize(self) -> Option<usize> {
-                usize::try_from(self).ok()
-            }
-
-            fn from_usize(value: usize) -> Option<Self> {
-                Self::try_from(value).ok()
-            }
-        }
-    };
-}
-
-impl_build_index!(u16);
-impl_build_index!(u32);
-impl_build_index!(u64);
-
-impl sealed::BuildIndex for usize {}
-
-impl BuildIndex for usize {
-    fn to_usize(self) -> Option<usize> {
-        Some(self)
-    }
-
-    fn from_usize(value: usize) -> Option<Self> {
-        Some(value)
-    }
-}
 
 /// Local/canonical node ID assigned by graph builders.
 ///
@@ -1040,12 +984,23 @@ where
     })
 }
 
+/// Maps an [`OffsetOverflow`] from `oxgraph_build_util` into a typed
+/// [`GraphBuildError`].
+const fn map_offset_overflow<NodeIndex, EdgeIndex>(
+    error: OffsetOverflow,
+) -> GraphBuildError<NodeIndex, EdgeIndex> {
+    match error {
+        OffsetOverflow::IndexOverflow { value } => GraphBuildError::IdOverflow { value },
+        _ => GraphBuildError::IdOverflow { value: usize::MAX },
+    }
+}
+
 /// Returns zero for an edge index width.
 fn edge_zero<NodeIndex, EdgeIndex>() -> Result<EdgeIndex, GraphBuildError<NodeIndex, EdgeIndex>>
 where
     EdgeIndex: BuildIndex,
 {
-    EdgeIndex::from_usize(0).ok_or(GraphBuildError::IdOverflow { value: 0 })
+    index_from_usize::<EdgeIndex>(0).map_err(map_offset_overflow)
 }
 
 /// Returns zero for a node index width.
@@ -1053,7 +1008,7 @@ fn node_zero<NodeIndex, EdgeIndex>() -> Result<NodeIndex, GraphBuildError<NodeIn
 where
     NodeIndex: BuildIndex,
 {
-    NodeIndex::from_usize(0).ok_or(GraphBuildError::IdOverflow { value: 0 })
+    index_from_usize::<NodeIndex>(0).map_err(map_offset_overflow)
 }
 
 /// Validates a node ID and returns its dense slot.
@@ -1064,14 +1019,8 @@ fn ensure_node<NodeIndex, EdgeIndex>(
 where
     NodeIndex: BuildIndex,
 {
-    let Some(slot) = node.0.to_usize() else {
-        return Err(GraphBuildError::InvalidNode { node });
-    };
-    if slot < node_count {
-        Ok(slot)
-    } else {
-        Err(GraphBuildError::InvalidNode { node })
-    }
+    id_to_slot::<NodeIndex>(node.0, node_count)
+        .map_err(|_: IdOutOfBounds| GraphBuildError::InvalidNode { node })
 }
 
 /// Validates an edge ID and returns its dense slot.
@@ -1082,24 +1031,18 @@ fn ensure_edge<NodeIndex, EdgeIndex>(
 where
     EdgeIndex: BuildIndex,
 {
-    let Some(slot) = edge.0.to_usize() else {
-        return Err(GraphBuildError::InvalidEdge { edge });
-    };
-    if slot < edge_count {
-        Ok(slot)
-    } else {
-        Err(GraphBuildError::InvalidEdge { edge })
-    }
+    id_to_slot::<EdgeIndex>(edge.0, edge_count)
+        .map_err(|_: IdOutOfBounds| GraphBuildError::InvalidEdge { edge })
 }
 
 /// Returns a node slot without panicking.
 fn node_slot<NodeIndex: BuildIndex>(node: GraphNodeId<NodeIndex>) -> usize {
-    node.0.to_usize().unwrap_or(usize::MAX)
+    slot_or_max::<NodeIndex>(node.0)
 }
 
 /// Returns an edge slot without panicking.
 fn edge_slot<EdgeIndex: BuildIndex>(edge: GraphEdgeId<EdgeIndex>) -> usize {
-    edge.0.to_usize().unwrap_or(usize::MAX)
+    slot_or_max::<EdgeIndex>(edge.0)
 }
 
 /// Returns the outgoing edge range for `node`.

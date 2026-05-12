@@ -5,11 +5,117 @@
 //! data, or yield an inconsistent view of the bipartite incidence relation.
 //! The depth of the walk is selected by [`BcsrValidation`].
 
+use oxgraph_csr_util::{OffsetIntegrityIssue, check_offset_section, check_value_range};
+
 use crate::{
     error::{BcsrError, BcsrRoleSide, BcsrSection},
     sections::BcsrSections,
     word::{BcsrIndex, BcsrWord},
 };
+
+/// Maps an [`OffsetIntegrityIssue`] from `oxgraph-csr-util` into a typed
+/// [`BcsrError`], stamping the originating [`BcsrSection`] discriminator.
+fn map_offsets_issue<W: BcsrWord>(
+    section: BcsrSection,
+    offsets: &[W],
+    issue: OffsetIntegrityIssue,
+) -> BcsrError {
+    match issue {
+        OffsetIntegrityIssue::Length { expected, actual } => BcsrError::OffsetLength {
+            section,
+            expected,
+            actual,
+        },
+        OffsetIntegrityIssue::FirstNonZero { actual } => BcsrError::FirstOffset { section, actual },
+        OffsetIntegrityIssue::NonMonotonic {
+            index,
+            previous,
+            actual,
+        } => BcsrError::NonMonotonicOffset {
+            section,
+            index,
+            previous,
+            actual,
+        },
+        OffsetIntegrityIssue::FinalMismatch {
+            final_offset,
+            value_len,
+        } => BcsrError::FinalOffset {
+            section,
+            final_offset,
+            value_len,
+        },
+        OffsetIntegrityIssue::UsizeOverflow { index } => {
+            let value = offsets
+                .get(index)
+                .copied()
+                .and_then(|w| w.get().to_usize())
+                .unwrap_or(usize::MAX);
+            BcsrError::UsizeOverflow { value }
+        }
+        _ => BcsrError::UsizeOverflow { value: usize::MAX },
+    }
+}
+
+/// Maps a value-range [`OffsetIntegrityIssue`] for vertex IDs into a
+/// [`BcsrError::VertexOutOfRange`].
+fn map_vertex_value_issue<W: BcsrWord>(
+    section: BcsrSection,
+    values: &[W],
+    issue: OffsetIntegrityIssue,
+) -> BcsrError {
+    match issue {
+        OffsetIntegrityIssue::ValueOutOfRange {
+            index,
+            value,
+            bound,
+        } => BcsrError::VertexOutOfRange {
+            section,
+            index,
+            vertex: value,
+            vertex_count: bound,
+        },
+        OffsetIntegrityIssue::UsizeOverflow { index } => {
+            let value = values
+                .get(index)
+                .copied()
+                .and_then(|w| w.get().to_usize())
+                .unwrap_or(usize::MAX);
+            BcsrError::UsizeOverflow { value }
+        }
+        _ => BcsrError::UsizeOverflow { value: usize::MAX },
+    }
+}
+
+/// Maps a value-range [`OffsetIntegrityIssue`] for hyperedge IDs into a
+/// [`BcsrError::HyperedgeOutOfRange`].
+fn map_hyperedge_value_issue<W: BcsrWord>(
+    section: BcsrSection,
+    values: &[W],
+    issue: OffsetIntegrityIssue,
+) -> BcsrError {
+    match issue {
+        OffsetIntegrityIssue::ValueOutOfRange {
+            index,
+            value,
+            bound,
+        } => BcsrError::HyperedgeOutOfRange {
+            section,
+            index,
+            hyperedge: value,
+            hyperedge_count: bound,
+        },
+        OffsetIntegrityIssue::UsizeOverflow { index } => {
+            let value = values
+                .get(index)
+                .copied()
+                .and_then(|w| w.get().to_usize())
+                .unwrap_or(usize::MAX);
+            BcsrError::UsizeOverflow { value }
+        }
+        _ => BcsrError::UsizeOverflow { value: usize::MAX },
+    }
+}
 
 /// Validation depth applied at view open time.
 ///
@@ -191,60 +297,20 @@ where
 }
 
 /// Validates one offset array: length is `count + 1`, first offset is 0,
-/// monotonic non-decreasing, final offset matches `value_len`.
+/// monotonic non-decreasing, final offset matches `value_len`. Delegates to
+/// [`oxgraph_csr_util::check_offset_section`] and stamps the [`BcsrSection`]
+/// discriminator on any returned issue.
 fn validate_one_offsets<Word: BcsrWord>(
     offsets: &[Word],
     section: BcsrSection,
     count: usize,
     value_len: usize,
 ) -> Result<(), BcsrError> {
-    let expected = count
-        .checked_add(1)
-        .ok_or(BcsrError::OffsetLengthOverflow { count })?;
-    if offsets.len() != expected {
-        return Err(BcsrError::OffsetLength {
-            section,
-            expected,
-            actual: offsets.len(),
-        });
+    if count.checked_add(1).is_none() {
+        return Err(BcsrError::OffsetLengthOverflow { count });
     }
-    check_offsets_monotonic(offsets, section)?;
-    let final_offset = index_to_usize(offsets[offsets.len() - 1].get())?;
-    if final_offset != value_len {
-        return Err(BcsrError::FinalOffset {
-            section,
-            final_offset,
-            value_len,
-        });
-    }
-    Ok(())
-}
-
-/// Checks the first-zero and monotonic-non-decreasing offset invariants.
-fn check_offsets_monotonic<Word: BcsrWord>(
-    offsets: &[Word],
-    section: BcsrSection,
-) -> Result<(), BcsrError> {
-    let mut previous = 0;
-    for (index, offset_word) in offsets.iter().copied().enumerate() {
-        let offset = index_to_usize(offset_word.get())?;
-        if index == 0 && offset != 0 {
-            return Err(BcsrError::FirstOffset {
-                section,
-                actual: offset,
-            });
-        }
-        if offset < previous {
-            return Err(BcsrError::NonMonotonicOffset {
-                section,
-                index,
-                previous,
-                actual: offset,
-            });
-        }
-        previous = offset;
-    }
-    Ok(())
+    check_offset_section(offsets, count, value_len)
+        .map_err(|issue| map_offsets_issue(section, offsets, issue))
 }
 
 /// Verifies that head/outgoing and tail/incoming totals agree, so the
@@ -304,44 +370,28 @@ where
     )
 }
 
-/// Returns `Err` if any vertex word is `>= vertex_count`.
+/// Returns `Err` if any vertex word is `>= vertex_count`. Delegates to
+/// [`oxgraph_csr_util::check_value_range`] and stamps [`BcsrSection`] on the
+/// returned issue.
 fn check_vertex_values<Word: BcsrWord>(
     values: &[Word],
     section: BcsrSection,
     vertex_count: usize,
 ) -> Result<(), BcsrError> {
-    for (index, word) in values.iter().copied().enumerate() {
-        let vertex = index_to_usize(word.get())?;
-        if vertex >= vertex_count {
-            return Err(BcsrError::VertexOutOfRange {
-                section,
-                index,
-                vertex,
-                vertex_count,
-            });
-        }
-    }
-    Ok(())
+    check_value_range(values, vertex_count)
+        .map_err(|issue| map_vertex_value_issue(section, values, issue))
 }
 
-/// Returns `Err` if any hyperedge word is `>= hyperedge_count`.
+/// Returns `Err` if any hyperedge word is `>= hyperedge_count`. Delegates to
+/// [`oxgraph_csr_util::check_value_range`] and stamps [`BcsrSection`] on the
+/// returned issue.
 fn check_hyperedge_values<Word: BcsrWord>(
     values: &[Word],
     section: BcsrSection,
     hyperedge_count: usize,
 ) -> Result<(), BcsrError> {
-    for (index, word) in values.iter().copied().enumerate() {
-        let hyperedge = index_to_usize(word.get())?;
-        if hyperedge >= hyperedge_count {
-            return Err(BcsrError::HyperedgeOutOfRange {
-                section,
-                index,
-                hyperedge,
-                hyperedge_count,
-            });
-        }
-    }
-    Ok(())
+    check_value_range(values, hyperedge_count)
+        .map_err(|issue| map_hyperedge_value_issue(section, values, issue))
 }
 
 /// Verifies that values within every per-bucket range are strictly

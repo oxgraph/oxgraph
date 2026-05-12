@@ -2,8 +2,8 @@
 
 use criterion::{Criterion, criterion_group, criterion_main};
 use oxgraph_algo::{
-    PageRankConfig, PageRankWorkspace, pagerank, pagerank_weighted_with_workspace,
-    pagerank_with_workspace,
+    PageRankConfig, PageRankWorkspace, Uniform, Weighted, pagerank_graph,
+    pagerank_graph_with_workspace,
 };
 use oxgraph_csr::{CsrError, CsrNativeGraph, CsrNodeId};
 use oxgraph_topology::{RelationWeight, TopologyBase};
@@ -68,16 +68,24 @@ fn pagerank_throughput(c: &mut Criterion) {
         let mut ranks = vec![0.0; 10_000];
         b.iter(|| {
             ranks.fill(0.0);
-            pagerank(&graph, elements.iter().copied(), config, None, &mut ranks)
-                .unwrap_or_else(|error| panic!("benchmark PageRank should converge: {error}"))
+            pagerank_graph(
+                &graph,
+                &Uniform,
+                elements.iter().copied(),
+                config,
+                None,
+                &mut ranks,
+            )
+            .unwrap_or_else(|error| panic!("benchmark PageRank should converge: {error}"))
         });
     });
     c.bench_function("pagerank_workspace_csr_10k_20k_edges", |b| {
         let mut workspace = PageRankWorkspace::for_graph(&graph);
         let mut ranks = vec![0.0; 10_000];
         b.iter(|| {
-            pagerank_with_workspace(
+            pagerank_graph_with_workspace(
                 &graph,
+                &Uniform,
                 elements.iter().copied(),
                 config,
                 None,
@@ -92,8 +100,9 @@ fn pagerank_throughput(c: &mut Criterion) {
         let mut ranks = vec![0.0; 10_000];
         b.iter(|| {
             ranks.fill(0.0);
-            pagerank_with_workspace(
+            pagerank_graph_with_workspace(
                 &graph,
+                &Uniform,
                 visible_half.iter().copied(),
                 config,
                 None,
@@ -108,9 +117,9 @@ fn pagerank_throughput(c: &mut Criterion) {
         let mut ranks = vec![0.0; 10_000];
         b.iter(|| {
             ranks.fill(0.0);
-            pagerank_weighted_with_workspace(
+            pagerank_graph_with_workspace(
                 &graph,
-                &weights,
+                &Weighted::new(&weights),
                 visible_half.iter().copied(),
                 config,
                 None,

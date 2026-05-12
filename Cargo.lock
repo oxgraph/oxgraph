@@ -669,13 +669,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxgraph-build-util"
+version = "0.0.0"
+dependencies = [
+ "proptest",
+]
+
+[[package]]
 name = "oxgraph-csr"
 version = "0.0.0"
 dependencies = [
  "criterion",
  "oxgraph-algo",
+ "oxgraph-csr-util",
  "oxgraph-graph",
  "oxgraph-snapshot",
+ "proptest",
+ "zerocopy",
+]
+
+[[package]]
+name = "oxgraph-csr-util"
+version = "0.0.0"
+dependencies = [
  "proptest",
  "zerocopy",
 ]
@@ -695,6 +711,7 @@ dependencies = [
  "arrow-array",
  "arrow-schema",
  "criterion",
+ "oxgraph-build-util",
  "oxgraph-csr",
  "oxgraph-graph",
  "oxgraph-property",
@@ -715,6 +732,7 @@ name = "oxgraph-hyper-bcsr"
 version = "0.0.0"
 dependencies = [
  "criterion",
+ "oxgraph-csr-util",
  "oxgraph-hyper",
  "oxgraph-snapshot",
  "proptest",
@@ -728,6 +746,7 @@ dependencies = [
  "arrow-array",
  "arrow-schema",
  "criterion",
+ "oxgraph-build-util",
  "oxgraph-hyper",
  "oxgraph-hyper-bcsr",
  "oxgraph-property",

@@ -9,6 +9,7 @@ edition.workspace = true
 repository.workspace = true
 
 [dependencies]
+oxgraph-build-util = { version = "0.0.0", path = "../oxgraph-build-util" }
 oxgraph-csr = { version = "0.0.0", path = "../oxgraph-csr", optional = true }
 oxgraph-graph = { version = "0.0.0", path = "../oxgraph-graph" }
 oxgraph-property = { version = "0.0.0", path = "../oxgraph-property", optional = true }

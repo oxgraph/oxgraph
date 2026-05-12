@@ -30,11 +30,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxgraph-build-util"
+version = "0.0.0"
+
+[[package]]
 name = "oxgraph-csr"
 version = "0.0.0"
 dependencies = [
+ "oxgraph-csr-util",
  "oxgraph-graph",
  "oxgraph-snapshot",
+ "zerocopy",
+]
+
+[[package]]
+name = "oxgraph-csr-util"
+version = "0.0.0"
+dependencies = [
  "zerocopy",
 ]
 
@@ -49,6 +61,7 @@ dependencies = [
 name = "oxgraph-graph-build"
 version = "0.0.0"
 dependencies = [
+ "oxgraph-build-util",
  "oxgraph-csr",
  "oxgraph-graph",
  "oxgraph-snapshot",
@@ -65,6 +78,7 @@ dependencies = [
 name = "oxgraph-hyper-bcsr"
 version = "0.0.0"
 dependencies = [
+ "oxgraph-csr-util",
  "oxgraph-hyper",
  "oxgraph-snapshot",
  "zerocopy",
@@ -74,6 +88,7 @@ dependencies = [
 name = "oxgraph-hyper-build"
 version = "0.0.0"
 dependencies = [
+ "oxgraph-build-util",
  "oxgraph-hyper",
  "oxgraph-hyper-bcsr",
  "oxgraph-snapshot",

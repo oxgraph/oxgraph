@@ -1,0 +1,55 @@
+id: 25
+name: shared builder utilities
+description: |
+  Tiny no_std + alloc utility crate that owns the canonical BuildIndex trait
+  shared by oxgraph-graph-build and oxgraph-hyper-build, plus the small
+  pure-function primitives both builders need: id-to-slot validation,
+  bucketed offset-index construction, and the typed data enums those
+  helpers return. Does not depend on any other oxgraph crate. Has no public
+  domain semantics — it is a deliberate utility seam, not a layer.
+profile: 1
+status: proposed
+intent:
+  kind: module
+  summary: Canonical BuildIndex + builder helper primitives shared by graph-build and hyper-build
+  source: human
+  goals: |
+    - Own the canonical BuildIndex sealed-trait definition (currently duplicated in
+      oxgraph-graph-build and oxgraph-hyper-build).
+    - Provide id_to_slot, slot_or_max, index_from_usize, and build_offset_index as
+      ordinary pub fns over BuildIndex — no traits or trait indirection beyond
+      BuildIndex itself.
+    - Return small data enums (IdOutOfBounds, OffsetOverflow) so each calling
+      builder maps the issue to its typed error variant. No Box<dyn Error>.
+    - Stay no_std + alloc, dependency-light, and free of any oxgraph-graph,
+      oxgraph-hyper, oxgraph-csr, oxgraph-snapshot, or Arrow imports.
+  non_goals: |
+    No domain semantics, no public trait surface beyond BuildIndex, no snapshot
+    or Arrow dependencies, no graph or hypergraph specific types. Not a place to
+    park future builder utilities that need crate-specific knowledge.
+  rationale: |
+    BuildIndex and the slot/bucketing primitives are duplicated byte-for-byte
+    between oxgraph-graph-build and oxgraph-hyper-build today. shape:2 (topology
+    substrate) explicitly excludes builders, so the canonical home cannot be
+    oxgraph-topology. A small dedicated utility crate keeps the dedup honest
+    without inflating either builder's responsibility surface.
+realization:
+- bindings:
+  - scheme: path
+    value: crates/oxgraph-build-util
+    metadata:
+      summary: The crate root. Hosts BuildIndex, id_to_slot, slot_or_max, index_from_usize, build_offset_index, IdOutOfBounds, OffsetOverflow.
+  - scheme: path
+    value: crates/oxgraph-build-util/src/lib.rs
+    metadata:
+      summary: Sealed BuildIndex trait + helper functions + typed data enums.
+  - scheme: path
+    value: crates/oxgraph-build-util/src/proofs.rs
+    metadata:
+      summary: kani proofs for build_offset_index algebraic contracts and overflow totality.
+  role: primary
+amendment_log:
+- 18
+parents:
+- id: 1
+  role: component

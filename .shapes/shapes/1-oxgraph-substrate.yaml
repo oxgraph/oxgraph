@@ -84,6 +84,8 @@ realization:
   role: primary
 amendment_log:
 - 8
+- 18
+- 19
 children:
 - shape: 2
   role: component
@@ -118,4 +120,8 @@ children:
 - shape: 23
   role: component
 - shape: 24
+  role: component
+- shape: 25
+  role: component
+- shape: 26
   role: component

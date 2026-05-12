@@ -17,8 +17,12 @@
 extern crate alloc;
 
 use alloc::{boxed::Box, vec, vec::Vec};
-use core::{error::Error, fmt, hash::Hash, marker::PhantomData};
+use core::{error::Error, fmt, marker::PhantomData};
 
+pub use oxgraph_build_util::BuildIndex;
+use oxgraph_build_util::{
+    IdOutOfBounds, OffsetOverflow, build_offset_index, id_to_slot, index_from_usize, slot_or_max,
+};
 use oxgraph_hyper::{
     CanonicalElementIdentity, CanonicalIncidenceIdentity, CanonicalRelationIdentity,
     ContainsElement, ContainsIncidence, ContainsRelation, DirectedHyperedgeIncidences,
@@ -84,66 +88,6 @@ type ElementIncidenceIndexResult<VertexIndex, RelationIndex, IncidenceIndex> = R
     ElementIncidenceIndex<IncidenceIndex>,
     HyperBuildError<VertexIndex, RelationIndex, IncidenceIndex>,
 >;
-
-/// Sealed trait module for builder index widths.
-mod sealed {
-    /// Seals [`super::BuildIndex`] to supported unsigned index widths.
-    pub trait BuildIndex {}
-}
-
-/// Unsigned dense ID width usable by hypergraph builders.
-///
-/// # Performance
-///
-/// Implementations perform checked conversions in `O(1)`.
-pub trait BuildIndex: sealed::BuildIndex + Copy + Eq + Ord + fmt::Debug + Hash {
-    /// Converts this ID to `usize` when representable on the current target.
-    ///
-    /// # Performance
-    ///
-    /// This function is `O(1)`.
-    fn to_usize(self) -> Option<usize>;
-
-    /// Converts a `usize` into this ID width when representable.
-    ///
-    /// # Performance
-    ///
-    /// This function is `O(1)`.
-    fn from_usize(value: usize) -> Option<Self>;
-}
-
-/// Implements [`BuildIndex`] for one unsigned width.
-macro_rules! impl_build_index {
-    ($index:ty) => {
-        impl sealed::BuildIndex for $index {}
-
-        impl BuildIndex for $index {
-            fn to_usize(self) -> Option<usize> {
-                usize::try_from(self).ok()
-            }
-
-            fn from_usize(value: usize) -> Option<Self> {
-                Self::try_from(value).ok()
-            }
-        }
-    };
-}
-
-impl_build_index!(u16);
-impl_build_index!(u32);
-impl_build_index!(u64);
-
-impl sealed::BuildIndex for usize {}
-
-impl BuildIndex for usize {
-    fn to_usize(self) -> Option<usize> {
-        Some(self)
-    }
-
-    fn from_usize(value: usize) -> Option<Self> {
-        Some(value)
-    }
-}
 
 /// Local/canonical vertex ID assigned by hypergraph builders.
 ///
@@ -442,10 +386,10 @@ where
         HyperedgeId<RelationIndex>,
         HyperBuildError<VertexIndex, RelationIndex, IncidenceIndex>,
     > {
-        ensure_vertices(self.vertex_count, sources)?;
-        ensure_vertices(self.vertex_count, targets)?;
-        ensure_unique_participants(sources, HyperParticipantRole::Source)?;
-        ensure_unique_participants(targets, HyperParticipantRole::Target)?;
+        ensure_vertices(self.vertex_count, sources.iter().copied())?;
+        ensure_vertices(self.vertex_count, targets.iter().copied())?;
+        ensure_unique_participants(sources.iter().copied(), HyperParticipantRole::Source)?;
+        ensure_unique_participants(targets.iter().copied(), HyperParticipantRole::Target)?;
         let hyperedge = RelationIndex::from_usize(self.hyperedges.len()).ok_or(
             HyperBuildError::IdOverflow {
                 value: self.hyperedges.len(),
@@ -626,10 +570,16 @@ where
     where
         IW: Clone,
     {
-        ensure_weighted_vertices(self.vertex_count, sources)?;
-        ensure_weighted_vertices(self.vertex_count, targets)?;
-        ensure_unique_weighted_participants(sources, HyperParticipantRole::Source)?;
-        ensure_unique_weighted_participants(targets, HyperParticipantRole::Target)?;
+        ensure_vertices(self.vertex_count, sources.iter().map(|(v, _)| *v))?;
+        ensure_vertices(self.vertex_count, targets.iter().map(|(v, _)| *v))?;
+        ensure_unique_participants(
+            sources.iter().map(|(v, _)| *v),
+            HyperParticipantRole::Source,
+        )?;
+        ensure_unique_participants(
+            targets.iter().map(|(v, _)| *v),
+            HyperParticipantRole::Target,
+        )?;
         let hyperedge = RelationIndex::from_usize(self.hyperedges.len()).ok_or(
             HyperBuildError::IdOverflow {
                 value: self.hyperedges.len(),
@@ -997,17 +947,28 @@ where
 }
 
 fn vertex_slot<VertexIndex: BuildIndex>(vertex: HyperVertexId<VertexIndex>) -> usize {
-    vertex.0.to_usize().unwrap_or(usize::MAX)
+    slot_or_max::<VertexIndex>(vertex.0)
 }
 
 fn hyperedge_slot<RelationIndex: BuildIndex>(hyperedge: HyperedgeId<RelationIndex>) -> usize {
-    hyperedge.0.to_usize().unwrap_or(usize::MAX)
+    slot_or_max::<RelationIndex>(hyperedge.0)
 }
 
 fn participant_slot<IncidenceIndex: BuildIndex>(
     participant: HyperParticipantId<IncidenceIndex>,
 ) -> usize {
-    participant.0.to_usize().unwrap_or(usize::MAX)
+    slot_or_max::<IncidenceIndex>(participant.0)
+}
+
+/// Maps an [`OffsetOverflow`] from `oxgraph_build_util` into a typed
+/// [`HyperBuildError`].
+const fn map_offset_overflow<VertexIndex, RelationIndex, IncidenceIndex>(
+    error: OffsetOverflow,
+) -> HyperBuildError<VertexIndex, RelationIndex, IncidenceIndex> {
+    match error {
+        OffsetOverflow::IndexOverflow { value } => HyperBuildError::IdOverflow { value },
+        _ => HyperBuildError::IdOverflow { value: usize::MAX },
+    }
 }
 
 /// Implements hypergraph topology traits for one frozen wrapper.
@@ -1984,11 +1945,11 @@ where
     let mut participant_roles = Vec::with_capacity(participant_count);
     let mut incidence_weights = Vec::with_capacity(participant_count);
 
-    head_offsets.push(index_from_usize(0)?);
-    tail_offsets.push(index_from_usize(0)?);
-    relation_offsets.push(index_from_usize(0)?);
+    head_offsets.push(index_from_usize(0).map_err(map_offset_overflow)?);
+    tail_offsets.push(index_from_usize(0).map_err(map_offset_overflow)?);
+    relation_offsets.push(index_from_usize(0).map_err(map_offset_overflow)?);
     for (relation, record) in records.iter().enumerate() {
-        let relation_id = index_from_usize(relation)?;
+        let relation_id = index_from_usize(relation).map_err(map_offset_overflow)?;
         for (vertex, weight) in &record.sources {
             head_participants.push(*vertex);
             participant_elements.push(*vertex);
@@ -2003,9 +1964,10 @@ where
             participant_roles.push(HyperParticipantRole::Target);
             incidence_weights.push(weight.clone());
         }
-        head_offsets.push(index_from_usize(head_participants.len())?);
-        tail_offsets.push(index_from_usize(tail_participants.len())?);
-        relation_offsets.push(index_from_usize(participant_elements.len())?);
+        head_offsets.push(index_from_usize(head_participants.len()).map_err(map_offset_overflow)?);
+        tail_offsets.push(index_from_usize(tail_participants.len()).map_err(map_offset_overflow)?);
+        relation_offsets
+            .push(index_from_usize(participant_elements.len()).map_err(map_offset_overflow)?);
     }
 
     let (vertex_outgoing_offsets, vertex_outgoing_hyperedges) =
@@ -2049,7 +2011,7 @@ where
 {
     let mut buckets = vec![Vec::<RelationIndex>::new(); vertex_count];
     for (relation, record) in records.iter().enumerate() {
-        let relation_id = index_from_usize(relation)?;
+        let relation_id = index_from_usize(relation).map_err(map_offset_overflow)?;
         let participants = match role {
             HyperParticipantRole::Source => &record.sources,
             HyperParticipantRole::Target => &record.targets,
@@ -2061,14 +2023,7 @@ where
             buckets[slot].push(relation_id);
         }
     }
-    let mut offsets = Vec::with_capacity(vertex_count + 1);
-    let mut hyperedges = Vec::new();
-    offsets.push(index_from_usize(0)?);
-    for bucket in buckets {
-        hyperedges.extend(bucket);
-        offsets.push(index_from_usize(hyperedges.len())?);
-    }
-    Ok((offsets, hyperedges))
+    build_offset_index::<IncidenceIndex, RelationIndex>(buckets).map_err(map_offset_overflow)
 }
 
 fn build_element_incidence_index<VertexIndex, RelationIndex, IncidenceIndex>(
@@ -2085,83 +2040,38 @@ where
         let slot = vertex
             .to_usize()
             .ok_or(HyperBuildError::IdOverflow { value: usize::MAX })?;
-        buckets[slot].push(index_from_usize(participant)?);
+        buckets[slot].push(index_from_usize(participant).map_err(map_offset_overflow)?);
     }
-    let mut offsets = Vec::with_capacity(vertex_count + 1);
-    let mut incidences = Vec::new();
-    offsets.push(index_from_usize(0)?);
-    for bucket in buckets {
-        incidences.extend(bucket);
-        offsets.push(index_from_usize(incidences.len())?);
-    }
-    Ok((offsets, incidences))
+    build_offset_index::<IncidenceIndex, IncidenceIndex>(buckets).map_err(map_offset_overflow)
 }
 
-fn ensure_vertices<VertexIndex, RelationIndex, IncidenceIndex>(
+fn ensure_vertices<VertexIndex, RelationIndex, IncidenceIndex, I>(
     vertex_count: usize,
-    participants: &[HyperVertexId<VertexIndex>],
+    participants: I,
 ) -> Result<(), HyperBuildError<VertexIndex, RelationIndex, IncidenceIndex>>
 where
     VertexIndex: BuildIndex,
     RelationIndex: BuildIndex,
     IncidenceIndex: BuildIndex,
+    I: IntoIterator<Item = HyperVertexId<VertexIndex>>,
 {
-    for &vertex in participants {
+    for vertex in participants {
         vertex_index_checked(vertex_count, vertex)?;
     }
     Ok(())
 }
 
-fn ensure_weighted_vertices<VertexIndex, RelationIndex, IncidenceIndex, IW>(
-    vertex_count: usize,
-    participants: &[(HyperVertexId<VertexIndex>, IW)],
-) -> Result<(), HyperBuildError<VertexIndex, RelationIndex, IncidenceIndex>>
-where
-    VertexIndex: BuildIndex,
-    RelationIndex: BuildIndex,
-    IncidenceIndex: BuildIndex,
-{
-    for (vertex, _weight) in participants {
-        vertex_index_checked(vertex_count, *vertex)?;
-    }
-    Ok(())
-}
-
-fn ensure_unique_participants<VertexIndex, RelationIndex, IncidenceIndex>(
-    participants: &[HyperVertexId<VertexIndex>],
+fn ensure_unique_participants<VertexIndex, RelationIndex, IncidenceIndex, I>(
+    participants: I,
     role: HyperParticipantRole,
 ) -> Result<(), HyperBuildError<VertexIndex, RelationIndex, IncidenceIndex>>
 where
     VertexIndex: BuildIndex,
     RelationIndex: BuildIndex,
     IncidenceIndex: BuildIndex,
+    I: IntoIterator<Item = HyperVertexId<VertexIndex>>,
 {
-    let mut sorted: Vec<VertexIndex> = participants.iter().map(|vertex| vertex.0).collect();
-    sorted.sort_unstable();
-    for pair in sorted.windows(2) {
-        if pair[0] == pair[1] {
-            return Err(HyperBuildError::DuplicateParticipant {
-                vertex: HyperVertexId(pair[0]),
-                role,
-            });
-        }
-    }
-    Ok(())
-}
-
-fn ensure_unique_weighted_participants<VertexIndex, RelationIndex, IncidenceIndex, IW>(
-    participants: &[(HyperVertexId<VertexIndex>, IW)],
-    role: HyperParticipantRole,
-) -> Result<(), HyperBuildError<VertexIndex, RelationIndex, IncidenceIndex>>
-where
-    VertexIndex: BuildIndex,
-    RelationIndex: BuildIndex,
-    IncidenceIndex: BuildIndex,
-{
-    let mut sorted: Vec<VertexIndex> = participants
-        .iter()
-        .map(|(vertex, _weight)| vertex.0)
-        .collect();
+    let mut sorted: Vec<VertexIndex> = participants.into_iter().map(|vertex| vertex.0).collect();
     sorted.sort_unstable();
     for pair in sorted.windows(2) {
         if pair[0] == pair[1] {
@@ -2183,14 +2093,8 @@ where
     RelationIndex: BuildIndex,
     IncidenceIndex: BuildIndex,
 {
-    let Some(index) = vertex.0.to_usize() else {
-        return Err(HyperBuildError::InvalidVertex { vertex });
-    };
-    if index < vertex_count {
-        Ok(index)
-    } else {
-        Err(HyperBuildError::InvalidVertex { vertex })
-    }
+    id_to_slot::<VertexIndex>(vertex.0, vertex_count)
+        .map_err(|_: IdOutOfBounds| HyperBuildError::InvalidVertex { vertex })
 }
 
 fn hyperedge_index_checked<VertexIndex, RelationIndex, IncidenceIndex>(
@@ -2202,23 +2106,8 @@ where
     RelationIndex: BuildIndex,
     IncidenceIndex: BuildIndex,
 {
-    let Some(index) = hyperedge.0.to_usize() else {
-        return Err(HyperBuildError::InvalidHyperedge { hyperedge });
-    };
-    if index < hyperedge_count {
-        Ok(index)
-    } else {
-        Err(HyperBuildError::InvalidHyperedge { hyperedge })
-    }
-}
-
-fn index_from_usize<Index, VertexIndex, RelationIndex, IncidenceIndex>(
-    value: usize,
-) -> Result<Index, HyperBuildError<VertexIndex, RelationIndex, IncidenceIndex>>
-where
-    Index: BuildIndex,
-{
-    Index::from_usize(value).ok_or(HyperBuildError::IdOverflow { value })
+    id_to_slot::<RelationIndex>(hyperedge.0, hyperedge_count)
+        .map_err(|_: IdOutOfBounds| HyperBuildError::InvalidHyperedge { hyperedge })
 }
 
 #[cfg(feature = "snapshot")]
@@ -2444,20 +2333,22 @@ where
 {
     let mut map = Vec::with_capacity(topology.participant_elements.len());
     for relation in 0..topology.relation_count() {
-        let hyperedge = HyperedgeId(index_from_usize(relation)?);
+        let hyperedge = HyperedgeId(index_from_usize(relation).map_err(map_offset_overflow)?);
         let relation_start = topology.relation_incidence_range(hyperedge).start;
         let head_len = topology.head_range(hyperedge).len();
         for local in 0..head_len {
-            map.push(index_from_usize(relation_start + local)?);
+            map.push(index_from_usize(relation_start + local).map_err(map_offset_overflow)?);
         }
     }
     for relation in 0..topology.relation_count() {
-        let hyperedge = HyperedgeId(index_from_usize(relation)?);
+        let hyperedge = HyperedgeId(index_from_usize(relation).map_err(map_offset_overflow)?);
         let relation_start = topology.relation_incidence_range(hyperedge).start;
         let head_len = topology.head_range(hyperedge).len();
         let tail_len = topology.tail_range(hyperedge).len();
         for local in 0..tail_len {
-            map.push(index_from_usize(relation_start + head_len + local)?);
+            map.push(
+                index_from_usize(relation_start + head_len + local).map_err(map_offset_overflow)?,
+            );
         }
     }
     Ok(map)

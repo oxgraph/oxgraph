@@ -139,12 +139,13 @@ pub mod snapshot {
 pub mod algo {
     pub use oxgraph_algo::{
         BfsEpochScratch, BfsError, BreadthFirstSearchEpochScratch, BreadthFirstSearchScratch,
-        HypergraphPageRankScratch, IntoPageRankScalar, PageRankConfig, PageRankError,
-        PageRankReport, PageRankScalar, PageRankScratch, ReverseBreadthFirstSearchEpochScratch,
-        ReverseBreadthFirstSearchScratch, breadth_first_search_with_epoch_scratch,
-        breadth_first_search_with_scratch, hypergraph_pagerank_weighted_with_scratch,
-        hypergraph_pagerank_with_scratch, pagerank_weighted_with_scratch, pagerank_with_scratch,
-        reverse_breadth_first_search_with_epoch_scratch, reverse_breadth_first_search_with_scratch,
+        HypergraphPageRankScratch, IntoPageRankScalar, OutgoingDistribution, PageRankConfig,
+        PageRankError, PageRankReport, PageRankScalar, PageRankScratch,
+        ReverseBreadthFirstSearchEpochScratch, ReverseBreadthFirstSearchScratch, Uniform, Weighted,
+        breadth_first_search_with_epoch_scratch, breadth_first_search_with_scratch,
+        hypergraph_pagerank_weighted_with_scratch, hypergraph_pagerank_with_scratch,
+        pagerank_graph_with_scratch, reverse_breadth_first_search_with_epoch_scratch,
+        reverse_breadth_first_search_with_scratch,
     };
     #[cfg(feature = "algo-alloc")]
     pub use oxgraph_algo::{
@@ -153,9 +154,9 @@ pub mod algo {
         ReverseBreadthFirstSearch, ReverseBreadthFirstSearchWorkspace, breadth_first_search,
         breadth_first_search_generic, breadth_first_search_with_workspace, hypergraph_pagerank,
         hypergraph_pagerank_weighted, hypergraph_pagerank_weighted_with_workspace,
-        hypergraph_pagerank_with_workspace, pagerank, pagerank_weighted,
-        pagerank_weighted_with_workspace, pagerank_with_workspace, reverse_breadth_first_search,
-        reverse_breadth_first_search_generic, reverse_breadth_first_search_with_workspace,
+        hypergraph_pagerank_with_workspace, pagerank_graph, pagerank_graph_with_workspace,
+        reverse_breadth_first_search, reverse_breadth_first_search_generic,
+        reverse_breadth_first_search_with_workspace,
     };
     #[cfg(feature = "algo-std")]
     pub use oxgraph_algo::{
@@ -172,11 +173,12 @@ pub mod algo {
 #[cfg(feature = "property-arrow")]
 pub mod property {
     pub use oxgraph_property::{
-        DenseElementWeights, DenseIncidenceWeights, DenseRelationWeights, EncodedPropertySnapshot,
-        GraphPropertyLayers, HyperPropertyLayers, IdFamily, IdentityMapMode, IdentityModeRecord,
-        IdentityModeSummary, IdentitySnapshotSummary, LayerId, LayerName, LayerRole, MissingPolicy,
-        PropertyError, PropertyIndex, PropertyLayer, PropertyLayerData, PropertyLayerDescriptor,
-        PropertySnapshotMetaWord, PropertySnapshotRecord, PropertySnapshotSummary,
+        DenseElementWeights, DenseIncidenceWeights, DenseRelationWeights, DenseWeights,
+        ElementAxis, EncodedPropertySnapshot, GraphPropertyLayers, HyperPropertyLayers, IdFamily,
+        IdentityMapMode, IdentityModeRecord, IdentityModeSummary, IdentitySnapshotSummary,
+        IncidenceAxis, LayerId, LayerName, LayerRole, MissingPolicy, PropertyAxis, PropertyError,
+        PropertyIndex, PropertyLayer, PropertyLayerData, PropertyLayerDescriptor,
+        PropertySnapshotMetaWord, PropertySnapshotRecord, PropertySnapshotSummary, RelationAxis,
         SNAPSHOT_KIND_ELEMENT_IDENTITY_MAP_U16, SNAPSHOT_KIND_ELEMENT_IDENTITY_MAP_U32,
         SNAPSHOT_KIND_ELEMENT_IDENTITY_MAP_U64, SNAPSHOT_KIND_IDENTITY_MODES_U16,
         SNAPSHOT_KIND_IDENTITY_MODES_U32, SNAPSHOT_KIND_IDENTITY_MODES_U64,
@@ -187,7 +189,7 @@ pub mod property {
         SNAPSHOT_KIND_PROPERTY_DESCRIPTORS_U64, SNAPSHOT_KIND_RELATION_IDENTITY_MAP_U16,
         SNAPSHOT_KIND_RELATION_IDENTITY_MAP_U32, SNAPSHOT_KIND_RELATION_IDENTITY_MAP_U64,
         SNAPSHOT_PROPERTY_VERSION, SparseElementWeights, SparseIncidenceWeights,
-        SparseRelationWeights, StorageMode, encode_graph_property_snapshot,
+        SparseRelationWeights, SparseWeights, StorageMode, encode_graph_property_snapshot,
         encode_hyper_property_snapshot, encode_property_snapshot, rekey_layer_to_local,
         validate_identity_snapshot, validate_property_sections, validate_property_snapshot,
         validate_unique_layer_ids, validate_unique_names,

@@ -1,0 +1,55 @@
+id: 18
+name: Builder helper consolidation in oxgraph-build-util
+description: Builder helper consolidation in oxgraph-build-util
+targets:
+  shape_ids:
+  - 20
+  - 25
+  - 1
+status: proposed
+version_impact: major
+intent:
+  kind: amendment
+  summary: Move BuildIndex (currently duplicated in oxgraph-graph-build and oxgraph-hyper-build) plus the id_to_slot, index_from_usize, slot_or_max, and build_offset_index primitives into a new oxgraph-build-util workspace crate. Both builders depend on it; their typed errors stay; helpers return small data enums (IdOutOfBounds, OffsetOverflow) that callers map at the boundary.
+  source: human
+  goals: |
+    - Add `crates/oxgraph-build-util` (shape:25) hosting the canonical BuildIndex sealed trait
+      and helper free functions: id_to_slot, slot_or_max, index_from_usize, build_offset_index.
+    - Delete the duplicated BuildIndex definitions in oxgraph-graph-build and oxgraph-hyper-build.
+    - Replace ensure_node / ensure_edge / vertex_index_checked / hyperedge_index_checked,
+      node_slot / edge_slot / vertex_slot / hyperedge_slot / participant_slot, and
+      index_from_usize wrappers in both builders with calls to the shared helpers.
+    - Replace build_vertex_relation_index and build_element_incidence_index in
+      oxgraph-hyper-build with build_offset_index.
+    - Keep both crates' typed error surfaces (GraphBuildError, HyperBuildError) unchanged;
+      callers map the small data enums at the boundary.
+  non_goals: |
+    No public API change to oxgraph-graph-build or oxgraph-hyper-build beyond the
+    relocation of BuildIndex (which they re-export so downstream callers continue to use
+    GraphNodeId/HyperVertexId without code change). No graph-build or hyper-build feature
+    flag changes. No Arrow or snapshot dependency movement. No domain semantics in
+    oxgraph-build-util.
+  rationale: |
+    BuildIndex and the slot/bucketing helpers are currently duplicated byte-for-byte
+    between the two builder crates. shape:2 (topology substrate) explicitly excludes
+    builders, so the canonical home cannot be oxgraph-topology. A small dedicated utility
+    crate keeps the dedup honest, gives the bucketing primitive (build_offset_index) a
+    single kani-provable algebraic contract, and matches the cleanup pattern established
+    by amendment 16 (shared layout-owned snapshot word conversion).
+realization:
+- bindings:
+  - scheme: path
+    value: crates/oxgraph-build-util
+    metadata:
+      summary: New crate hosting BuildIndex + helper functions + typed data enums.
+  - scheme: path
+    value: crates/oxgraph-graph-build/src/lib.rs
+    metadata:
+      summary: BuildIndex deleted; ensure_node / ensure_edge / node_slot / edge_slot replaced with oxgraph_build_util helpers; freeze_topology bucketing migrated to build_offset_index where the patterns align.
+  - scheme: path
+    value: crates/oxgraph-hyper-build/src/lib.rs
+    metadata:
+      summary: BuildIndex deleted; vertex_index_checked / hyperedge_index_checked / vertex_slot / hyperedge_slot / participant_slot / index_from_usize replaced with oxgraph_build_util helpers; build_vertex_relation_index / build_element_incidence_index replaced with build_offset_index.
+  role: primary
+initiated_by:
+  type: human

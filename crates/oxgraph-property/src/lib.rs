@@ -182,6 +182,9 @@ mod sealed {
 
     /// Seals [`super::PropertySnapshotMetaWord`] to supported metadata widths.
     pub trait PropertySnapshotMetaWord {}
+
+    /// Seals [`super::PropertyAxis`] to the three built-in axis markers.
+    pub trait PropertyAxis {}
 }
 
 /// Unsigned index width usable for sparse property indexes.
@@ -1105,14 +1108,84 @@ where
     pub incidence: &'view [PropertyLayer<Id, IncidenceIndex>],
 }
 
-/// Selected dense primitive element weights for a topology view.
+/// Marker trait selecting which axis of a topology view a property layer
+/// keys against (elements, relations, or incidences).
+///
+/// Built-in axis markers — [`ElementAxis`], [`RelationAxis`], [`IncidenceAxis`]
+/// — opt into the corresponding [`*Index`] topology trait when paired with
+/// [`DenseWeights`] or [`SparseWeights`] storage. The trait itself only
+/// reports the layer's [`IdFamily`]; per-axis topology accessors live in
+/// inherent impls on each storage type for each axis marker.
+///
+/// # Performance
+///
+/// `perf: unspecified`; this is a metadata trait.
+pub trait PropertyAxis: sealed::PropertyAxis {
+    /// Returns the [`IdFamily`] this axis selects from a property layer.
+    ///
+    /// # Performance
+    ///
+    /// This function is `O(1)`.
+    fn id_family() -> IdFamily;
+}
+
+/// Element-keyed axis marker.
+///
+/// # Performance
+///
+/// Copying and debug-formatting are `O(1)`.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ElementAxis;
+
+impl sealed::PropertyAxis for ElementAxis {}
+impl PropertyAxis for ElementAxis {
+    fn id_family() -> IdFamily {
+        IdFamily::Element
+    }
+}
+
+/// Relation-keyed axis marker.
+///
+/// # Performance
+///
+/// Copying and debug-formatting are `O(1)`.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct RelationAxis;
+
+impl sealed::PropertyAxis for RelationAxis {}
+impl PropertyAxis for RelationAxis {
+    fn id_family() -> IdFamily {
+        IdFamily::Relation
+    }
+}
+
+/// Incidence-keyed axis marker.
+///
+/// # Performance
+///
+/// Copying and debug-formatting are `O(1)`.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct IncidenceAxis;
+
+impl sealed::PropertyAxis for IncidenceAxis {}
+impl PropertyAxis for IncidenceAxis {
+    fn id_family() -> IdFamily {
+        IdFamily::Incidence
+    }
+}
+
+/// Selected dense primitive weights bound to one axis of a topology view.
+///
+/// `A` is one of [`ElementAxis`], [`RelationAxis`], or [`IncidenceAxis`].
+/// The friendly aliases [`DenseElementWeights`], [`DenseRelationWeights`],
+/// and [`DenseIncidenceWeights`] preserve ergonomic call-site names.
 ///
 /// # Performance
 ///
 /// Weight lookup is `O(1)`.
-pub struct DenseElementWeights<'view, T, Id, I, P>
+pub struct DenseWeights<'view, A, T, Id, I, P>
 where
-    T: ElementIndex,
+    A: PropertyAxis,
     I: PropertyIndex,
     P: ArrowPrimitiveType,
 {
@@ -1120,11 +1193,11 @@ where
     topology: &'view T,
     /// Primitive values.
     values: &'view PrimitiveArray<P>,
-    /// Property ID/index marker.
-    property: core::marker::PhantomData<(Id, I)>,
+    /// Property axis, ID, and index marker.
+    property: core::marker::PhantomData<(A, Id, I)>,
 }
 
-impl<'view, T, Id, I, P> DenseElementWeights<'view, T, Id, I, P>
+impl<'view, T, Id, I, P> DenseWeights<'view, ElementAxis, T, Id, I, P>
 where
     T: ElementIndex,
     I: PropertyIndex,
@@ -1146,7 +1219,7 @@ where
     ) -> Result<Self, PropertyError> {
         let values = validate_dense_primitive_selection::<Id, I, P>(
             layer,
-            IdFamily::Element,
+            <ElementAxis as PropertyAxis>::id_family(),
             topology.element_bound(),
         )?;
         Ok(Self {
@@ -1157,50 +1230,7 @@ where
     }
 }
 
-impl<T, Id, I, P> TopologyBase for DenseElementWeights<'_, T, Id, I, P>
-where
-    T: ElementIndex,
-    I: PropertyIndex,
-    P: ArrowPrimitiveType,
-{
-    type ElementId = T::ElementId;
-    type RelationId = T::RelationId;
-}
-
-impl<T, Id, I, P> ElementWeight for DenseElementWeights<'_, T, Id, I, P>
-where
-    T: ElementIndex,
-    I: PropertyIndex,
-    P: ArrowPrimitiveType,
-    P::Native: Copy,
-{
-    type Weight = P::Native;
-
-    fn element_weight(&self, element: Self::ElementId) -> Self::Weight {
-        self.values.value(self.topology.element_index(element))
-    }
-}
-
-/// Selected dense primitive relation weights for a topology view.
-///
-/// # Performance
-///
-/// Weight lookup is `O(1)`.
-pub struct DenseRelationWeights<'view, T, Id, I, P>
-where
-    T: RelationIndex,
-    I: PropertyIndex,
-    P: ArrowPrimitiveType,
-{
-    /// Topology view that supplies ID-to-index mapping.
-    topology: &'view T,
-    /// Primitive values.
-    values: &'view PrimitiveArray<P>,
-    /// Property ID/index marker.
-    property: core::marker::PhantomData<(Id, I)>,
-}
-
-impl<'view, T, Id, I, P> DenseRelationWeights<'view, T, Id, I, P>
+impl<'view, T, Id, I, P> DenseWeights<'view, RelationAxis, T, Id, I, P>
 where
     T: RelationIndex,
     I: PropertyIndex,
@@ -1221,7 +1251,7 @@ where
     ) -> Result<Self, PropertyError> {
         let values = validate_dense_primitive_selection::<Id, I, P>(
             layer,
-            IdFamily::Relation,
+            <RelationAxis as PropertyAxis>::id_family(),
             topology.relation_bound(),
         )?;
         Ok(Self {
@@ -1232,50 +1262,7 @@ where
     }
 }
 
-impl<T, Id, I, P> TopologyBase for DenseRelationWeights<'_, T, Id, I, P>
-where
-    T: RelationIndex,
-    I: PropertyIndex,
-    P: ArrowPrimitiveType,
-{
-    type ElementId = T::ElementId;
-    type RelationId = T::RelationId;
-}
-
-impl<T, Id, I, P> RelationWeight for DenseRelationWeights<'_, T, Id, I, P>
-where
-    T: RelationIndex,
-    I: PropertyIndex,
-    P: ArrowPrimitiveType,
-    P::Native: Copy,
-{
-    type Weight = P::Native;
-
-    fn relation_weight(&self, relation: Self::RelationId) -> Self::Weight {
-        self.values.value(self.topology.relation_index(relation))
-    }
-}
-
-/// Selected dense primitive incidence weights for an incidence topology view.
-///
-/// # Performance
-///
-/// Weight lookup is `O(1)`.
-pub struct DenseIncidenceWeights<'view, T, Id, I, P>
-where
-    T: IncidenceIndex,
-    I: PropertyIndex,
-    P: ArrowPrimitiveType,
-{
-    /// Topology view that supplies ID-to-index mapping.
-    topology: &'view T,
-    /// Primitive values.
-    values: &'view PrimitiveArray<P>,
-    /// Property ID/index marker.
-    property: core::marker::PhantomData<(Id, I)>,
-}
-
-impl<'view, T, Id, I, P> DenseIncidenceWeights<'view, T, Id, I, P>
+impl<'view, T, Id, I, P> DenseWeights<'view, IncidenceAxis, T, Id, I, P>
 where
     T: IncidenceIndex,
     I: PropertyIndex,
@@ -1296,7 +1283,7 @@ where
     ) -> Result<Self, PropertyError> {
         let values = validate_dense_primitive_selection::<Id, I, P>(
             layer,
-            IdFamily::Incidence,
+            <IncidenceAxis as PropertyAxis>::id_family(),
             topology.incidence_bound(),
         )?;
         Ok(Self {
@@ -1307,7 +1294,55 @@ where
     }
 }
 
-impl<T, Id, I, P> TopologyBase for DenseIncidenceWeights<'_, T, Id, I, P>
+impl<T, Id, I, P> TopologyBase for DenseWeights<'_, ElementAxis, T, Id, I, P>
+where
+    T: ElementIndex,
+    I: PropertyIndex,
+    P: ArrowPrimitiveType,
+{
+    type ElementId = T::ElementId;
+    type RelationId = T::RelationId;
+}
+
+impl<T, Id, I, P> ElementWeight for DenseWeights<'_, ElementAxis, T, Id, I, P>
+where
+    T: ElementIndex,
+    I: PropertyIndex,
+    P: ArrowPrimitiveType,
+    P::Native: Copy,
+{
+    type Weight = P::Native;
+
+    fn element_weight(&self, element: Self::ElementId) -> Self::Weight {
+        self.values.value(self.topology.element_index(element))
+    }
+}
+
+impl<T, Id, I, P> TopologyBase for DenseWeights<'_, RelationAxis, T, Id, I, P>
+where
+    T: RelationIndex,
+    I: PropertyIndex,
+    P: ArrowPrimitiveType,
+{
+    type ElementId = T::ElementId;
+    type RelationId = T::RelationId;
+}
+
+impl<T, Id, I, P> RelationWeight for DenseWeights<'_, RelationAxis, T, Id, I, P>
+where
+    T: RelationIndex,
+    I: PropertyIndex,
+    P: ArrowPrimitiveType,
+    P::Native: Copy,
+{
+    type Weight = P::Native;
+
+    fn relation_weight(&self, relation: Self::RelationId) -> Self::Weight {
+        self.values.value(self.topology.relation_index(relation))
+    }
+}
+
+impl<T, Id, I, P> TopologyBase for DenseWeights<'_, IncidenceAxis, T, Id, I, P>
 where
     T: IncidenceIndex,
     I: PropertyIndex,
@@ -1317,7 +1352,7 @@ where
     type RelationId = T::RelationId;
 }
 
-impl<T, Id, I, P> IncidenceBase for DenseIncidenceWeights<'_, T, Id, I, P>
+impl<T, Id, I, P> IncidenceBase for DenseWeights<'_, IncidenceAxis, T, Id, I, P>
 where
     T: IncidenceIndex,
     I: PropertyIndex,
@@ -1327,7 +1362,7 @@ where
     type Role = T::Role;
 }
 
-impl<T, Id, I, P> IncidenceWeight for DenseIncidenceWeights<'_, T, Id, I, P>
+impl<T, Id, I, P> IncidenceWeight for DenseWeights<'_, IncidenceAxis, T, Id, I, P>
 where
     T: IncidenceIndex,
     I: PropertyIndex,
@@ -1341,14 +1376,28 @@ where
     }
 }
 
-/// Selected sparse primitive element weights for a topology view.
+/// Friendly alias for element-keyed dense weights.
+pub type DenseElementWeights<'view, T, Id, I, P> = DenseWeights<'view, ElementAxis, T, Id, I, P>;
+
+/// Friendly alias for relation-keyed dense weights.
+pub type DenseRelationWeights<'view, T, Id, I, P> = DenseWeights<'view, RelationAxis, T, Id, I, P>;
+
+/// Friendly alias for incidence-keyed dense weights.
+pub type DenseIncidenceWeights<'view, T, Id, I, P> =
+    DenseWeights<'view, IncidenceAxis, T, Id, I, P>;
+
+/// Selected sparse primitive weights bound to one axis of a topology view.
+///
+/// `A` is one of [`ElementAxis`], [`RelationAxis`], or [`IncidenceAxis`].
+/// The friendly aliases [`SparseElementWeights`], [`SparseRelationWeights`],
+/// and [`SparseIncidenceWeights`] preserve ergonomic call-site names.
 ///
 /// # Performance
 ///
 /// Weight lookup is `O(log k)` for `k` explicitly stored values.
-pub struct SparseElementWeights<'view, T, Id, I, P>
+pub struct SparseWeights<'view, A, T, Id, I, P>
 where
-    T: ElementIndex,
+    A: PropertyAxis,
     I: PropertyIndex,
     P: ArrowPrimitiveType,
 {
@@ -1360,11 +1409,11 @@ where
     values: &'view PrimitiveArray<P>,
     /// Totalizing default value.
     default: P::Native,
-    /// Property ID marker.
-    property: core::marker::PhantomData<Id>,
+    /// Property axis and ID marker.
+    property: core::marker::PhantomData<(A, Id)>,
 }
 
-impl<'view, T, Id, I, P> SparseElementWeights<'view, T, Id, I, P>
+impl<'view, T, Id, I, P> SparseWeights<'view, ElementAxis, T, Id, I, P>
 where
     T: ElementIndex,
     I: PropertyIndex,
@@ -1386,7 +1435,7 @@ where
     ) -> Result<Self, PropertyError> {
         let (indices, values, default) = validate_sparse_primitive_selection::<I, P, Id>(
             layer,
-            IdFamily::Element,
+            <ElementAxis as PropertyAxis>::id_family(),
             topology.element_bound(),
         )?;
         Ok(Self {
@@ -1399,59 +1448,7 @@ where
     }
 }
 
-impl<T, Id, I, P> TopologyBase for SparseElementWeights<'_, T, Id, I, P>
-where
-    T: ElementIndex,
-    I: PropertyIndex,
-    P: ArrowPrimitiveType,
-{
-    type ElementId = T::ElementId;
-    type RelationId = T::RelationId;
-}
-
-impl<T, Id, I, P> ElementWeight for SparseElementWeights<'_, T, Id, I, P>
-where
-    T: ElementIndex,
-    I: PropertyIndex,
-    P: ArrowPrimitiveType,
-    P::Native: Copy,
-{
-    type Weight = P::Native;
-
-    fn element_weight(&self, element: Self::ElementId) -> Self::Weight {
-        sparse_value::<I, P>(
-            self.indices,
-            self.values,
-            self.default,
-            self.topology.element_index(element),
-        )
-    }
-}
-
-/// Selected sparse primitive relation weights for a topology view.
-///
-/// # Performance
-///
-/// Weight lookup is `O(log k)` for `k` explicitly stored values.
-pub struct SparseRelationWeights<'view, T, Id, I, P>
-where
-    T: RelationIndex,
-    I: PropertyIndex,
-    P: ArrowPrimitiveType,
-{
-    /// Topology view that supplies ID-to-index mapping.
-    topology: &'view T,
-    /// Sparse indexes.
-    indices: &'view PrimitiveArray<I::ArrowType>,
-    /// Sparse values.
-    values: &'view PrimitiveArray<P>,
-    /// Totalizing default value.
-    default: P::Native,
-    /// Property ID marker.
-    property: core::marker::PhantomData<Id>,
-}
-
-impl<'view, T, Id, I, P> SparseRelationWeights<'view, T, Id, I, P>
+impl<'view, T, Id, I, P> SparseWeights<'view, RelationAxis, T, Id, I, P>
 where
     T: RelationIndex,
     I: PropertyIndex,
@@ -1473,7 +1470,7 @@ where
     ) -> Result<Self, PropertyError> {
         let (indices, values, default) = validate_sparse_primitive_selection::<I, P, Id>(
             layer,
-            IdFamily::Relation,
+            <RelationAxis as PropertyAxis>::id_family(),
             topology.relation_bound(),
         )?;
         Ok(Self {
@@ -1486,59 +1483,7 @@ where
     }
 }
 
-impl<T, Id, I, P> TopologyBase for SparseRelationWeights<'_, T, Id, I, P>
-where
-    T: RelationIndex,
-    I: PropertyIndex,
-    P: ArrowPrimitiveType,
-{
-    type ElementId = T::ElementId;
-    type RelationId = T::RelationId;
-}
-
-impl<T, Id, I, P> RelationWeight for SparseRelationWeights<'_, T, Id, I, P>
-where
-    T: RelationIndex,
-    I: PropertyIndex,
-    P: ArrowPrimitiveType,
-    P::Native: Copy,
-{
-    type Weight = P::Native;
-
-    fn relation_weight(&self, relation: Self::RelationId) -> Self::Weight {
-        sparse_value::<I, P>(
-            self.indices,
-            self.values,
-            self.default,
-            self.topology.relation_index(relation),
-        )
-    }
-}
-
-/// Selected sparse primitive incidence weights for an incidence topology view.
-///
-/// # Performance
-///
-/// Weight lookup is `O(log k)` for `k` explicitly stored values.
-pub struct SparseIncidenceWeights<'view, T, Id, I, P>
-where
-    T: IncidenceIndex,
-    I: PropertyIndex,
-    P: ArrowPrimitiveType,
-{
-    /// Topology view that supplies ID-to-index mapping.
-    topology: &'view T,
-    /// Sparse indexes.
-    indices: &'view PrimitiveArray<I::ArrowType>,
-    /// Sparse values.
-    values: &'view PrimitiveArray<P>,
-    /// Totalizing default value.
-    default: P::Native,
-    /// Property ID marker.
-    property: core::marker::PhantomData<Id>,
-}
-
-impl<'view, T, Id, I, P> SparseIncidenceWeights<'view, T, Id, I, P>
+impl<'view, T, Id, I, P> SparseWeights<'view, IncidenceAxis, T, Id, I, P>
 where
     T: IncidenceIndex,
     I: PropertyIndex,
@@ -1560,7 +1505,7 @@ where
     ) -> Result<Self, PropertyError> {
         let (indices, values, default) = validate_sparse_primitive_selection::<I, P, Id>(
             layer,
-            IdFamily::Incidence,
+            <IncidenceAxis as PropertyAxis>::id_family(),
             topology.incidence_bound(),
         )?;
         Ok(Self {
@@ -1573,7 +1518,65 @@ where
     }
 }
 
-impl<T, Id, I, P> TopologyBase for SparseIncidenceWeights<'_, T, Id, I, P>
+impl<T, Id, I, P> TopologyBase for SparseWeights<'_, ElementAxis, T, Id, I, P>
+where
+    T: ElementIndex,
+    I: PropertyIndex,
+    P: ArrowPrimitiveType,
+{
+    type ElementId = T::ElementId;
+    type RelationId = T::RelationId;
+}
+
+impl<T, Id, I, P> ElementWeight for SparseWeights<'_, ElementAxis, T, Id, I, P>
+where
+    T: ElementIndex,
+    I: PropertyIndex,
+    P: ArrowPrimitiveType,
+    P::Native: Copy,
+{
+    type Weight = P::Native;
+
+    fn element_weight(&self, element: Self::ElementId) -> Self::Weight {
+        sparse_value::<I, P>(
+            self.indices,
+            self.values,
+            self.default,
+            self.topology.element_index(element),
+        )
+    }
+}
+
+impl<T, Id, I, P> TopologyBase for SparseWeights<'_, RelationAxis, T, Id, I, P>
+where
+    T: RelationIndex,
+    I: PropertyIndex,
+    P: ArrowPrimitiveType,
+{
+    type ElementId = T::ElementId;
+    type RelationId = T::RelationId;
+}
+
+impl<T, Id, I, P> RelationWeight for SparseWeights<'_, RelationAxis, T, Id, I, P>
+where
+    T: RelationIndex,
+    I: PropertyIndex,
+    P: ArrowPrimitiveType,
+    P::Native: Copy,
+{
+    type Weight = P::Native;
+
+    fn relation_weight(&self, relation: Self::RelationId) -> Self::Weight {
+        sparse_value::<I, P>(
+            self.indices,
+            self.values,
+            self.default,
+            self.topology.relation_index(relation),
+        )
+    }
+}
+
+impl<T, Id, I, P> TopologyBase for SparseWeights<'_, IncidenceAxis, T, Id, I, P>
 where
     T: IncidenceIndex,
     I: PropertyIndex,
@@ -1583,7 +1586,7 @@ where
     type RelationId = T::RelationId;
 }
 
-impl<T, Id, I, P> IncidenceBase for SparseIncidenceWeights<'_, T, Id, I, P>
+impl<T, Id, I, P> IncidenceBase for SparseWeights<'_, IncidenceAxis, T, Id, I, P>
 where
     T: IncidenceIndex,
     I: PropertyIndex,
@@ -1593,7 +1596,7 @@ where
     type Role = T::Role;
 }
 
-impl<T, Id, I, P> IncidenceWeight for SparseIncidenceWeights<'_, T, Id, I, P>
+impl<T, Id, I, P> IncidenceWeight for SparseWeights<'_, IncidenceAxis, T, Id, I, P>
 where
     T: IncidenceIndex,
     I: PropertyIndex,
@@ -1611,6 +1614,17 @@ where
         )
     }
 }
+
+/// Friendly alias for element-keyed sparse weights.
+pub type SparseElementWeights<'view, T, Id, I, P> = SparseWeights<'view, ElementAxis, T, Id, I, P>;
+
+/// Friendly alias for relation-keyed sparse weights.
+pub type SparseRelationWeights<'view, T, Id, I, P> =
+    SparseWeights<'view, RelationAxis, T, Id, I, P>;
+
+/// Friendly alias for incidence-keyed sparse weights.
+pub type SparseIncidenceWeights<'view, T, Id, I, P> =
+    SparseWeights<'view, IncidenceAxis, T, Id, I, P>;
 
 /// Validates that layer names are unique within each ID-family namespace.
 ///
