@@ -47,7 +47,7 @@ python-ci: python-build python-test python-unsafe-check
 # --- benches, miri, kani ---
 
 bench:
-    cargo bench --workspace
+    cargo bench --workspace --all-features
 
 miri:
     cargo +nightly miri test --workspace

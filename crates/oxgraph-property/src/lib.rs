@@ -1176,9 +1176,8 @@ impl PropertyAxis for IncidenceAxis {
 
 /// Selected dense primitive weights bound to one axis of a topology view.
 ///
-/// `A` is one of [`ElementAxis`], [`RelationAxis`], or [`IncidenceAxis`].
-/// The friendly aliases [`DenseElementWeights`], [`DenseRelationWeights`],
-/// and [`DenseIncidenceWeights`] preserve ergonomic call-site names.
+/// `A` is one of [`ElementAxis`], [`RelationAxis`], or [`IncidenceAxis`];
+/// the per-axis `new` constructor selects the right topology bound.
 ///
 /// # Performance
 ///
@@ -1376,21 +1375,10 @@ where
     }
 }
 
-/// Friendly alias for element-keyed dense weights.
-pub type DenseElementWeights<'view, T, Id, I, P> = DenseWeights<'view, ElementAxis, T, Id, I, P>;
-
-/// Friendly alias for relation-keyed dense weights.
-pub type DenseRelationWeights<'view, T, Id, I, P> = DenseWeights<'view, RelationAxis, T, Id, I, P>;
-
-/// Friendly alias for incidence-keyed dense weights.
-pub type DenseIncidenceWeights<'view, T, Id, I, P> =
-    DenseWeights<'view, IncidenceAxis, T, Id, I, P>;
-
 /// Selected sparse primitive weights bound to one axis of a topology view.
 ///
-/// `A` is one of [`ElementAxis`], [`RelationAxis`], or [`IncidenceAxis`].
-/// The friendly aliases [`SparseElementWeights`], [`SparseRelationWeights`],
-/// and [`SparseIncidenceWeights`] preserve ergonomic call-site names.
+/// `A` is one of [`ElementAxis`], [`RelationAxis`], or [`IncidenceAxis`];
+/// the per-axis `new` constructor selects the right topology bound.
 ///
 /// # Performance
 ///
@@ -1614,17 +1602,6 @@ where
         )
     }
 }
-
-/// Friendly alias for element-keyed sparse weights.
-pub type SparseElementWeights<'view, T, Id, I, P> = SparseWeights<'view, ElementAxis, T, Id, I, P>;
-
-/// Friendly alias for relation-keyed sparse weights.
-pub type SparseRelationWeights<'view, T, Id, I, P> =
-    SparseWeights<'view, RelationAxis, T, Id, I, P>;
-
-/// Friendly alias for incidence-keyed sparse weights.
-pub type SparseIncidenceWeights<'view, T, Id, I, P> =
-    SparseWeights<'view, IncidenceAxis, T, Id, I, P>;
 
 /// Validates that layer names are unique within each ID-family namespace.
 ///
@@ -3579,7 +3556,8 @@ mod tests {
         )?;
         let layer =
             PropertyLayer::try_new_dense(descriptor, Arc::new(Int32Array::from(vec![2, 7])))?;
-        let selected = DenseRelationWeights::<_, u32, u32, Int32Type>::new(&Topology, &layer)?;
+        let selected =
+            DenseWeights::<RelationAxis, _, u32, u32, Int32Type>::new(&Topology, &layer)?;
         assert_eq!(selected.relation_weight(1), 7);
         Ok(())
     }
@@ -3604,7 +3582,8 @@ mod tests {
             Arc::new(Float32Array::from(vec![3.5_f32])),
             Some(Arc::new(Float32Array::from(vec![1.25_f32]))),
         )?;
-        let selected = SparseRelationWeights::<_, u32, u32, Float32Type>::new(&Topology, &layer)?;
+        let selected =
+            SparseWeights::<RelationAxis, _, u32, u32, Float32Type>::new(&Topology, &layer)?;
         assert!((selected.relation_weight(0) - 1.25).abs() < f32::EPSILON);
         assert!((selected.relation_weight(1) - 3.5).abs() < f32::EPSILON);
         Ok(())
@@ -3687,7 +3666,7 @@ mod tests {
         )?;
 
         assert!(matches!(
-            SparseRelationWeights::<_, u32, u32, Float32Type>::new(&Topology, &layer),
+            SparseWeights::<RelationAxis, _, u32, u32, Float32Type>::new(&Topology, &layer),
             Err(PropertyError::UnexpectedNull { index: 1 })
         ));
         Ok(())

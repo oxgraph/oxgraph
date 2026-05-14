@@ -41,7 +41,7 @@ realization:
   - scheme: path
     value: crates/oxgraph-property/src/lib.rs
     metadata:
-      summary: Public property descriptors, layer validation errors, generic Arrow-backed dense/sparse layers, and selected weight adapters. Weight adapters are unified into DenseWeights / SparseWeights parameterized by a PropertyAxis marker (ElementAxis / RelationAxis / IncidenceAxis); friendly aliases preserve the prior names.
+      summary: Public property descriptors, layer validation errors, generic Arrow-backed dense/sparse layers, and selected weight adapters. Weight adapters are unified into DenseWeights / SparseWeights parameterized by a PropertyAxis marker (ElementAxis / RelationAxis / IncidenceAxis); call sites spell out the axis explicitly (no compat aliases).
   role: primary
 amendment_log:
 - 9
@@ -49,6 +49,7 @@ amendment_log:
 - 12
 - 17
 - 21
+- 23
 parents:
 - id: 1
   role: component

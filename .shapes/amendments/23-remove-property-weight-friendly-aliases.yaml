@@ -1,0 +1,51 @@
+id: 23
+name: Remove property weight friendly aliases
+description: Remove property weight friendly aliases
+targets:
+  shape_ids:
+  - 19
+status: proposed
+version_impact: major
+intent:
+  kind: amendment
+  summary: Delete the six DenseElementWeights / DenseRelationWeights / DenseIncidenceWeights / SparseElementWeights / SparseRelationWeights / SparseIncidenceWeights type aliases introduced by amendment 21 to preserve the prior names. Call sites spell out the axis explicitly via DenseWeights<Axis, ...> / SparseWeights<Axis, ...>. Greenfield rule disallows backwards-compat aliases; the generic types and their per-axis inherent constructors are the single canonical surface.
+  source: human
+  goals: |
+    - Delete `DenseElementWeights`, `DenseRelationWeights`, `DenseIncidenceWeights`,
+      `SparseElementWeights`, `SparseRelationWeights`, `SparseIncidenceWeights` from
+      `oxgraph-property` and the umbrella facade re-exports.
+    - Rewrite call sites in `oxgraph-property/src/lib.rs`, `oxgraph-property/tests/proptest.rs`,
+      and `oxgraph-property/benches/property.rs` to use `DenseWeights<RelationAxis, _, ...>` /
+      `SparseWeights<RelationAxis, _, ...>` directly. Add the relevant axis marker to imports.
+  non_goals: |
+    No change to `DenseWeights<'view, A, T, Id, I, P>` or `SparseWeights<'view, A, T, Id, I, P>`
+    shapes, no change to `PropertyAxis` markers, no change to per-axis `new` constructors or
+    per-axis output trait impls. Snapshot encode/decode helpers and property descriptors are
+    unchanged.
+  rationale: |
+    The friendly aliases were introduced by amendment 21 to "preserve ergonomic call-site names"
+    after the per-axis weight adapter types were collapsed into one generic per storage kind.
+    On a greenfield branch we do not keep two names for the same type; the explicit
+    `DenseWeights<RelationAxis, ...>` form is short enough at call sites and removes the alias
+    forest from the public surface.
+realization:
+- bindings:
+  - scheme: path
+    value: crates/oxgraph-property/src/lib.rs
+    metadata:
+      summary: Deletes the six friendly aliases and their doc references; in-file unit-test call sites use DenseWeights / SparseWeights with explicit axis markers.
+  - scheme: path
+    value: crates/oxgraph-property/tests/proptest.rs
+    metadata:
+      summary: Imports RelationAxis and SparseWeights; rewrites the sparse-weight construction to use SparseWeights::<RelationAxis, _, ...>::new.
+  - scheme: path
+    value: crates/oxgraph-property/benches/property.rs
+    metadata:
+      summary: Imports RelationAxis, DenseWeights, and SparseWeights; rewrites bench call sites to DenseWeights::<RelationAxis, _, ...> and SparseWeights::<RelationAxis, _, ...>.
+  - scheme: path
+    value: crates/oxgraph/src/lib.rs
+    metadata:
+      summary: Umbrella property facade drops the six alias re-exports; keeps DenseWeights, SparseWeights, and the axis markers.
+  role: primary
+initiated_by:
+  type: human

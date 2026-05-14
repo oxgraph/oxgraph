@@ -75,14 +75,13 @@ pub use bfs::{
     reverse_breadth_first_search_generic_hash,
 };
 pub use pagerank::{
-    HypergraphPageRankScratch, IntoPageRankScalar, OutgoingDistribution, PageRankConfig,
-    PageRankError, PageRankReport, PageRankScalar, PageRankScratch, Uniform, Weighted,
-    hypergraph_pagerank_weighted_with_scratch, hypergraph_pagerank_with_scratch,
-    pagerank_graph_with_scratch,
+    HyperWeighted, HypergraphOutgoingDistribution, HypergraphPageRankScratch, IntoPageRankScalar,
+    OutgoingDistribution, PageRankConfig, PageRankError, PageRankReport, PageRankScalar,
+    PageRankScratch, Uniform, Weighted, pagerank_graph_with_scratch,
+    pagerank_hypergraph_with_scratch,
 };
 #[cfg(feature = "alloc")]
 pub use pagerank::{
-    HypergraphPageRankWorkspace, PageRankWorkspace, hypergraph_pagerank,
-    hypergraph_pagerank_weighted, hypergraph_pagerank_weighted_with_workspace,
-    hypergraph_pagerank_with_workspace, pagerank_graph, pagerank_graph_with_workspace,
+    HypergraphPageRankWorkspace, PageRankWorkspace, pagerank_graph, pagerank_graph_with_workspace,
+    pagerank_hypergraph, pagerank_hypergraph_with_workspace,
 };

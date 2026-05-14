@@ -23,8 +23,8 @@
 use std::{collections::BTreeMap, fmt, vec::Vec};
 
 use oxgraph_algo::{
-    PageRankConfig, PageRankError, Uniform, Weighted, breadth_first_search, hypergraph_pagerank,
-    hypergraph_pagerank_weighted, pagerank_graph,
+    HyperWeighted, PageRankConfig, PageRankError, Uniform, Weighted, breadth_first_search,
+    pagerank_graph, pagerank_hypergraph,
 };
 use oxgraph_csr::CsrSnapshotGraph;
 use oxgraph_graph::{EdgeEndpointGraph, GraphCounts, OutgoingGraph};
@@ -750,8 +750,9 @@ impl PyFrozenHypergraph {
         let relations = hyper_relations(&self.inner);
         let mut element_ranks = vec![0.0; self.inner.vertex_count()];
         let mut relation_ranks = vec![0.0; self.inner.hyperedge_count()];
-        hypergraph_pagerank(
+        pagerank_hypergraph(
             &self.inner,
+            &Uniform,
             elements,
             relations,
             pagerank_config(damping, tolerance, max_iterations),
@@ -776,10 +777,9 @@ impl PyFrozenHypergraph {
         let relations = hyper_relations(&self.inner);
         let mut element_ranks = vec![0.0; self.inner.vertex_count()];
         let mut relation_ranks = vec![0.0; self.inner.hyperedge_count()];
-        hypergraph_pagerank_weighted(
+        pagerank_hypergraph(
             &self.inner,
-            &self.inner,
-            &self.inner,
+            &HyperWeighted::new(&self.inner, &self.inner),
             elements,
             relations,
             pagerank_config(damping, tolerance, max_iterations),

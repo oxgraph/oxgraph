@@ -6,8 +6,8 @@ use arrow_array::{Float32Array, UInt64Array, types::Float32Type};
 use arrow_schema::{DataType, Field};
 use criterion::{Criterion, criterion_group, criterion_main};
 use oxgraph_property::{
-    DenseRelationWeights, IdFamily, LayerId, LayerRole, MissingPolicy, PropertyLayer,
-    PropertyLayerDescriptor, SparseRelationWeights, StorageMode,
+    DenseWeights, IdFamily, LayerId, LayerRole, MissingPolicy, PropertyLayer,
+    PropertyLayerDescriptor, RelationAxis, SparseWeights, StorageMode,
 };
 use oxgraph_topology::{RelationIndex, RelationWeight, TopologyBase};
 
@@ -75,8 +75,9 @@ fn property_lookup(c: &mut Criterion) {
     ));
     let dense = PropertyLayer::try_new_dense(dense_descriptor, dense_values)
         .unwrap_or_else(|error| panic!("benchmark layer should be valid: {error}"));
-    let dense_weights = DenseRelationWeights::<_, u64, u64, Float32Type>::new(&topology, &dense)
-        .unwrap_or_else(|error| panic!("benchmark selection should be valid: {error}"));
+    let dense_weights =
+        DenseWeights::<RelationAxis, _, u64, u64, Float32Type>::new(&topology, &dense)
+            .unwrap_or_else(|error| panic!("benchmark selection should be valid: {error}"));
 
     let sparse_descriptor = PropertyLayerDescriptor::try_new(
         LayerId(2_u64),
@@ -101,8 +102,9 @@ fn property_lookup(c: &mut Criterion) {
         Some(Arc::new(Float32Array::from(vec![1.0_f32]))),
     )
     .unwrap_or_else(|error| panic!("benchmark sparse layer should be valid: {error}"));
-    let sparse_weights = SparseRelationWeights::<_, u64, u64, Float32Type>::new(&topology, &sparse)
-        .unwrap_or_else(|error| panic!("benchmark sparse selection should be valid: {error}"));
+    let sparse_weights =
+        SparseWeights::<RelationAxis, _, u64, u64, Float32Type>::new(&topology, &sparse)
+            .unwrap_or_else(|error| panic!("benchmark sparse selection should be valid: {error}"));
 
     c.bench_function("dense_relation_weight_lookup_f32", |b| {
         b.iter(|| {

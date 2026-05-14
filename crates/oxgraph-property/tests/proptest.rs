@@ -6,7 +6,7 @@ use arrow_array::{Float32Array, Int32Array, UInt32Array, types::Float32Type};
 use arrow_schema::{DataType, Field};
 use oxgraph_property::{
     IdFamily, LayerId, LayerRole, MissingPolicy, PropertyError, PropertyLayer, PropertyLayerData,
-    PropertyLayerDescriptor, SparseRelationWeights, StorageMode, encode_property_snapshot,
+    PropertyLayerDescriptor, RelationAxis, SparseWeights, StorageMode, encode_property_snapshot,
     rekey_layer_to_local, validate_property_sections, validate_unique_layer_ids,
     validate_unique_names,
 };
@@ -147,7 +147,7 @@ proptest! {
             Some(Arc::new(Float32Array::from(vec![default]))),
         ))?;
         let topology = Topology { relation_bound: len };
-        let selected = prop_ok(SparseRelationWeights::<_, u32, u32, Float32Type>::new(&topology, &layer))?;
+        let selected = prop_ok(SparseWeights::<RelationAxis, _, u32, u32, Float32Type>::new(&topology, &layer))?;
         prop_assert!((selected.relation_weight(explicit_index) - first).abs() < f32::EPSILON);
         let expected_zero = if len == 1 { first } else { default };
         prop_assert!((selected.relation_weight(0) - expected_zero).abs() < f32::EPSILON);

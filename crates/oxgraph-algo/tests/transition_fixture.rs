@@ -11,7 +11,8 @@ use std::{error::Error, sync::Arc};
 use arrow_array::Float64Array;
 use arrow_schema::{DataType, Field};
 use oxgraph_algo::{
-    PageRankConfig, Weighted, breadth_first_search, hypergraph_pagerank_weighted, pagerank_graph,
+    HyperWeighted, PageRankConfig, Weighted, breadth_first_search, pagerank_graph,
+    pagerank_hypergraph,
 };
 use oxgraph_graph_build::{WeightedGraphBuilder, export_weighted_csr_snapshot_with_properties};
 use oxgraph_hyper::HypergraphCounts;
@@ -116,10 +117,9 @@ fn weighted_hyper_transition_fixture_covers_bipartite_ranking_and_snapshot()
     let relations = vec![dispatch, complete_or_retry];
     let mut element_ranks = vec![0.0; graph.vertex_count()];
     let mut relation_ranks = vec![0.0; graph.hyperedge_count()];
-    hypergraph_pagerank_weighted(
+    pagerank_hypergraph(
         &graph,
-        &graph,
-        &graph,
+        &HyperWeighted::new(&graph, &graph),
         elements,
         relations,
         CONFIG,

@@ -360,6 +360,271 @@ where
     }
 }
 
+/// Bipartite outgoing rank-distribution rule used by hypergraph `PageRank`.
+///
+/// Implementations decide how an element's current `rank` is split across its
+/// outgoing visible relations, and how a relation's current `rank` is split
+/// across its visible target elements. Built-in [`Uniform`] divides each leg
+/// evenly over the visible out-degree; built-in [`HyperWeighted`] divides
+/// element-to-relation by [`RelationWeight`] values and relation-to-element by
+/// [`IncidenceWeight`] values. User crates can implement this trait for custom
+/// bipartite policies — e.g. attenuated decay, top-k filtering, or
+/// caller-supplied per-state shares — without forking the kernel.
+///
+/// # Contract
+///
+/// On success, both methods write per-target shares into the appropriate next
+/// buffer (visible-masked) and return the dangling contribution for the
+/// source state. The sum of `next_*` increments plus the returned dangling
+/// contribution must equal `rank` when at least one visible target exists;
+/// when no visible target exists, the implementation must return `rank` and
+/// write nothing. Failures are surfaced as [`PageRankError`].
+///
+/// # Performance
+///
+/// `perf: unspecified`; built-in implementations document their per-state
+/// cost. Most do `O(degree)` work per state with one or two passes over the
+/// outgoing-incidence iterator.
+pub trait HypergraphOutgoingDistribution<H, S>
+where
+    H: DirectedVertexHyperedges
+        + DirectedHyperedgeIncidences
+        + IncidenceElement
+        + ElementIndex
+        + RelationIndex,
+    S: PageRankScalar,
+{
+    /// Distributes `rank` from `element` to its outgoing visible relations.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PageRankError`] when a topology index is invalid, when a
+    /// caller-supplied weight is invalid, or when an arithmetic boundary is
+    /// crossed.
+    ///
+    /// # Performance
+    ///
+    /// `perf: unspecified`; implementations document their cost.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "distribution kernel needs hypergraph, element, rank, output buffer, and visibility mask explicitly"
+    )]
+    fn distribute_from_element(
+        &self,
+        hypergraph: &H,
+        element: H::ElementId,
+        rank: S,
+        next_relations: &mut [S],
+        visible_relations: &[u8],
+    ) -> Result<S, PageRankError<S>>;
+
+    /// Distributes `rank` from `relation` to its visible target elements.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PageRankError`] when a topology index is invalid, when a
+    /// caller-supplied weight is invalid, or when an arithmetic boundary is
+    /// crossed.
+    ///
+    /// # Performance
+    ///
+    /// `perf: unspecified`; implementations document their cost.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "distribution kernel needs hypergraph, relation, rank, output buffer, and visibility mask explicitly"
+    )]
+    fn distribute_from_relation(
+        &self,
+        hypergraph: &H,
+        relation: H::RelationId,
+        rank: S,
+        next_elements: &mut [S],
+        visible_elements: &[u8],
+    ) -> Result<S, PageRankError<S>>;
+}
+
+impl<H, S> HypergraphOutgoingDistribution<H, S> for Uniform
+where
+    H: DirectedVertexHyperedges
+        + DirectedHyperedgeIncidences
+        + IncidenceElement
+        + ElementIndex
+        + RelationIndex,
+    S: PageRankScalar,
+{
+    fn distribute_from_element(
+        &self,
+        hypergraph: &H,
+        element: H::ElementId,
+        rank: S,
+        next_relations: &mut [S],
+        visible_relations: &[u8],
+    ) -> Result<S, PageRankError<S>> {
+        let mut degree = 0_usize;
+        for relation in hypergraph.outgoing_hyperedges(element) {
+            let relation_index = checked_relation_index_for(hypergraph, relation)?;
+            if is_visible(visible_relations, relation_index) {
+                degree += 1;
+            }
+        }
+        if degree == 0 {
+            return Ok(rank);
+        }
+        let share = rank / S::from_usize(degree);
+        for relation in hypergraph.outgoing_hyperedges(element) {
+            let relation_index = checked_relation_index_for(hypergraph, relation)?;
+            if is_visible(visible_relations, relation_index) {
+                next_relations[relation_index] += share;
+            }
+        }
+        Ok(S::ZERO)
+    }
+
+    fn distribute_from_relation(
+        &self,
+        hypergraph: &H,
+        relation: H::RelationId,
+        rank: S,
+        next_elements: &mut [S],
+        visible_elements: &[u8],
+    ) -> Result<S, PageRankError<S>> {
+        let mut degree = 0_usize;
+        for incidence in hypergraph.target_incidences(relation) {
+            let target = hypergraph.incidence_element(incidence);
+            let target_index = checked_element_index(hypergraph, target)?;
+            if is_visible(visible_elements, target_index) {
+                degree += 1;
+            }
+        }
+        if degree == 0 {
+            return Ok(rank);
+        }
+        let share = rank / S::from_usize(degree);
+        for incidence in hypergraph.target_incidences(relation) {
+            let target = hypergraph.incidence_element(incidence);
+            let target_index = checked_element_index(hypergraph, target)?;
+            if is_visible(visible_elements, target_index) {
+                next_elements[target_index] += share;
+            }
+        }
+        Ok(S::ZERO)
+    }
+}
+
+/// Distributes bipartite outgoing rank proportionally to caller-supplied
+/// weights.
+///
+/// Built-in [`HypergraphOutgoingDistribution`] implementation matching the
+/// weighted incidence/bipartite `PageRank` semantics. Holds borrowed
+/// [`RelationWeight`] and [`IncidenceWeight`] adapters: element-to-relation
+/// distribution uses relation weights, and relation-to-element distribution
+/// uses target-incidence weights. Source-incidence weights are intentionally
+/// not used by the default policy. Dangling rows (zero or non-positive total)
+/// flow the entire `rank` to the dangling reservoir.
+///
+/// # Performance
+///
+/// Each call is `O(degree)` for the source state's visible neighborhood.
+#[derive(Clone, Copy, Debug)]
+pub struct HyperWeighted<'rw, 'iw, RW, IW> {
+    /// Borrowed relation-weight adapter driving element → relation transitions.
+    relation_weights: &'rw RW,
+    /// Borrowed incidence-weight adapter driving relation → element transitions.
+    incidence_weights: &'iw IW,
+}
+
+impl<'rw, 'iw, RW, IW> HyperWeighted<'rw, 'iw, RW, IW> {
+    /// Constructs a [`HyperWeighted`] distribution borrowing the relation and
+    /// incidence weight adapters.
+    ///
+    /// # Performance
+    ///
+    /// This function is `O(1)`.
+    #[must_use]
+    pub const fn new(relation_weights: &'rw RW, incidence_weights: &'iw IW) -> Self {
+        Self {
+            relation_weights,
+            incidence_weights,
+        }
+    }
+}
+
+impl<H, RW, IW, S> HypergraphOutgoingDistribution<H, S> for HyperWeighted<'_, '_, RW, IW>
+where
+    H: DirectedVertexHyperedges
+        + DirectedHyperedgeIncidences
+        + IncidenceElement
+        + ElementIndex
+        + RelationIndex
+        + IncidenceIndex,
+    RW: RelationWeight<ElementId = H::ElementId, RelationId = H::RelationId>,
+    RW::Weight: IntoPageRankScalar<S>,
+    IW: IncidenceWeight<
+            ElementId = H::ElementId,
+            RelationId = H::RelationId,
+            IncidenceId = H::IncidenceId,
+        >,
+    IW::Weight: IntoPageRankScalar<S>,
+    S: PageRankScalar,
+{
+    fn distribute_from_element(
+        &self,
+        hypergraph: &H,
+        element: H::ElementId,
+        rank: S,
+        next_relations: &mut [S],
+        visible_relations: &[u8],
+    ) -> Result<S, PageRankError<S>> {
+        let total = hyper_outgoing_relation_weight(
+            hypergraph,
+            self.relation_weights,
+            element,
+            visible_relations,
+        )?;
+        if total <= S::ZERO {
+            return Ok(rank);
+        }
+        for relation in hypergraph.outgoing_hyperedges(element) {
+            let relation_index = checked_relation_index_for(hypergraph, relation)?;
+            if !is_visible(visible_relations, relation_index) {
+                continue;
+            }
+            let weight = checked_relation_weight(hypergraph, self.relation_weights, relation)?;
+            next_relations[relation_index] += rank * (weight / total);
+        }
+        Ok(S::ZERO)
+    }
+
+    fn distribute_from_relation(
+        &self,
+        hypergraph: &H,
+        relation: H::RelationId,
+        rank: S,
+        next_elements: &mut [S],
+        visible_elements: &[u8],
+    ) -> Result<S, PageRankError<S>> {
+        let total = hyper_target_incidence_weight(
+            hypergraph,
+            self.incidence_weights,
+            relation,
+            visible_elements,
+        )?;
+        if total <= S::ZERO {
+            return Ok(rank);
+        }
+        for incidence in hypergraph.target_incidences(relation) {
+            let target = hypergraph.incidence_element(incidence);
+            let target_index = checked_element_index(hypergraph, target)?;
+            if !is_visible(visible_elements, target_index) {
+                continue;
+            }
+            let weight = checked_incidence_weight(hypergraph, self.incidence_weights, incidence)?;
+            next_elements[target_index] += rank * (weight / total);
+        }
+        Ok(S::ZERO)
+    }
+}
+
 /// `PageRank` configuration shared by graph and hypergraph policies.
 ///
 /// # Performance
@@ -1105,27 +1370,40 @@ where
     )
 }
 
-/// Computes unweighted directed hypergraph incidence/bipartite `PageRank`.
+/// Computes directed hypergraph incidence/bipartite `PageRank` under the
+/// supplied bipartite outgoing distribution policy, allocating temporary
+/// scratch.
 ///
-/// The state space is elements plus relations. Element states choose outgoing
-/// hyperedges uniformly; relation states choose target incidences uniformly.
+/// `distribution` selects the per-state rank-transfer rule:
+/// [`Uniform`] divides each leg uniformly over visible out-degree, while
+/// [`HyperWeighted`] reads caller-supplied relation and target-incidence
+/// weights. Any [`HypergraphOutgoingDistribution`] impl is accepted.
+/// `elements` and `relations` define the visible state iteration order
+/// across the bipartite element + relation state space.
 ///
 /// # Errors
 ///
 /// Returns [`PageRankError`] for invalid configuration, personalization,
-/// topology indexes, output length, scratch length, or non-convergence.
+/// topology indexes, invalid weights, output length, scratch length, or
+/// non-convergence.
 ///
 /// # Performance
 ///
-/// Each iteration is `O(e + r + p)` for visible elements, visible relations,
-/// and traversed source/target participant entries.
+/// Each iteration is `O(e + r + p · cost(D))` for `e` visible elements, `r`
+/// visible relations, `p` traversed source/target participant entries, and
+/// `cost(D)` the per-entry cost of
+/// [`HypergraphOutgoingDistribution::distribute_from_element`] and
+/// [`HypergraphOutgoingDistribution::distribute_from_relation`] (`O(1)` for
+/// the built-in [`Uniform`] and [`HyperWeighted`] impls). Scratch allocation
+/// is `O(e + r)`.
 #[cfg(feature = "alloc")]
 #[expect(
     clippy::too_many_arguments,
-    reason = "hypergraph PageRank entry point keeps state families and output slices explicit"
+    reason = "hypergraph PageRank entry point keeps hypergraph, distribution, state families, and output explicit"
 )]
-pub fn hypergraph_pagerank<H, IE, IR, S>(
+pub fn pagerank_hypergraph<H, D, IE, IR, S>(
     hypergraph: &H,
+    distribution: &D,
     elements: IE,
     relations: IR,
     config: PageRankConfig<S>,
@@ -1139,6 +1417,7 @@ where
         + IncidenceElement
         + ElementIndex
         + RelationIndex,
+    D: HypergraphOutgoingDistribution<H, S>,
     IE: Clone + IntoIterator<Item = ElementId<H>>,
     IR: Clone + IntoIterator<Item = RelationId<H>>,
     S: PageRankScalar,
@@ -1152,8 +1431,9 @@ where
     let mut next_relations = vec![S::ZERO; r_bound];
     let mut visible_elements = vec![0; e_bound];
     let mut visible_relations = vec![0; r_bound];
-    hypergraph_pagerank_with_scratch(
+    pagerank_hypergraph_with_scratch(
         hypergraph,
+        distribution,
         elements,
         relations,
         config,
@@ -1170,26 +1450,32 @@ where
     )
 }
 
-/// Computes unweighted hypergraph `PageRank` with caller-provided borrowed scratch.
+/// Computes hypergraph `PageRank` under the supplied outgoing distribution
+/// policy with caller-provided borrowed scratch.
+///
+/// See [`pagerank_hypergraph`] for the role of `distribution`.
 ///
 /// # Errors
 ///
 /// Returns [`PageRankError`] for invalid configuration, personalization,
-/// topology indexes, output length, scratch length, or non-convergence.
+/// topology indexes, invalid weights, output length, scratch length, or
+/// non-convergence.
 ///
 /// # Performance
 ///
-/// Performs no heap allocation after caller scratch has been provided.
+/// Performs no heap allocation after caller scratch has been provided. Each
+/// iteration is `O(e + r + p · cost(D))`.
 #[expect(
     clippy::too_many_arguments,
-    reason = "hypergraph PageRank scratch entry point keeps state families and storage explicit"
+    reason = "hypergraph PageRank scratch entry point keeps policy and storage inputs explicit"
 )]
 #[expect(
     clippy::needless_pass_by_value,
     reason = "hypergraph PageRank scratch API consumes a scratch handle and keeps policy inputs explicit"
 )]
-pub fn hypergraph_pagerank_with_scratch<H, IE, IR, S>(
+pub fn pagerank_hypergraph_with_scratch<H, D, IE, IR, S>(
     hypergraph: &H,
+    distribution: &D,
     elements: IE,
     relations: IR,
     config: PageRankConfig<S>,
@@ -1204,6 +1490,7 @@ where
         + IncidenceElement
         + ElementIndex
         + RelationIndex,
+    D: HypergraphOutgoingDistribution<H, S>,
     IE: Clone + IntoIterator<Item = ElementId<H>>,
     IR: Clone + IntoIterator<Item = RelationId<H>>,
     S: PageRankScalar,
@@ -1240,8 +1527,9 @@ where
         element_ranks,
         relation_ranks,
     )?;
-    iterate_hyper_unweighted(
+    iterate_hypergraph(
         hypergraph,
+        distribution,
         elements,
         relations,
         config,
@@ -1255,238 +1543,10 @@ where
     )
 }
 
-/// Computes unweighted hypergraph `PageRank` with reusable owned workspace.
+/// Computes hypergraph `PageRank` under the supplied outgoing distribution
+/// policy with a reusable owned workspace.
 ///
-/// # Errors
-///
-/// Returns [`PageRankError`] for invalid configuration, personalization,
-/// topology indexes, output length, or non-convergence.
-///
-/// # Performance
-///
-/// Grows workspace storage to the visible bounds if needed, then performs no
-/// additional heap allocation.
-#[cfg(feature = "alloc")]
-#[expect(
-    clippy::too_many_arguments,
-    reason = "hypergraph PageRank workspace entry point keeps state families and storage explicit"
-)]
-pub fn hypergraph_pagerank_with_workspace<H, IE, IR, S>(
-    hypergraph: &H,
-    elements: IE,
-    relations: IR,
-    config: PageRankConfig<S>,
-    personalization: Option<&[S]>,
-    element_ranks: &mut [S],
-    relation_ranks: &mut [S],
-    workspace: &mut HypergraphPageRankWorkspace<H, S>,
-) -> Result<PageRankReport<S>, PageRankError<S>>
-where
-    H: DirectedVertexHyperedges
-        + DirectedHyperedgeIncidences
-        + IncidenceElement
-        + ElementIndex
-        + RelationIndex,
-    IE: Clone + IntoIterator<Item = ElementId<H>>,
-    IR: Clone + IntoIterator<Item = RelationId<H>>,
-    S: PageRankScalar,
-{
-    let e_bound = hypergraph.element_bound();
-    let r_bound = hypergraph.relation_bound();
-    let state_bound =
-        checked_state_bound::<S>(e_bound, r_bound, element_ranks.len(), relation_ranks.len())?;
-    workspace.ensure_bounds(e_bound, r_bound, state_bound);
-    hypergraph_pagerank_with_scratch(
-        hypergraph,
-        elements,
-        relations,
-        config,
-        personalization,
-        element_ranks,
-        relation_ranks,
-        workspace.as_scratch(),
-    )
-}
-
-/// Computes weighted directed hypergraph incidence/bipartite `PageRank`.
-///
-/// Relation weights choose source element → relation transitions. Target
-/// incidence weights choose relation → target element transitions. Source
-/// incidence weights are intentionally not used by this default policy.
-///
-/// # Errors
-///
-/// Returns [`PageRankError`] for invalid configuration, personalization,
-/// topology indexes, invalid relation/incidence weights, output length, scratch
-/// length, or non-convergence.
-///
-/// # Performance
-///
-/// Each iteration is `O(e + r + p)` with two passes over weighted non-dangling
-/// rows.
-#[cfg(feature = "alloc")]
-#[expect(
-    clippy::too_many_arguments,
-    reason = "weighted hypergraph PageRank keeps relation and incidence policies explicit"
-)]
-pub fn hypergraph_pagerank_weighted<H, RW, IW, IE, IR, S>(
-    hypergraph: &H,
-    relation_weights: &RW,
-    incidence_weights: &IW,
-    elements: IE,
-    relations: IR,
-    config: PageRankConfig<S>,
-    personalization: Option<&[S]>,
-    element_ranks: &mut [S],
-    relation_ranks: &mut [S],
-) -> Result<PageRankReport<S>, PageRankError<S>>
-where
-    H: DirectedVertexHyperedges
-        + DirectedHyperedgeIncidences
-        + IncidenceElement
-        + ElementIndex
-        + RelationIndex
-        + IncidenceIndex,
-    RW: RelationWeight<ElementId = H::ElementId, RelationId = H::RelationId>,
-    RW::Weight: IntoPageRankScalar<S>,
-    IW: IncidenceWeight<
-            ElementId = H::ElementId,
-            RelationId = H::RelationId,
-            IncidenceId = H::IncidenceId,
-        >,
-    IW::Weight: IntoPageRankScalar<S>,
-    IE: Clone + IntoIterator<Item = ElementId<H>>,
-    IR: Clone + IntoIterator<Item = RelationId<H>>,
-    S: PageRankScalar,
-{
-    let e_bound = hypergraph.element_bound();
-    let r_bound = hypergraph.relation_bound();
-    let state_bound =
-        checked_state_bound::<S>(e_bound, r_bound, element_ranks.len(), relation_ranks.len())?;
-    let mut teleport = vec![S::ZERO; state_bound];
-    let mut next_elements = vec![S::ZERO; e_bound];
-    let mut next_relations = vec![S::ZERO; r_bound];
-    let mut visible_elements = vec![0; e_bound];
-    let mut visible_relations = vec![0; r_bound];
-    hypergraph_pagerank_weighted_with_scratch(
-        hypergraph,
-        relation_weights,
-        incidence_weights,
-        elements,
-        relations,
-        config,
-        personalization,
-        element_ranks,
-        relation_ranks,
-        HypergraphPageRankScratch::new(
-            &mut teleport,
-            &mut next_elements,
-            &mut next_relations,
-            &mut visible_elements,
-            &mut visible_relations,
-        ),
-    )
-}
-
-/// Computes weighted hypergraph `PageRank` with caller-provided borrowed scratch.
-///
-/// # Errors
-///
-/// Returns [`PageRankError`] for invalid configuration, personalization,
-/// topology indexes, invalid weights, output length, scratch length, or non-convergence.
-///
-/// # Performance
-///
-/// Performs no heap allocation after caller scratch has been provided.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "weighted hypergraph PageRank scratch entry point keeps all policy and storage inputs explicit"
-)]
-#[expect(
-    clippy::needless_pass_by_value,
-    reason = "hypergraph PageRank scratch API consumes a scratch handle and keeps policy inputs explicit"
-)]
-pub fn hypergraph_pagerank_weighted_with_scratch<H, RW, IW, IE, IR, S>(
-    hypergraph: &H,
-    relation_weights: &RW,
-    incidence_weights: &IW,
-    elements: IE,
-    relations: IR,
-    config: PageRankConfig<S>,
-    personalization: Option<&[S]>,
-    element_ranks: &mut [S],
-    relation_ranks: &mut [S],
-    scratch: HypergraphPageRankScratch<'_, S>,
-) -> Result<PageRankReport<S>, PageRankError<S>>
-where
-    H: DirectedVertexHyperedges
-        + DirectedHyperedgeIncidences
-        + IncidenceElement
-        + ElementIndex
-        + RelationIndex
-        + IncidenceIndex,
-    RW: RelationWeight<ElementId = H::ElementId, RelationId = H::RelationId>,
-    RW::Weight: IntoPageRankScalar<S>,
-    IW: IncidenceWeight<
-            ElementId = H::ElementId,
-            RelationId = H::RelationId,
-            IncidenceId = H::IncidenceId,
-        >,
-    IW::Weight: IntoPageRankScalar<S>,
-    IE: Clone + IntoIterator<Item = ElementId<H>>,
-    IR: Clone + IntoIterator<Item = RelationId<H>>,
-    S: PageRankScalar,
-{
-    validate_config(config)?;
-    let e_bound = hypergraph.element_bound();
-    let r_bound = hypergraph.relation_bound();
-    let state_bound =
-        checked_state_bound::<S>(e_bound, r_bound, element_ranks.len(), relation_ranks.len())?;
-    ensure_scratch_len("teleport", scratch.teleport.len(), state_bound)?;
-    ensure_scratch_len("next_elements", scratch.next_elements.len(), e_bound)?;
-    ensure_scratch_len("next_relations", scratch.next_relations.len(), r_bound)?;
-    ensure_scratch_len("visible_elements", scratch.visible_elements.len(), e_bound)?;
-    ensure_scratch_len(
-        "visible_relations",
-        scratch.visible_relations.len(),
-        r_bound,
-    )?;
-    build_hyper_personalization_into(
-        hypergraph,
-        elements.clone(),
-        relations.clone(),
-        state_bound,
-        personalization,
-        scratch.teleport,
-        scratch.visible_elements,
-        scratch.visible_relations,
-    )?;
-    initialize_hyper_ranks(
-        hypergraph,
-        elements.clone(),
-        relations.clone(),
-        scratch.teleport,
-        element_ranks,
-        relation_ranks,
-    )?;
-    iterate_hyper_weighted(
-        hypergraph,
-        relation_weights,
-        incidence_weights,
-        elements,
-        relations,
-        config,
-        scratch.teleport,
-        scratch.visible_elements,
-        scratch.visible_relations,
-        element_ranks,
-        relation_ranks,
-        scratch.next_elements,
-        scratch.next_relations,
-    )
-}
-
-/// Computes weighted hypergraph `PageRank` with reusable owned workspace.
+/// See [`pagerank_hypergraph`] for the role of `distribution`.
 ///
 /// # Errors
 ///
@@ -1496,16 +1556,15 @@ where
 /// # Performance
 ///
 /// Grows workspace storage to the visible bounds if needed, then performs no
-/// additional heap allocation.
+/// additional heap allocation. Each iteration is `O(e + r + p · cost(D))`.
 #[cfg(feature = "alloc")]
 #[expect(
     clippy::too_many_arguments,
-    reason = "weighted hypergraph PageRank workspace entry point keeps all policy and storage inputs explicit"
+    reason = "hypergraph PageRank workspace entry point keeps policy and storage inputs explicit"
 )]
-pub fn hypergraph_pagerank_weighted_with_workspace<H, RW, IW, IE, IR, S>(
+pub fn pagerank_hypergraph_with_workspace<H, D, IE, IR, S>(
     hypergraph: &H,
-    relation_weights: &RW,
-    incidence_weights: &IW,
+    distribution: &D,
     elements: IE,
     relations: IR,
     config: PageRankConfig<S>,
@@ -1519,16 +1578,8 @@ where
         + DirectedHyperedgeIncidences
         + IncidenceElement
         + ElementIndex
-        + RelationIndex
-        + IncidenceIndex,
-    RW: RelationWeight<ElementId = H::ElementId, RelationId = H::RelationId>,
-    RW::Weight: IntoPageRankScalar<S>,
-    IW: IncidenceWeight<
-            ElementId = H::ElementId,
-            RelationId = H::RelationId,
-            IncidenceId = H::IncidenceId,
-        >,
-    IW::Weight: IntoPageRankScalar<S>,
+        + RelationIndex,
+    D: HypergraphOutgoingDistribution<H, S>,
     IE: Clone + IntoIterator<Item = ElementId<H>>,
     IR: Clone + IntoIterator<Item = RelationId<H>>,
     S: PageRankScalar,
@@ -1538,10 +1589,9 @@ where
     let state_bound =
         checked_state_bound::<S>(e_bound, r_bound, element_ranks.len(), relation_ranks.len())?;
     workspace.ensure_bounds(e_bound, r_bound, state_bound);
-    hypergraph_pagerank_weighted_with_scratch(
+    pagerank_hypergraph_with_scratch(
         hypergraph,
-        relation_weights,
-        incidence_weights,
+        distribution,
         elements,
         relations,
         config,
@@ -1975,14 +2025,15 @@ where
 
 #[expect(
     clippy::too_many_arguments,
-    reason = "hypergraph iteration threads element and relation states explicitly"
+    reason = "hypergraph iteration helper keeps distribution, state families, scratch, and policy inputs explicit"
 )]
 #[expect(
     clippy::needless_pass_by_value,
     reason = "iteration helpers own cloneable iterator values and clone them each power iteration"
 )]
-fn iterate_hyper_unweighted<H, IE, IR, S>(
+fn iterate_hypergraph<H, D, IE, IR, S>(
     hypergraph: &H,
+    distribution: &D,
     elements: IE,
     relations: IR,
     config: PageRankConfig<S>,
@@ -2000,6 +2051,7 @@ where
         + IncidenceElement
         + ElementIndex
         + RelationIndex,
+    D: HypergraphOutgoingDistribution<H, S>,
     IE: Clone + IntoIterator<Item = ElementId<H>>,
     IR: Clone + IntoIterator<Item = RelationId<H>>,
     S: PageRankScalar,
@@ -2008,102 +2060,29 @@ where
     for iteration in 1..=config.max_iterations {
         clear(next_elements, hypergraph.element_bound());
         clear(next_relations, hypergraph.relation_bound());
-        let dangling = push_hyper_unweighted(
-            hypergraph,
-            elements.clone(),
-            relations.clone(),
-            visible_elements,
-            visible_relations,
-            element_ranks,
-            relation_ranks,
-            next_elements,
-            next_relations,
-        )?;
-        let delta = apply_hyper_teleport(
-            hypergraph,
-            elements.clone(),
-            relations.clone(),
-            config,
-            teleport,
-            dangling,
-            element_ranks,
-            relation_ranks,
-            next_elements,
-            next_relations,
-        )?;
-        last_delta = delta;
-        if delta <= config.tolerance {
-            return Ok(PageRankReport {
-                iterations: iteration,
-                delta,
-            });
+        let mut dangling = S::ZERO;
+        for element in elements.clone() {
+            let index = checked_element_index(hypergraph, element)?;
+            let rank = element_ranks[index];
+            dangling += distribution.distribute_from_element(
+                hypergraph,
+                element,
+                rank,
+                next_relations,
+                visible_relations,
+            )?;
         }
-    }
-    Err(PageRankError::NonConverged {
-        iterations: config.max_iterations,
-        delta: last_delta,
-    })
-}
-
-#[expect(
-    clippy::too_many_arguments,
-    reason = "weighted hypergraph iteration keeps relation and incidence policies explicit"
-)]
-#[expect(
-    clippy::needless_pass_by_value,
-    reason = "iteration helpers own cloneable iterator values and clone them each power iteration"
-)]
-fn iterate_hyper_weighted<H, RW, IW, IE, IR, S>(
-    hypergraph: &H,
-    relation_weights: &RW,
-    incidence_weights: &IW,
-    elements: IE,
-    relations: IR,
-    config: PageRankConfig<S>,
-    teleport: &[S],
-    visible_elements: &[u8],
-    visible_relations: &[u8],
-    element_ranks: &mut [S],
-    relation_ranks: &mut [S],
-    next_elements: &mut [S],
-    next_relations: &mut [S],
-) -> Result<PageRankReport<S>, PageRankError<S>>
-where
-    H: DirectedVertexHyperedges
-        + DirectedHyperedgeIncidences
-        + IncidenceElement
-        + ElementIndex
-        + RelationIndex
-        + IncidenceIndex,
-    RW: RelationWeight<ElementId = H::ElementId, RelationId = H::RelationId>,
-    RW::Weight: IntoPageRankScalar<S>,
-    IW: IncidenceWeight<
-            ElementId = H::ElementId,
-            RelationId = H::RelationId,
-            IncidenceId = H::IncidenceId,
-        >,
-    IW::Weight: IntoPageRankScalar<S>,
-    IE: Clone + IntoIterator<Item = ElementId<H>>,
-    IR: Clone + IntoIterator<Item = RelationId<H>>,
-    S: PageRankScalar,
-{
-    let mut last_delta = S::INFINITY;
-    for iteration in 1..=config.max_iterations {
-        clear(next_elements, hypergraph.element_bound());
-        clear(next_relations, hypergraph.relation_bound());
-        let dangling = push_hyper_weighted(
-            hypergraph,
-            relation_weights,
-            incidence_weights,
-            elements.clone(),
-            relations.clone(),
-            visible_elements,
-            visible_relations,
-            element_ranks,
-            relation_ranks,
-            next_elements,
-            next_relations,
-        )?;
+        for relation in relations.clone() {
+            let index = checked_relation_index_for(hypergraph, relation)?;
+            let rank = relation_ranks[index];
+            dangling += distribution.distribute_from_relation(
+                hypergraph,
+                relation,
+                rank,
+                next_elements,
+                visible_elements,
+            )?;
+        }
         let delta = apply_hyper_teleport(
             hypergraph,
             elements.clone(),
@@ -2255,164 +2234,6 @@ where
         next[index] = value;
     }
     Ok(delta)
-}
-
-#[expect(
-    clippy::too_many_arguments,
-    reason = "hypergraph push uses separate state and scratch families"
-)]
-fn push_hyper_unweighted<H, IE, IR, S>(
-    hypergraph: &H,
-    elements: IE,
-    relations: IR,
-    visible_elements: &[u8],
-    visible_relations: &[u8],
-    element_ranks: &[S],
-    relation_ranks: &[S],
-    next_elements: &mut [S],
-    next_relations: &mut [S],
-) -> Result<S, PageRankError<S>>
-where
-    H: DirectedVertexHyperedges
-        + DirectedHyperedgeIncidences
-        + IncidenceElement
-        + ElementIndex
-        + RelationIndex,
-    IE: IntoIterator<Item = ElementId<H>>,
-    IR: IntoIterator<Item = RelationId<H>>,
-    S: PageRankScalar,
-{
-    let mut dangling = S::ZERO;
-    for element in elements {
-        let index = checked_element_index(hypergraph, element)?;
-        let mut degree = 0_usize;
-        for relation in hypergraph.outgoing_hyperedges(element) {
-            let relation_index = checked_relation_index_for(hypergraph, relation)?;
-            if is_visible(visible_relations, relation_index) {
-                degree += 1;
-            }
-        }
-        if degree == 0 {
-            dangling += element_ranks[index];
-            continue;
-        }
-        let share = element_ranks[index] / S::from_usize(degree);
-        for relation in hypergraph.outgoing_hyperedges(element) {
-            let relation_index = checked_relation_index_for(hypergraph, relation)?;
-            if !is_visible(visible_relations, relation_index) {
-                continue;
-            }
-            next_relations[relation_index] += share;
-        }
-    }
-    for relation in relations {
-        let relation_index = checked_relation_index_for(hypergraph, relation)?;
-        let mut degree = 0_usize;
-        for incidence in hypergraph.target_incidences(relation) {
-            let target = hypergraph.incidence_element(incidence);
-            let target_index = checked_element_index(hypergraph, target)?;
-            if is_visible(visible_elements, target_index) {
-                degree += 1;
-            }
-        }
-        if degree == 0 {
-            dangling += relation_ranks[relation_index];
-            continue;
-        }
-        let share = relation_ranks[relation_index] / S::from_usize(degree);
-        for incidence in hypergraph.target_incidences(relation) {
-            let target = hypergraph.incidence_element(incidence);
-            let target_index = checked_element_index(hypergraph, target)?;
-            if !is_visible(visible_elements, target_index) {
-                continue;
-            }
-            next_elements[target_index] += share;
-        }
-    }
-    Ok(dangling)
-}
-
-#[expect(
-    clippy::too_many_arguments,
-    reason = "weighted hypergraph push keeps weights and state families explicit"
-)]
-fn push_hyper_weighted<H, RW, IW, IE, IR, S>(
-    hypergraph: &H,
-    relation_weights: &RW,
-    incidence_weights: &IW,
-    elements: IE,
-    relations: IR,
-    visible_elements: &[u8],
-    visible_relations: &[u8],
-    element_ranks: &[S],
-    relation_ranks: &[S],
-    next_elements: &mut [S],
-    next_relations: &mut [S],
-) -> Result<S, PageRankError<S>>
-where
-    H: DirectedVertexHyperedges
-        + DirectedHyperedgeIncidences
-        + IncidenceElement
-        + ElementIndex
-        + RelationIndex
-        + IncidenceIndex,
-    RW: RelationWeight<ElementId = H::ElementId, RelationId = H::RelationId>,
-    RW::Weight: IntoPageRankScalar<S>,
-    IW: IncidenceWeight<
-            ElementId = H::ElementId,
-            RelationId = H::RelationId,
-            IncidenceId = H::IncidenceId,
-        >,
-    IW::Weight: IntoPageRankScalar<S>,
-    IE: IntoIterator<Item = ElementId<H>>,
-    IR: IntoIterator<Item = RelationId<H>>,
-    S: PageRankScalar,
-{
-    let mut dangling = S::ZERO;
-    for element in elements {
-        let index = checked_element_index(hypergraph, element)?;
-        let total = hyper_outgoing_relation_weight(
-            hypergraph,
-            relation_weights,
-            element,
-            visible_relations,
-        )?;
-        if total <= S::ZERO {
-            dangling += element_ranks[index];
-            continue;
-        }
-        for relation in hypergraph.outgoing_hyperedges(element) {
-            let relation_index = checked_relation_index_for(hypergraph, relation)?;
-            if !is_visible(visible_relations, relation_index) {
-                continue;
-            }
-            let weight = checked_relation_weight(hypergraph, relation_weights, relation)?;
-            next_relations[relation_index] += element_ranks[index] * (weight / total);
-        }
-    }
-    for relation in relations {
-        let relation_index = checked_relation_index_for(hypergraph, relation)?;
-        let total = hyper_target_incidence_weight(
-            hypergraph,
-            incidence_weights,
-            relation,
-            visible_elements,
-        )?;
-        if total <= S::ZERO {
-            dangling += relation_ranks[relation_index];
-            continue;
-        }
-        for incidence in hypergraph.target_incidences(relation) {
-            let target = hypergraph.incidence_element(incidence);
-            let target_index = checked_element_index(hypergraph, target)?;
-            if !is_visible(visible_elements, target_index) {
-                continue;
-            }
-            let weight = checked_incidence_weight(hypergraph, incidence_weights, incidence)?;
-            next_elements[target_index] += relation_ranks[relation_index] * (weight / total);
-        }
-    }
-    Ok(dangling)
 }
 
 fn checked_relation_index_for<H: RelationIndex, S>(

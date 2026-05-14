@@ -14,10 +14,10 @@ use std::{
 };
 
 use oxgraph_algo::{
-    HypergraphPageRankWorkspace, PageRankConfig, PageRankError, PageRankScalar, PageRankScratch,
-    PageRankWorkspace, Uniform, Weighted, hypergraph_pagerank, hypergraph_pagerank_weighted,
-    hypergraph_pagerank_with_workspace, pagerank_graph, pagerank_graph_with_scratch,
-    pagerank_graph_with_workspace,
+    HyperWeighted, HypergraphPageRankScratch, HypergraphPageRankWorkspace, PageRankConfig,
+    PageRankError, PageRankScalar, PageRankScratch, PageRankWorkspace, Uniform, Weighted,
+    pagerank_graph, pagerank_graph_with_scratch, pagerank_graph_with_workspace,
+    pagerank_hypergraph, pagerank_hypergraph_with_scratch, pagerank_hypergraph_with_workspace,
 };
 use oxgraph_csr::{CsrEdgeId, CsrError, CsrNativeGraph, CsrNodeId};
 use oxgraph_hyper_bcsr::{
@@ -438,8 +438,9 @@ fn pagerank_runs_over_hyper_bcsr_layout() -> Result<(), PageRankFixtureError> {
     let mut element_ranks = [0.0; 3];
     let mut relation_ranks = [0.0; 2];
 
-    let report = hypergraph_pagerank(
+    let report = pagerank_hypergraph(
         &hypergraph,
+        &Uniform,
         elements,
         relations,
         CONFIG,
@@ -474,10 +475,9 @@ fn weighted_pagerank_runs_over_hyper_bcsr_layout() -> Result<(), PageRankFixture
     let mut element_ranks = [0.0; 3];
     let mut relation_ranks = [0.0; 2];
 
-    let report = hypergraph_pagerank_weighted(
+    let report = pagerank_hypergraph(
         &hypergraph,
-        &relation_weights,
-        &incidence_weights,
+        &HyperWeighted::new(&relation_weights, &incidence_weights),
         elements,
         relations,
         CONFIG,
@@ -505,8 +505,9 @@ fn hypergraph_workspace_matches_allocating() -> Result<(), Box<dyn Error>> {
     let relations = [BcsrHyperedgeId(0), BcsrHyperedgeId(1)];
     let mut allocating_elements = [0.0; 3];
     let mut allocating_relations = [0.0; 2];
-    hypergraph_pagerank(
+    pagerank_hypergraph(
         &hypergraph,
+        &Uniform,
         elements,
         relations,
         CONFIG,
@@ -518,8 +519,9 @@ fn hypergraph_workspace_matches_allocating() -> Result<(), Box<dyn Error>> {
     let mut workspace = HypergraphPageRankWorkspace::for_hypergraph(&hypergraph);
     let mut workspace_elements = [0.0; 3];
     let mut workspace_relations = [0.0; 2];
-    hypergraph_pagerank_with_workspace(
+    pagerank_hypergraph_with_workspace(
         &hypergraph,
+        &Uniform,
         elements,
         relations,
         CONFIG,
@@ -758,8 +760,9 @@ fn hypergraph_visible_subset_ignores_omitted_states() -> Result<(), PageRankFixt
     let mut element_ranks = [0.0; 3];
     let mut relation_ranks = [0.0; 2];
 
-    let report = hypergraph_pagerank(
+    let report = pagerank_hypergraph(
         &hypergraph,
+        &Uniform,
         elements,
         relations,
         CONFIG,
@@ -781,8 +784,9 @@ fn hypergraph_duplicate_visible_states_are_rejected() -> Result<(), PageRankFixt
     let mut element_ranks = [0.0; 3];
     let mut relation_ranks = [0.0; 2];
 
-    let duplicate_element = hypergraph_pagerank(
+    let duplicate_element = pagerank_hypergraph(
         &hypergraph,
+        &Uniform,
         [BcsrVertexId(0), BcsrVertexId(1), BcsrVertexId(1)],
         [BcsrHyperedgeId(0), BcsrHyperedgeId(1)],
         CONFIG,
@@ -795,8 +799,9 @@ fn hypergraph_duplicate_visible_states_are_rejected() -> Result<(), PageRankFixt
         Err(PageRankError::DuplicateElement { index: 1 })
     ));
 
-    let duplicate_relation = hypergraph_pagerank(
+    let duplicate_relation = pagerank_hypergraph(
         &hypergraph,
+        &Uniform,
         [BcsrVertexId(0), BcsrVertexId(1), BcsrVertexId(2)],
         [BcsrHyperedgeId(0), BcsrHyperedgeId(0)],
         CONFIG,
@@ -826,10 +831,9 @@ fn hypergraph_invalid_weights_and_personalization_are_rejected() -> Result<(), P
     let mut element_ranks = [0.0; 3];
     let mut relation_ranks = [0.0; 2];
     assert!(matches!(
-        hypergraph_pagerank_weighted(
+        pagerank_hypergraph(
             &hypergraph,
-            &relation_weights,
-            &incidence_weights,
+            &HyperWeighted::new(&relation_weights, &incidence_weights),
             elements,
             relations,
             CONFIG,
@@ -846,10 +850,9 @@ fn hypergraph_invalid_weights_and_personalization_are_rejected() -> Result<(), P
         values: &[1.0, 1.0, 1.0, f64::INFINITY, 1.0, 1.0],
     };
     assert!(matches!(
-        hypergraph_pagerank_weighted(
+        pagerank_hypergraph(
             &hypergraph,
-            &relation_weights,
-            &incidence_weights,
+            &HyperWeighted::new(&relation_weights, &incidence_weights),
             elements,
             relations,
             CONFIG,
@@ -860,8 +863,9 @@ fn hypergraph_invalid_weights_and_personalization_are_rejected() -> Result<(), P
         Err(PageRankError::InvalidIncidenceWeight { .. })
     ));
     assert!(matches!(
-        hypergraph_pagerank(
+        pagerank_hypergraph(
             &hypergraph,
+            &Uniform,
             elements,
             relations,
             CONFIG,
@@ -881,8 +885,9 @@ fn hypergraph_non_convergence_reports_last_nonzero_delta() -> Result<(), PageRan
     let relations = [BcsrHyperedgeId(0), BcsrHyperedgeId(1)];
     let mut element_ranks = [0.0; 3];
     let mut relation_ranks = [0.0; 2];
-    let error = hypergraph_pagerank(
+    let error = pagerank_hypergraph(
         &hypergraph,
+        &Uniform,
         elements,
         relations,
         PageRankConfig::new(0.85, 0.0, 1),
@@ -988,6 +993,251 @@ proptest! {
             }
         }
     }
+
+    /// Generated BCSR hypergraph fixtures preserve probability mass, visibility,
+    /// and tier equivalence (allocating ≡ scratch ≡ workspace).
+    #[test]
+    fn generated_hypergraph_pagerank_preserves_mass_visibility_and_tier_equivalence(
+        vertex_count in 1_u32..12,
+        edges in prop::collection::vec((0_u32..12, 0_u32..12), 0..48),
+        visible_element_seed in prop::collection::vec(any::<bool>(), 1..12),
+        visible_relation_seed in prop::collection::vec(any::<bool>(), 1..12),
+    ) {
+        let Some(sections) = generated_bcsr_sections(vertex_count, &edges) else {
+            return Ok(());
+        };
+        let hypergraph = BcsrNativeHypergraph::<u32, u32, u32>::open(BcsrSections {
+            head_offsets: &sections.head_offsets,
+            head_participants: &sections.head_participants,
+            tail_offsets: &sections.tail_offsets,
+            tail_participants: &sections.tail_participants,
+            vertex_outgoing_offsets: &sections.vertex_outgoing_offsets,
+            vertex_outgoing_hyperedges: &sections.vertex_outgoing_hyperedges,
+            vertex_incoming_offsets: &sections.vertex_incoming_offsets,
+            vertex_incoming_hyperedges: &sections.vertex_incoming_hyperedges,
+        })
+        .map_err(|error| TestCaseError::fail(error.to_string()))?;
+
+        let element_count = hypergraph.element_bound();
+        let relation_count = hypergraph.relation_bound();
+
+        let mut visible_elements = vec![false; element_count];
+        for (index, slot) in visible_elements.iter_mut().enumerate() {
+            *slot = visible_element_seed[index % visible_element_seed.len()];
+        }
+        if !visible_elements.iter().any(|value| *value) {
+            visible_elements[0] = true;
+        }
+
+        let mut visible_relations = vec![false; relation_count];
+        for (index, slot) in visible_relations.iter_mut().enumerate() {
+            *slot = visible_relation_seed[index % visible_relation_seed.len()];
+        }
+
+        let elements: Vec<BcsrVertexId<u32>> = visible_elements
+            .iter()
+            .enumerate()
+            .filter_map(|(index, is_visible)| {
+                is_visible.then_some(BcsrVertexId(u32::try_from(index).ok()?))
+            })
+            .collect();
+        let relations: Vec<BcsrHyperedgeId<u32>> = visible_relations
+            .iter()
+            .enumerate()
+            .filter_map(|(index, is_visible)| {
+                is_visible.then_some(BcsrHyperedgeId(u32::try_from(index).ok()?))
+            })
+            .collect();
+
+        let config = PageRankConfig::new(0.85, 1.0e-9, 1_000);
+
+        let mut alloc_elements = vec![0.0_f64; element_count];
+        let mut alloc_relations = vec![0.0_f64; relation_count];
+        pagerank_hypergraph(
+            &hypergraph,
+            &Uniform,
+            elements.iter().copied(),
+            relations.iter().copied(),
+            config,
+            None,
+            &mut alloc_elements,
+            &mut alloc_relations,
+        )
+        .map_err(|error| TestCaseError::fail(error.to_string()))?;
+
+        let state_bound = element_count.saturating_add(relation_count);
+        let mut teleport = vec![0.0_f64; state_bound];
+        let mut next_elements_scratch = vec![0.0_f64; element_count];
+        let mut next_relations_scratch = vec![0.0_f64; relation_count];
+        let mut visible_elements_scratch = vec![0_u8; element_count];
+        let mut visible_relations_scratch = vec![0_u8; relation_count];
+        let mut scratch_elements = vec![0.0_f64; element_count];
+        let mut scratch_relations = vec![0.0_f64; relation_count];
+        pagerank_hypergraph_with_scratch(
+            &hypergraph,
+            &Uniform,
+            elements.iter().copied(),
+            relations.iter().copied(),
+            config,
+            None,
+            &mut scratch_elements,
+            &mut scratch_relations,
+            HypergraphPageRankScratch::new(
+                &mut teleport,
+                &mut next_elements_scratch,
+                &mut next_relations_scratch,
+                &mut visible_elements_scratch,
+                &mut visible_relations_scratch,
+            ),
+        )
+        .map_err(|error| TestCaseError::fail(error.to_string()))?;
+
+        let mut workspace = HypergraphPageRankWorkspace::for_hypergraph(&hypergraph);
+        let mut workspace_elements = vec![0.0_f64; element_count];
+        let mut workspace_relations = vec![0.0_f64; relation_count];
+        pagerank_hypergraph_with_workspace(
+            &hypergraph,
+            &Uniform,
+            elements.iter().copied(),
+            relations.iter().copied(),
+            config,
+            None,
+            &mut workspace_elements,
+            &mut workspace_relations,
+            &mut workspace,
+        )
+        .map_err(|error| TestCaseError::fail(error.to_string()))?;
+
+        let total: f64 =
+            alloc_elements.iter().sum::<f64>() + alloc_relations.iter().sum::<f64>();
+        prop_assert!((total - 1.0).abs() <= 1.0e-7, "rank mass was {total}");
+
+        for (index, rank) in alloc_elements.iter().enumerate() {
+            prop_assert!(rank.is_finite());
+            prop_assert!(*rank >= 0.0);
+            if !visible_elements[index] {
+                prop_assert!(
+                    rank.abs() <= 1.0e-12,
+                    "invisible element {index} received rank {rank}"
+                );
+            }
+        }
+        for (index, rank) in alloc_relations.iter().enumerate() {
+            prop_assert!(rank.is_finite());
+            prop_assert!(*rank >= 0.0);
+            if !visible_relations[index] {
+                prop_assert!(
+                    rank.abs() <= 1.0e-12,
+                    "invisible relation {index} received rank {rank}"
+                );
+            }
+        }
+
+        for (index, (alloc_rank, scratch_rank)) in
+            alloc_elements.iter().zip(&scratch_elements).enumerate()
+        {
+            prop_assert!(
+                (alloc_rank - scratch_rank).abs() <= 1.0e-8,
+                "scratch element rank diverged at {index}: {alloc_rank} vs {scratch_rank}"
+            );
+        }
+        for (index, (alloc_rank, scratch_rank)) in
+            alloc_relations.iter().zip(&scratch_relations).enumerate()
+        {
+            prop_assert!(
+                (alloc_rank - scratch_rank).abs() <= 1.0e-8,
+                "scratch relation rank diverged at {index}: {alloc_rank} vs {scratch_rank}"
+            );
+        }
+        for (index, (alloc_rank, workspace_rank)) in
+            alloc_elements.iter().zip(&workspace_elements).enumerate()
+        {
+            prop_assert!(
+                (alloc_rank - workspace_rank).abs() <= 1.0e-8,
+                "workspace element rank diverged at {index}: {alloc_rank} vs {workspace_rank}"
+            );
+        }
+        for (index, (alloc_rank, workspace_rank)) in
+            alloc_relations.iter().zip(&workspace_relations).enumerate()
+        {
+            prop_assert!(
+                (alloc_rank - workspace_rank).abs() <= 1.0e-8,
+                "workspace relation rank diverged at {index}: {alloc_rank} vs {workspace_rank}"
+            );
+        }
+    }
+}
+
+/// Generated BCSR sections for hypergraph `PageRank` proptests.
+struct GeneratedBcsrSections {
+    head_offsets: Vec<u32>,
+    head_participants: Vec<u32>,
+    tail_offsets: Vec<u32>,
+    tail_participants: Vec<u32>,
+    vertex_outgoing_offsets: Vec<u32>,
+    vertex_outgoing_hyperedges: Vec<u32>,
+    vertex_incoming_offsets: Vec<u32>,
+    vertex_incoming_hyperedges: Vec<u32>,
+}
+
+/// Builds generated BCSR sections from a binary participation list.
+///
+/// Each surviving pair `(source, target)` becomes a directed hyperedge with one
+/// head participant (`source`) and one tail participant (`target`). Returns
+/// `None` if any width cast overflows.
+fn generated_bcsr_sections(
+    vertex_count: u32,
+    edges: &[(u32, u32)],
+) -> Option<GeneratedBcsrSections> {
+    let v = vertex_count as usize;
+    let valid: Vec<(u32, u32)> = edges
+        .iter()
+        .copied()
+        .filter(|&(source, target)| source < vertex_count && target < vertex_count)
+        .collect();
+    let mut head_offsets = Vec::with_capacity(valid.len().saturating_add(1));
+    let mut head_participants = Vec::with_capacity(valid.len());
+    let mut tail_offsets = Vec::with_capacity(valid.len().saturating_add(1));
+    let mut tail_participants = Vec::with_capacity(valid.len());
+    head_offsets.push(0);
+    tail_offsets.push(0);
+    for &(source, target) in &valid {
+        head_participants.push(source);
+        head_offsets.push(u32::try_from(head_participants.len()).ok()?);
+        tail_participants.push(target);
+        tail_offsets.push(u32::try_from(tail_participants.len()).ok()?);
+    }
+    let mut outgoing_buckets: Vec<Vec<u32>> = vec![Vec::new(); v];
+    let mut incoming_buckets: Vec<Vec<u32>> = vec![Vec::new(); v];
+    for (index, &(source, target)) in valid.iter().enumerate() {
+        let edge_id = u32::try_from(index).ok()?;
+        outgoing_buckets[source as usize].push(edge_id);
+        incoming_buckets[target as usize].push(edge_id);
+    }
+    let mut vertex_outgoing_offsets = Vec::with_capacity(v.saturating_add(1));
+    let mut vertex_outgoing_hyperedges = Vec::new();
+    let mut vertex_incoming_offsets = Vec::with_capacity(v.saturating_add(1));
+    let mut vertex_incoming_hyperedges = Vec::new();
+    vertex_outgoing_offsets.push(0);
+    vertex_incoming_offsets.push(0);
+    for bucket in outgoing_buckets {
+        vertex_outgoing_hyperedges.extend(bucket);
+        vertex_outgoing_offsets.push(u32::try_from(vertex_outgoing_hyperedges.len()).ok()?);
+    }
+    for bucket in incoming_buckets {
+        vertex_incoming_hyperedges.extend(bucket);
+        vertex_incoming_offsets.push(u32::try_from(vertex_incoming_hyperedges.len()).ok()?);
+    }
+    Some(GeneratedBcsrSections {
+        head_offsets,
+        head_participants,
+        tail_offsets,
+        tail_participants,
+        vertex_outgoing_offsets,
+        vertex_outgoing_hyperedges,
+        vertex_incoming_offsets,
+        vertex_incoming_hyperedges,
+    })
 }
 
 /// Builds generated CSR arrays for `PageRank` proptests.
