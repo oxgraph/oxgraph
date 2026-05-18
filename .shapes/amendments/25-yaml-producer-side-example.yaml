@@ -1,0 +1,13 @@
+id: 25
+name: YAML producer-side example
+description: YAML producer-side example
+targets:
+  shape_ids:
+  - 20
+status: proposed
+intent:
+  kind: amendment
+  summary: Example streaming saphyr YAML events into HypergraphBuilder, freezing to BCSR snapshot, writing through a SnapshotSink trait, and round-trip emitting back to YAML via oxgraph-property layer. Lives under crates/oxgraph-hyper-bcsr/examples/. No new crates.
+  source: human
+initiated_by:
+  type: human

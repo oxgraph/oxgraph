@@ -1,0 +1,13 @@
+id: 26
+name: Property snapshot decoder
+description: Property snapshot decoder
+targets:
+  shape_ids:
+  - 19
+status: proposed
+intent:
+  kind: amendment
+  summary: 'Add DecodedPropertyLayer::decode_all(&Snapshot) and DecodedPropertyLayer::decode_sections(descriptor_bytes, data_bytes) to oxgraph-property. Constructor-on-type pattern that mirrors BcsrSnapshotHypergraph::from_snapshot on the topology side. Walks descriptor records and Arrow IPC value/default streams, returning per-layer descriptor+ArrayRef (and optional default ArrayRef). Encoder/validator pair gets a symmetric reader. Required for read-side use (e.g. round-trip examples) that previously had no way to recover property values from snapshot bytes. Covered by encode->decode roundtrip proptest. perf: O(s + sum value_data_len + sum default_data_len).'
+  source: human
+initiated_by:
+  type: human

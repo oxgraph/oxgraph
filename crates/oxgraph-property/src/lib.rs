@@ -1930,6 +1930,66 @@ pub struct PropertySnapshotSummary {
     pub total_logical_values: usize,
 }
 
+/// Arrow payload of a property layer decoded from snapshot bytes.
+///
+/// Dense layers expose a single value array indexed by logical position. Sparse
+/// layers expose the explicit `(indices, values)` pair plus an optional
+/// non-null default array; the index array's [`arrow_schema::DataType`] matches
+/// the encoded sparse index width.
+///
+/// # Performance
+///
+/// Cloning is `O(1)` (each variant holds [`ArrayRef`] handles).
+#[derive(Clone, Debug)]
+#[must_use]
+#[non_exhaustive]
+pub enum DecodedPropertyData {
+    /// Dense Arrow values; `values.len()` equals the descriptor's logical length.
+    Dense {
+        /// Decoded value Arrow array.
+        values: ArrayRef,
+    },
+    /// Sparse Arrow values plus optional default scalar.
+    Sparse {
+        /// Sparse index Arrow array; `indices.len() == values.len()`.
+        indices: ArrayRef,
+        /// Sparse value Arrow array; `values.len() == indices.len()`.
+        values: ArrayRef,
+        /// Length-one non-null default array when [`MissingPolicy::Default`] is in effect.
+        default: Option<ArrayRef>,
+    },
+}
+
+/// One property layer decoded from snapshot bytes.
+///
+/// Returned by [`DecodedPropertyLayer::decode_all`] and
+/// [`DecodedPropertyLayer::decode_sections`].
+/// Field types mirror the descriptor record without exposing the wire word
+/// width, so callers can introspect the layer without referencing
+/// [`PropertySnapshotMetaWord`] directly.
+///
+/// # Performance
+///
+/// Cloning is `O(name bytes)` (the Arrow payload clones in `O(1)`).
+#[derive(Clone, Debug)]
+#[must_use]
+pub struct DecodedPropertyLayer {
+    /// Stable layer ID as decoded from the descriptor record.
+    pub layer_id: u64,
+    /// Layer name decoded from the descriptor string table.
+    pub name: String,
+    /// ID family the layer is keyed by.
+    pub id_family: IdFamily,
+    /// Layer role tag.
+    pub role: LayerRole,
+    /// Storage mode (carrying the sparse missing policy when applicable).
+    pub storage: StorageMode,
+    /// Logical layer length declared by the descriptor record.
+    pub logical_len: usize,
+    /// Arrow payload decoded from the layer's IPC value (and optional default) stream.
+    pub data: DecodedPropertyData,
+}
+
 /// Wire header for the property descriptor section.
 #[derive(Clone, Copy, Debug, FromBytes, Immutable, IntoBytes, KnownLayout)]
 #[repr(C)]
@@ -2328,6 +2388,156 @@ where
         layer_count: record_count_usize,
         total_logical_values,
     })
+}
+
+impl DecodedPropertyLayer {
+    /// Decodes every property layer carried by a snapshot.
+    ///
+    /// Mirrors [`BcsrSnapshotHypergraph::from_snapshot`] on the topology side:
+    /// a single constructor on the decoded type that takes the wire snapshot
+    /// and returns the materialized form. Each layer is returned in descriptor
+    /// order with its Arrow payload restored via
+    /// [`arrow_ipc::reader::StreamReader`].
+    ///
+    /// Calls [`validate_property_snapshot`] before decoding so the diagnostics
+    /// match the validator exactly.
+    ///
+    /// [`BcsrSnapshotHypergraph::from_snapshot`]: https://docs.rs/oxgraph-hyper-bcsr/latest/oxgraph_hyper_bcsr/struct.BcsrSnapshotHypergraph.html#method.from_snapshot
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PropertyError`] if required sections are missing, have an
+    /// unsupported version, or contain inconsistent descriptor/data records.
+    ///
+    /// # Performance
+    ///
+    /// `O(s + l + total Arrow IPC payload bytes)` for snapshot section count
+    /// `s` and property layer count `l`.
+    pub fn decode_all<W>(snapshot: &Snapshot<'_>) -> Result<Vec<Self>, PropertyError>
+    where
+        W: PropertySnapshotMetaWord,
+    {
+        let descriptor_section = snapshot.section(W::PROPERTY_DESCRIPTORS_KIND).ok_or(
+            PropertyError::MissingSnapshotSection {
+                kind: W::PROPERTY_DESCRIPTORS_KIND,
+            },
+        )?;
+        let data_section = snapshot.section(W::PROPERTY_DATA_KIND).ok_or(
+            PropertyError::MissingSnapshotSection {
+                kind: W::PROPERTY_DATA_KIND,
+            },
+        )?;
+        if descriptor_section.version() != SNAPSHOT_PROPERTY_VERSION {
+            return Err(PropertyError::SnapshotSectionVersion {
+                kind: W::PROPERTY_DESCRIPTORS_KIND,
+                version: descriptor_section.version(),
+            });
+        }
+        if data_section.version() != SNAPSHOT_PROPERTY_VERSION {
+            return Err(PropertyError::SnapshotSectionVersion {
+                kind: W::PROPERTY_DATA_KIND,
+                version: data_section.version(),
+            });
+        }
+        Self::decode_sections::<W>(descriptor_section.bytes(), data_section.bytes())
+    }
+
+    /// Decodes property layers from raw descriptor and data section payloads.
+    ///
+    /// Lower-level entry point for callers that already have the two section
+    /// byte slices in hand (e.g. when reassembling property data from a custom
+    /// container). Re-runs [`validate_property_sections`] so structural errors
+    /// surface with identical diagnostics.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PropertyError`] if the encoded payloads are structurally
+    /// invalid.
+    ///
+    /// # Performance
+    ///
+    /// `O(l + total Arrow IPC payload bytes + total name bytes)` for layer
+    /// count `l`.
+    pub fn decode_sections<W>(
+        descriptor_bytes: &[u8],
+        data_bytes: &[u8],
+    ) -> Result<Vec<Self>, PropertyError>
+    where
+        W: PropertySnapshotMetaWord,
+    {
+        let _summary = validate_property_sections::<W>(descriptor_bytes, data_bytes)?;
+        let header_len = core::mem::size_of::<PropertySnapshotHeader>();
+        let record_count_usize = u64_to_usize(read_u64_le(&descriptor_bytes[0..8])?)?;
+        let record_bytes_usize = u64_to_usize(read_u64_le(&descriptor_bytes[8..16])?)?;
+        let record_start = header_len;
+        let string_start = record_start.checked_add(record_bytes_usize).ok_or(
+            PropertyError::SnapshotDescriptorMismatch {
+                reason: "descriptor section length overflow",
+            },
+        )?;
+        let record_bytes_slice = &descriptor_bytes[record_start..string_start];
+        let string_bytes = &descriptor_bytes[string_start..];
+        let record_size = core::mem::size_of::<PropertySnapshotRecord<W>>();
+        let mut out = Vec::with_capacity(record_count_usize);
+        for position in 0..record_count_usize {
+            let start = position.checked_mul(record_size).ok_or(
+                PropertyError::SnapshotDescriptorMismatch {
+                    reason: "record offset overflow",
+                },
+            )?;
+            let record = parse_property_record::<W>(&record_bytes_slice[start..])?;
+            let layer_id = le_word_to_u64::<W>(record.layer_id);
+            let id_family = id_family_from_tag(le_word_to_u32::<W>(record.id_family)?)?;
+            let role = layer_role_from_tag(le_word_to_u32::<W>(record.role)?)?;
+            let storage = storage_from_tags(
+                le_word_to_u32::<W>(record.storage)?,
+                le_word_to_u32::<W>(record.missing_policy)?,
+            )?;
+            let name = read_snapshot_str(
+                string_bytes,
+                le_word_to_usize::<W>(record.name_offset)?,
+                le_word_to_usize::<W>(record.name_len)?,
+            )?
+            .to_string();
+            let logical_len = le_word_to_usize::<W>(record.logical_len)?;
+            let value_offset = le_word_to_usize::<W>(record.value_data_offset)?;
+            let value_len = le_word_to_usize::<W>(record.value_data_len)?;
+            let value_end = checked_end(value_offset, value_len, data_bytes.len())?;
+            let value_batch = read_one_ipc_batch(&data_bytes[value_offset..value_end])?;
+            let default_offset = le_word_to_usize::<W>(record.default_data_offset)?;
+            let default_len = le_word_to_usize::<W>(record.default_data_len)?;
+            let default_batch = if default_len == 0 {
+                None
+            } else {
+                let default_end = checked_end(default_offset, default_len, data_bytes.len())?;
+                Some(read_one_ipc_batch(
+                    &data_bytes[default_offset..default_end],
+                )?)
+            };
+            let data = match storage {
+                StorageMode::Dense => DecodedPropertyData::Dense {
+                    values: Arc::clone(value_batch.column(0)),
+                },
+                StorageMode::Sparse { .. } => DecodedPropertyData::Sparse {
+                    indices: Arc::clone(value_batch.column(0)),
+                    values: Arc::clone(value_batch.column(1)),
+                    default: default_batch
+                        .as_ref()
+                        .map(|batch| Arc::clone(batch.column(0))),
+                },
+            };
+            out.push(Self {
+                layer_id,
+                name,
+                id_family,
+                role,
+                storage,
+                logical_len,
+                data,
+            });
+        }
+        Ok(out)
+    }
 }
 
 /// Validates identity records and required map sections.

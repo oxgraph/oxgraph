@@ -27,6 +27,7 @@ criterion = { workspace = true }
 oxgraph-property = { version = "0.0.0", path = "../oxgraph-property" }
 oxgraph-snapshot = { version = "0.0.0", path = "../oxgraph-snapshot", features = ["alloc"] }
 proptest = { workspace = true }
+saphyr-parser = { workspace = true }
 
 [[bench]]
 name = "bcsr"
@@ -40,6 +41,10 @@ harness = false
 name = "builder"
 harness = false
 required-features = ["build"]
+
+[[example]]
+name = "yaml_to_hypergraph"
+required-features = ["build", "build-property-arrow"]
 
 [[test]]
 name = "build_proptest"

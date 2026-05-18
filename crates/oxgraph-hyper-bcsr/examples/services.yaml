@@ -1,0 +1,8 @@
+services:
+  web:
+    depends_on: [db, cache]
+  worker:
+    depends_on: [db, queue]
+  db: {}
+  cache: {}
+  queue: {}

@@ -5,10 +5,10 @@ use std::{fmt, sync::Arc};
 use arrow_array::{Float32Array, Int32Array, UInt32Array, types::Float32Type};
 use arrow_schema::{DataType, Field};
 use oxgraph_property::{
-    IdFamily, LayerId, LayerRole, MissingPolicy, PropertyError, PropertyLayer, PropertyLayerData,
-    PropertyLayerDescriptor, RelationAxis, SparseWeights, StorageMode, encode_property_snapshot,
-    rekey_layer_to_local, validate_property_sections, validate_unique_layer_ids,
-    validate_unique_names,
+    DecodedPropertyData, DecodedPropertyLayer, IdFamily, LayerId, LayerRole, MissingPolicy,
+    PropertyError, PropertyLayer, PropertyLayerData, PropertyLayerDescriptor, RelationAxis,
+    SparseWeights, StorageMode, encode_property_snapshot, rekey_layer_to_local,
+    validate_property_sections, validate_unique_layer_ids, validate_unique_names,
 };
 use oxgraph_topology::{RelationIndex, RelationWeight, TopologyBase};
 use proptest::{prelude::*, test_runner::TestCaseError};
@@ -192,6 +192,7 @@ proptest! {
         default in -10.0_f32..10.0,
     ) {
         let logical_len = dense_values.len().max(32);
+        let dense_expected = dense_values.clone();
         let dense = prop_ok(PropertyLayer::try_new_dense(
             prop_ok(PropertyLayerDescriptor::<u32, u32>::try_new(
                 LayerId(30_u32),
@@ -203,8 +204,8 @@ proptest! {
             ))?,
             Arc::new(Int32Array::from(dense_values)),
         ))?;
-        let sparse_indices = sparse_pairs.keys().copied().collect::<Vec<_>>();
-        let sparse_values = sparse_pairs.values().copied().collect::<Vec<_>>();
+        let sparse_indices_expected = sparse_pairs.keys().copied().collect::<Vec<_>>();
+        let sparse_values_expected = sparse_pairs.values().copied().collect::<Vec<_>>();
         let sparse = prop_ok(PropertyLayer::try_new_sparse(
             prop_ok(PropertyLayerDescriptor::<u32, u32>::try_new(
                 LayerId(31_u32),
@@ -217,13 +218,74 @@ proptest! {
                 f32_field("sparse"),
             ))?,
             logical_len,
-            Arc::new(UInt32Array::from(sparse_indices)),
-            Arc::new(Float32Array::from(sparse_values)),
+            Arc::new(UInt32Array::from(sparse_indices_expected.clone())),
+            Arc::new(Float32Array::from(sparse_values_expected.clone())),
             Some(Arc::new(Float32Array::from(vec![default]))),
         ))?;
         let encoded = prop_ok(encode_property_snapshot::<u32, u32, u32>(&[dense, sparse]))?;
         let summary = prop_ok(validate_property_sections::<u32>(&encoded.descriptors, &encoded.data))?;
         prop_assert_eq!(summary.layer_count, 2);
+        let decoded = prop_ok(DecodedPropertyLayer::decode_sections::<u32>(
+            &encoded.descriptors,
+            &encoded.data,
+        ))?;
+        prop_assert_eq!(decoded.len(), 2);
+        let DecodedPropertyData::Dense { values: dense_values_array } = &decoded[0].data else {
+            return Err(TestCaseError::fail("dense layer did not decode as dense"));
+        };
+        let dense_array = dense_values_array
+            .as_any()
+            .downcast_ref::<Int32Array>()
+            .ok_or_else(|| TestCaseError::fail("decoded dense layer is not Int32Array"))?;
+        prop_assert_eq!(dense_array.values(), dense_expected.as_slice());
+        prop_assert_eq!(decoded[0].name.as_str(), "dense");
+        prop_assert_eq!(decoded[0].id_family, IdFamily::Element);
+        prop_assert_eq!(decoded[0].role, LayerRole::Property);
+        prop_assert_eq!(decoded[0].logical_len, dense_expected.len());
+        let DecodedPropertyData::Sparse {
+            indices: sparse_indices_array,
+            values: sparse_values_array,
+            default: sparse_default_array,
+        } = &decoded[1].data
+        else {
+            return Err(TestCaseError::fail("sparse layer did not decode as sparse"));
+        };
+        let sparse_indices_decoded = sparse_indices_array
+            .as_any()
+            .downcast_ref::<UInt32Array>()
+            .ok_or_else(|| TestCaseError::fail("decoded sparse indices are not UInt32Array"))?;
+        let sparse_values_decoded = sparse_values_array
+            .as_any()
+            .downcast_ref::<Float32Array>()
+            .ok_or_else(|| TestCaseError::fail("decoded sparse values are not Float32Array"))?;
+        prop_assert_eq!(sparse_indices_decoded.values(), sparse_indices_expected.as_slice());
+        for (decoded_value, expected_value) in sparse_values_decoded
+            .values()
+            .iter()
+            .copied()
+            .zip(sparse_values_expected.iter().copied())
+        {
+            prop_assert!((decoded_value - expected_value).abs() < f32::EPSILON);
+        }
+        let default_array = sparse_default_array
+            .as_ref()
+            .ok_or_else(|| TestCaseError::fail("sparse-default layer lost its default array"))?
+            .as_any()
+            .downcast_ref::<Float32Array>()
+            .ok_or_else(|| TestCaseError::fail("decoded sparse default is not Float32Array"))?;
+        prop_assert_eq!(default_array.len(), 1);
+        prop_assert!((default_array.value(0) - default).abs() < f32::EPSILON);
+        let sparse_default_storage = matches!(
+            decoded[1].storage,
+            StorageMode::Sparse {
+                missing: MissingPolicy::Default,
+            }
+        );
+        prop_assert!(sparse_default_storage);
+        prop_assert_eq!(decoded[1].name.as_str(), "sparse");
+        prop_assert_eq!(decoded[1].id_family, IdFamily::Relation);
+        prop_assert_eq!(decoded[1].role, LayerRole::Weight);
+        prop_assert_eq!(decoded[1].logical_len, logical_len);
     }
 
     /// Dense rekeying over generated reverse permutations preserves canonical values.

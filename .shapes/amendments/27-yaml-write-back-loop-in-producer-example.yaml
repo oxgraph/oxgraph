@@ -1,0 +1,13 @@
+id: 27
+name: YAML write-back loop in producer example
+description: YAML write-back loop in producer example
+targets:
+  shape_ids:
+  - 20
+status: proposed
+intent:
+  kind: amendment
+  summary: 'Extend yaml_to_hypergraph example with a meaning-layer ServicesModel that owns the (service -> deps) map. Adds ServicesModel::from_yaml / from_snapshot / to_yaml / to_snapshot / set_service / remove_service. main() now demonstrates the full write-back loop: parse YAML -> model -> snapshot bytes -> sinks -> model-from-snapshot -> mutate (add metrics, remove worker) -> rebuild snapshot from scratch -> emit YAML -> write to disk. Reinforces shape:16 deferral: the substrate stays append-only; service deletion is handled at the meaning layer by not re-adding the vertex. Documents that BCSR canonicalizes hyperedge participants to vertex-ID order at freeze time.'
+  source: human
+initiated_by:
+  type: human
