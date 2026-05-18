@@ -23,16 +23,16 @@ fn validate_layout_total() {
     let vertex_outgoing_hyperedges: [u32; 1] = kani::any();
     let vertex_incoming_offsets: [u32; 2] = kani::any();
     let vertex_incoming_hyperedges: [u32; 1] = kani::any();
-    let sections = BcsrSections {
-        head_offsets: &head_offsets,
-        head_participants: &head_participants,
-        tail_offsets: &tail_offsets,
-        tail_participants: &tail_participants,
-        vertex_outgoing_offsets: &vertex_outgoing_offsets,
-        vertex_outgoing_hyperedges: &vertex_outgoing_hyperedges,
-        vertex_incoming_offsets: &vertex_incoming_offsets,
-        vertex_incoming_hyperedges: &vertex_incoming_hyperedges,
-    };
+    let sections = BcsrSections::for_kani(
+        &head_offsets,
+        &head_participants,
+        &tail_offsets,
+        &tail_participants,
+        &vertex_outgoing_offsets,
+        &vertex_outgoing_hyperedges,
+        &vertex_incoming_offsets,
+        &vertex_incoming_hyperedges,
+    );
     let _ = BcsrNativeHypergraph::<u32, u32, u32>::open(sections);
 }
 
@@ -48,16 +48,16 @@ fn validate_strict_total() {
     let vertex_outgoing_hyperedges: [u32; 1] = kani::any();
     let vertex_incoming_offsets: [u32; 2] = kani::any();
     let vertex_incoming_hyperedges: [u32; 1] = kani::any();
-    let sections = BcsrSections {
-        head_offsets: &head_offsets,
-        head_participants: &head_participants,
-        tail_offsets: &tail_offsets,
-        tail_participants: &tail_participants,
-        vertex_outgoing_offsets: &vertex_outgoing_offsets,
-        vertex_outgoing_hyperedges: &vertex_outgoing_hyperedges,
-        vertex_incoming_offsets: &vertex_incoming_offsets,
-        vertex_incoming_hyperedges: &vertex_incoming_hyperedges,
-    };
+    let sections = BcsrSections::for_kani(
+        &head_offsets,
+        &head_participants,
+        &tail_offsets,
+        &tail_participants,
+        &vertex_outgoing_offsets,
+        &vertex_outgoing_hyperedges,
+        &vertex_incoming_offsets,
+        &vertex_incoming_hyperedges,
+    );
     let _ = BcsrNativeHypergraph::<u32, u32, u32>::open_with(sections, BcsrValidation::Strict);
 }
 
@@ -123,16 +123,16 @@ fn validated_traversal_in_bounds_h2_v2() {
     let vertex_outgoing_hyperedges: [u32; 2] = kani::any();
     let vertex_incoming_offsets: [u32; 3] = kani::any();
     let vertex_incoming_hyperedges: [u32; 2] = kani::any();
-    let sections = BcsrSections {
-        head_offsets: &head_offsets,
-        head_participants: &head_participants,
-        tail_offsets: &tail_offsets,
-        tail_participants: &tail_participants,
-        vertex_outgoing_offsets: &vertex_outgoing_offsets,
-        vertex_outgoing_hyperedges: &vertex_outgoing_hyperedges,
-        vertex_incoming_offsets: &vertex_incoming_offsets,
-        vertex_incoming_hyperedges: &vertex_incoming_hyperedges,
-    };
+    let sections = BcsrSections::for_kani(
+        &head_offsets,
+        &head_participants,
+        &tail_offsets,
+        &tail_participants,
+        &vertex_outgoing_offsets,
+        &vertex_outgoing_hyperedges,
+        &vertex_incoming_offsets,
+        &vertex_incoming_hyperedges,
+    );
 
     let view = match BcsrNativeHypergraph::<u32, u32, u32>::open(sections) {
         Ok(value) => value,
@@ -208,16 +208,16 @@ fn strict_implies_count_symmetry_h2_v2() {
     let vertex_outgoing_hyperedges: [u32; 2] = kani::any();
     let vertex_incoming_offsets: [u32; 3] = kani::any();
     let vertex_incoming_hyperedges: [u32; 2] = kani::any();
-    let sections = BcsrSections {
-        head_offsets: &head_offsets,
-        head_participants: &head_participants,
-        tail_offsets: &tail_offsets,
-        tail_participants: &tail_participants,
-        vertex_outgoing_offsets: &vertex_outgoing_offsets,
-        vertex_outgoing_hyperedges: &vertex_outgoing_hyperedges,
-        vertex_incoming_offsets: &vertex_incoming_offsets,
-        vertex_incoming_hyperedges: &vertex_incoming_hyperedges,
-    };
+    let sections = BcsrSections::for_kani(
+        &head_offsets,
+        &head_participants,
+        &tail_offsets,
+        &tail_participants,
+        &vertex_outgoing_offsets,
+        &vertex_outgoing_hyperedges,
+        &vertex_incoming_offsets,
+        &vertex_incoming_hyperedges,
+    );
 
     let view =
         match BcsrNativeHypergraph::<u32, u32, u32>::open_with(sections, BcsrValidation::Strict) {

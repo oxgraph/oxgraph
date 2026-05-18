@@ -13,7 +13,7 @@ use oxgraph_hyper::{
 };
 
 use crate::{
-    id::{BcsrHyperedgeId, BcsrParticipantId, BcsrVertexId},
+    id::{BcsrHyperedgeId, BcsrParticipantId, BcsrRole, BcsrVertexId},
     internal::{
         iter::{
             BcsrChainedHyperedges, BcsrChainedParticipants, BcsrChainedRelationIncidences,
@@ -23,7 +23,6 @@ use crate::{
         validation::{index_to_usize_validated, usize_to_index_validated},
         view::BcsrHypergraph,
     },
-    role::BcsrRole,
     word::{BcsrIndex, BcsrWord},
 };
 

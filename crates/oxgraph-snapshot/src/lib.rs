@@ -41,14 +41,18 @@ extern crate kani;
 extern crate alloc;
 
 mod container;
+mod container_error;
 
 #[cfg(kani)]
 mod proofs;
 
 #[cfg(feature = "alloc")]
 pub use crate::container::SnapshotBuilder;
-pub use crate::container::{
-    FORMAT_MAGIC, FORMAT_MAJOR, FORMAT_MINOR, HEADER_SIZE, HeaderOnlySnapshot, MAX_ALIGNMENT_LOG2,
-    MAX_SECTION_COUNT, MAX_SUPPORTED_MINOR, PendingSection, PlanError, SECTION_ENTRY_SIZE, Section,
-    SectionIter, SectionViewError, Snapshot, SnapshotError, SnapshotPlan, ValidationLevel,
+pub use crate::{
+    container::{
+        FORMAT_MAGIC, FORMAT_MAJOR, FORMAT_MINOR, HEADER_SIZE, HeaderOnlySnapshot,
+        MAX_ALIGNMENT_LOG2, MAX_SECTION_COUNT, MAX_SUPPORTED_MINOR, PendingSection,
+        SECTION_ENTRY_SIZE, Section, SectionIter, Snapshot, SnapshotPlan, ValidationLevel,
+    },
+    container_error::{PlanError, SectionViewError, SnapshotError},
 };

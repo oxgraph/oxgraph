@@ -6,7 +6,28 @@
 //!
 //! CSR is optimized for outgoing traversal. Incoming traversal requires a CSC
 //! index or another reverse index and is intentionally not implemented here.
+//!
+//! # Optional builder
+//!
+//! The `build` feature enables append-only [`build::GraphBuilder`] and
+//! [`build::WeightedGraphBuilder`] types, plus snapshot export helpers, in
+//! the [`build`] submodule. The additional `build-property-arrow` feature
+//! enables property-snapshot export via `oxgraph-property`.
+//!
+//! # Snapshot section kinds
+//!
+//! | Family | Description |
+//! | ------ | ----------- |
+//! | `CSR_OFFSETS_*` | CSR offsets array (`node_count + 1` little-endian words) |
+//! | `CSR_TARGETS_*` | CSR targets array (one little-endian word per edge) |
+//!
+//! The `_U16` / `_U32` / `_U64` suffix selects the little-endian word width.
+//! All section-kind constants are `perf: unspecified` — compile-time `u32`
+//! tags.
 #![no_std]
+
+#[cfg(feature = "build")]
+extern crate alloc;
 
 #[cfg(kani)]
 extern crate kani;
@@ -14,62 +35,34 @@ extern crate kani;
 #[cfg(kani)]
 mod proofs;
 
+#[cfg(feature = "build")]
+pub mod build;
+
 use core::{fmt, hash::Hash, marker::PhantomData};
 
-use oxgraph_csr_util::{OffsetIntegrityIssue, check_offset_section, check_value_range};
 use oxgraph_graph::{
     ContainsElement, ContainsRelation, EdgeTargetGraph, ElementIndex, ElementSuccessors,
     GraphCounts, OutgoingEdgeCount, OutgoingGraph, RelationIndex, TopologyBase, TopologyCounts,
 };
+use oxgraph_layout_util::{OffsetIntegrityIssue, check_offset_section, check_value_range};
 use oxgraph_snapshot::{SectionViewError, Snapshot};
 use zerocopy::{
     FromBytes, Immutable, IntoBytes, KnownLayout,
     byteorder::{LE, U16, U32, U64},
 };
 
-/// Section kind for a CSR `u16` offsets array stored in an `oxgraph-snapshot`.
-///
-/// The payload is a sequence of unaligned little-endian `u16` words of length
-/// `node_count + 1`.
-///
-/// # Performance
-///
-/// `perf: unspecified`; this is a compile-time constant.
+/// Section kind for a CSR `u16` offsets array.
 pub const SNAPSHOT_KIND_CSR_OFFSETS_U16: u32 = 0x0001;
-
-/// Section kind for a CSR `u32` offsets array stored in an `oxgraph-snapshot`.
-///
-/// # Performance
-///
-/// `perf: unspecified`; this is a compile-time constant.
+/// Section kind for a CSR `u32` offsets array.
 pub const SNAPSHOT_KIND_CSR_OFFSETS_U32: u32 = 0x0002;
-
-/// Section kind for a CSR `u64` offsets array stored in an `oxgraph-snapshot`.
-///
-/// # Performance
-///
-/// `perf: unspecified`; this is a compile-time constant.
+/// Section kind for a CSR `u64` offsets array.
 pub const SNAPSHOT_KIND_CSR_OFFSETS_U64: u32 = 0x0003;
 
-/// Section kind for a CSR `u16` targets array stored in an `oxgraph-snapshot`.
-///
-/// # Performance
-///
-/// `perf: unspecified`; this is a compile-time constant.
+/// Section kind for a CSR `u16` targets array.
 pub const SNAPSHOT_KIND_CSR_TARGETS_U16: u32 = 0x0004;
-
-/// Section kind for a CSR `u32` targets array stored in an `oxgraph-snapshot`.
-///
-/// # Performance
-///
-/// `perf: unspecified`; this is a compile-time constant.
+/// Section kind for a CSR `u32` targets array.
 pub const SNAPSHOT_KIND_CSR_TARGETS_U32: u32 = 0x0005;
-
-/// Section kind for a CSR `u64` targets array stored in an `oxgraph-snapshot`.
-///
-/// # Performance
-///
-/// `perf: unspecified`; this is a compile-time constant.
+/// Section kind for a CSR `u64` targets array.
 pub const SNAPSHOT_KIND_CSR_TARGETS_U64: u32 = 0x0006;
 
 /// Private sealing traits for CSR-supported index and snapshot word types.
@@ -257,7 +250,7 @@ impl_csr_snapshot_index!(
 /// wrappers such as [`U32<LE>`] and still expose the same host-endian graph ID
 /// type through [`Self::Index`].
 ///
-/// Implementors are also `oxgraph_csr_util::ZerocopyWord`, which exposes the
+/// Implementors are also `oxgraph_layout_util::ZerocopyWord`, which exposes the
 /// shared `read_as_usize` predicate used by the layout-validation primitives
 /// in `oxgraph-csr-util`. The set of `ZerocopyWord` types is sealed in
 /// `oxgraph-csr-util`, so this supertrait does not widen the public surface.
@@ -265,7 +258,7 @@ impl_csr_snapshot_index!(
 /// # Performance
 ///
 /// Reading a word is expected to be `O(1)`.
-pub trait CsrWord: Copy + oxgraph_csr_util::ZerocopyWord {
+pub trait CsrWord: Copy + oxgraph_layout_util::ZerocopyWord {
     /// Host-endian logical index decoded from this word.
     ///
     /// # Performance

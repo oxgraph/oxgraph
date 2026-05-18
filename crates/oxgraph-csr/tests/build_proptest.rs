@@ -4,11 +4,11 @@ use std::sync::Arc;
 
 use arrow_array::Int32Array;
 use arrow_schema::{DataType, Field};
+use oxgraph_csr::build::{
+    GraphBuildError, GraphBuilder, GraphEdgeId, GraphNodeId, export_csr_snapshot_with_properties,
+};
 use oxgraph_graph::{
     ContainsElement, ContainsRelation, GraphCounts, LocalElementIdentity, LocalRelationIdentity,
-};
-use oxgraph_graph_build::{
-    GraphBuildError, GraphBuilder, GraphEdgeId, GraphNodeId, export_csr_snapshot_with_properties,
 };
 use oxgraph_property::{
     GraphPropertyLayers, IdFamily, LayerId, LayerRole, PropertyLayer, PropertyLayerDescriptor,

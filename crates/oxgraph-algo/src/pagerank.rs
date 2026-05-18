@@ -1742,6 +1742,121 @@ where
     normalize_personalization(out, count, sum)
 }
 
+/// Personalization source used by [`PageRank`](crate) initialization.
+///
+/// Drives the per-visible-state initialization: either copy from a
+/// caller-supplied vector ([`Self::FromInput`]) or fill every visible state
+/// with `S::ONE` ([`Self::Uniform`]).
+///
+/// # Performance
+///
+/// `value_at` is `O(1)`. The fill methods walk visible elements and (for
+/// hypergraphs) visible relations exactly once.
+enum PersonalizationSource<'a, S> {
+    /// Initialize every visible state slot to `S::ONE`.
+    Uniform,
+    /// Copy the value at the matching state index from the supplied slice.
+    /// The slice must already be range-checked against the caller's state
+    /// bound; [`Self::value_at`] only validates each value.
+    FromInput(&'a [S]),
+}
+
+impl<S> PersonalizationSource<'_, S>
+where
+    S: PageRankScalar,
+{
+    /// Returns the value to place at `state_index`.
+    ///
+    /// `FromInput` reads `input[state_index]` and rejects non-finite or
+    /// negative entries via [`PageRankError::InvalidPersonalization`].
+    /// `Uniform` returns `S::ONE` unconditionally.
+    ///
+    /// # Performance
+    ///
+    /// `O(1)`.
+    fn value_at(&self, state_index: usize) -> Result<S, PageRankError<S>> {
+        match *self {
+            Self::Uniform => Ok(S::ONE),
+            Self::FromInput(input) => {
+                let value = input[state_index];
+                check_personalization_value(state_index, value)?;
+                Ok(value)
+            }
+        }
+    }
+
+    /// Fills the hypergraph teleport vector at visible-element and
+    /// visible-relation states.
+    ///
+    /// Returns `(count, sum)` for the normalization step. `state_bound` is
+    /// the total length of `out` (`element_bound + relation_bound`); it is
+    /// used to bounds-check `FromInput` slices before iteration.
+    ///
+    /// # Errors
+    ///
+    /// [`PageRankError::PersonalizationTooShort`] when the input slice is
+    /// shorter than `state_bound`, plus any error returned by per-index
+    /// validation (`StateIndexOutOfBounds`, `DuplicateVisibleElement`,
+    /// `DuplicateVisibleRelation`, `InvalidPersonalization`).
+    ///
+    /// # Performance
+    ///
+    /// `O(|elements| + |relations|)` plus the index/visibility check cost
+    /// per state slot.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "method threads separate element/relation iterables, scratch slices, and the state bound; bundling them obscures the borrow shape that callers explicitly construct"
+    )]
+    fn fill_hypergraph<H, IE, IR>(
+        &self,
+        hypergraph: &H,
+        elements: IE,
+        relations: IR,
+        state_bound: usize,
+        out: &mut [S],
+        visible_elements: &mut [u8],
+        visible_relations: &mut [u8],
+    ) -> Result<(usize, S), PageRankError<S>>
+    where
+        H: ElementIndex + RelationIndex,
+        IE: IntoIterator<Item = ElementId<H>>,
+        IR: IntoIterator<Item = RelationId<H>>,
+    {
+        if let Self::FromInput(input) = *self
+            && input.len() < state_bound
+        {
+            return Err(PageRankError::PersonalizationTooShort {
+                required: state_bound,
+                actual: input.len(),
+            });
+        }
+        let e_bound = hypergraph.element_bound();
+        let r_bound = hypergraph.relation_bound();
+        let mut count = 0_usize;
+        let mut sum = S::ZERO;
+        for element in elements {
+            let index = hypergraph.element_index(element);
+            check_index(index, e_bound)?;
+            mark_visible_element(visible_elements, index)?;
+            let value = self.value_at(index)?;
+            out[index] = value;
+            sum += value;
+            count += 1;
+        }
+        for relation in relations {
+            let index = hypergraph.relation_index(relation);
+            check_relation_index(index, r_bound)?;
+            mark_visible_relation(visible_relations, index)?;
+            let state = e_bound + index;
+            let value = self.value_at(state)?;
+            out[state] = value;
+            sum += value;
+            count += 1;
+        }
+        Ok((count, sum))
+    }
+}
+
 #[expect(
     clippy::too_many_arguments,
     reason = "helper threads separate element/relation state and caller scratch explicitly"
@@ -1765,125 +1880,20 @@ where
     clear(out, state_bound);
     clear_u8(visible_elements, hypergraph.element_bound());
     clear_u8(visible_relations, hypergraph.relation_bound());
-    let mut count = 0_usize;
-    let mut sum = S::ZERO;
-    if let Some(input) = personalization {
-        if input.len() < state_bound {
-            return Err(PageRankError::PersonalizationTooShort {
-                required: state_bound,
-                actual: input.len(),
-            });
-        }
-        fill_hyper_personalization_from_input(
-            hypergraph,
-            elements,
-            relations,
-            input,
-            out,
-            visible_elements,
-            visible_relations,
-            &mut count,
-            &mut sum,
-        )?;
-    } else {
-        fill_hyper_personalization_uniform(
-            hypergraph,
-            elements,
-            relations,
-            out,
-            visible_elements,
-            visible_relations,
-            &mut count,
-            &mut sum,
-        )?;
-    }
+    let source = personalization.map_or(
+        PersonalizationSource::Uniform,
+        PersonalizationSource::FromInput,
+    );
+    let (count, sum) = source.fill_hypergraph(
+        hypergraph,
+        elements,
+        relations,
+        state_bound,
+        out,
+        visible_elements,
+        visible_relations,
+    )?;
     normalize_personalization(out, count, sum)
-}
-
-#[expect(
-    clippy::too_many_arguments,
-    reason = "helper threads separate element and relation state without allocation wrappers"
-)]
-fn fill_hyper_personalization_from_input<H, IE, IR, S>(
-    hypergraph: &H,
-    elements: IE,
-    relations: IR,
-    input: &[S],
-    out: &mut [S],
-    visible_elements: &mut [u8],
-    visible_relations: &mut [u8],
-    count: &mut usize,
-    sum: &mut S,
-) -> Result<(), PageRankError<S>>
-where
-    H: ElementIndex + RelationIndex,
-    IE: IntoIterator<Item = ElementId<H>>,
-    IR: IntoIterator<Item = RelationId<H>>,
-    S: PageRankScalar,
-{
-    let e_bound = hypergraph.element_bound();
-    for element in elements {
-        let index = hypergraph.element_index(element);
-        check_index(index, e_bound)?;
-        mark_visible_element(visible_elements, index)?;
-        let value = input[index];
-        check_personalization_value(index, value)?;
-        out[index] = value;
-        *sum += value;
-        *count += 1;
-    }
-    for relation in relations {
-        let index = hypergraph.relation_index(relation);
-        check_relation_index(index, hypergraph.relation_bound())?;
-        mark_visible_relation(visible_relations, index)?;
-        let state = e_bound + index;
-        let value = input[state];
-        check_personalization_value(state, value)?;
-        out[state] = value;
-        *sum += value;
-        *count += 1;
-    }
-    Ok(())
-}
-
-#[expect(
-    clippy::too_many_arguments,
-    reason = "helper threads separate element and relation state without allocation wrappers"
-)]
-fn fill_hyper_personalization_uniform<H, IE, IR, S>(
-    hypergraph: &H,
-    elements: IE,
-    relations: IR,
-    out: &mut [S],
-    visible_elements: &mut [u8],
-    visible_relations: &mut [u8],
-    count: &mut usize,
-    sum: &mut S,
-) -> Result<(), PageRankError<S>>
-where
-    H: ElementIndex + RelationIndex,
-    IE: IntoIterator<Item = ElementId<H>>,
-    IR: IntoIterator<Item = RelationId<H>>,
-    S: PageRankScalar,
-{
-    let e_bound = hypergraph.element_bound();
-    for element in elements {
-        let index = hypergraph.element_index(element);
-        check_index(index, e_bound)?;
-        mark_visible_element(visible_elements, index)?;
-        out[index] = S::ONE;
-        *sum += S::ONE;
-        *count += 1;
-    }
-    for relation in relations {
-        let index = hypergraph.relation_index(relation);
-        check_relation_index(index, hypergraph.relation_bound())?;
-        mark_visible_relation(visible_relations, index)?;
-        out[e_bound + index] = S::ONE;
-        *sum += S::ONE;
-        *count += 1;
-    }
-    Ok(())
 }
 
 fn normalize_personalization<S: PageRankScalar>(

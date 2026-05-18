@@ -31,16 +31,26 @@
 //! vertex-major arrays describe the same incidence set. `Layout` is the
 //! default for trusted producers; `Strict` is required for end-to-end
 //! semantic guarantees on untrusted inputs.
+//!
+//! # Optional builder
+//!
+//! The `build` feature enables the append-only [`build::HypergraphBuilder`]
+//! and [`build::WeightedHypergraphBuilder`] types plus snapshot export
+//! helpers in the [`build`] submodule. The additional `build-property-arrow`
+//! feature enables property-snapshot export via `oxgraph-property`.
 #![no_std]
+
+#[cfg(feature = "build")]
+extern crate alloc;
 
 #[cfg(kani)]
 extern crate kani;
 
+#[cfg(feature = "build")]
+pub mod build;
 mod error;
 mod id;
 mod internal;
-mod role;
-mod sections;
 mod snapshot;
 mod word;
 
@@ -49,14 +59,13 @@ mod proofs;
 
 pub use crate::{
     error::{BcsrError, BcsrRoleSide, BcsrSection, BcsrSnapshotError},
-    id::{BcsrHyperedgeId, BcsrParticipantId, BcsrVertexId},
+    id::{BcsrHyperedgeId, BcsrParticipantId, BcsrRole, BcsrVertexId},
     internal::{
         BcsrChainedHyperedges, BcsrChainedParticipants, BcsrChainedRelationIncidences,
         BcsrElementIncidences, BcsrHyperedgeSlice, BcsrHypergraph, BcsrParticipantSlice,
-        BcsrPredecessorVertices, BcsrSuccessorVertices, BcsrValidation, BcsrVertexSlice,
+        BcsrPredecessorVertices, BcsrSections, BcsrSuccessorVertices, BcsrValidation,
+        BcsrVertexSlice,
     },
-    role::BcsrRole,
-    sections::BcsrSections,
     snapshot::{
         SNAPSHOT_KIND_BCSR_HEAD_OFFSETS_U16, SNAPSHOT_KIND_BCSR_HEAD_OFFSETS_U32,
         SNAPSHOT_KIND_BCSR_HEAD_OFFSETS_U64, SNAPSHOT_KIND_BCSR_HEAD_PARTICIPANTS_U16,

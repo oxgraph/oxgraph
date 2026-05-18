@@ -6,100 +6,89 @@ use core::{iter::Chain, marker::PhantomData};
 
 use crate::{
     id::{BcsrHyperedgeId, BcsrParticipantId, BcsrVertexId},
-    internal::validation::{index_to_usize_validated, usize_to_index_validated},
-    sections::BcsrSections,
+    internal::{
+        validation::{index_to_usize_validated, usize_to_index_validated},
+        view::BcsrSections,
+    },
     word::{BcsrIndex, BcsrWord},
 };
+
+/// Iterator over a borrowed slice of words, mapping each word's decoded
+/// index to a destination newtype via `Id::from`.
+///
+/// Used to back both [`BcsrVertexSlice`] and [`BcsrHyperedgeSlice`] (and any
+/// future `BcsrIdSlice<Word, NewtypeId>` flavor) through `pub type` aliases.
+///
+/// # Performance
+///
+/// Advancing the iterator is `O(1)` and performs no allocation.
+#[derive(Clone, Debug)]
+pub struct BcsrIdSlice<'view, Word: BcsrWord, Id> {
+    /// Remaining words for this slice.
+    inner: core::slice::Iter<'view, Word>,
+    /// Brands the iterator to the destination ID newtype without coupling
+    /// `Send` / `Sync` to it (function-return `PhantomData` is covariant).
+    _id: PhantomData<fn() -> Id>,
+}
+
+impl<'view, Word: BcsrWord, Id> BcsrIdSlice<'view, Word, Id> {
+    /// Constructs a slice iterator from a borrowed `Word` slice.
+    pub(in crate::internal) fn new(slice: &'view [Word]) -> Self {
+        Self {
+            inner: slice.iter(),
+            _id: PhantomData,
+        }
+    }
+}
+
+impl<Word: BcsrWord, Id> Iterator for BcsrIdSlice<'_, Word, Id>
+where
+    Id: From<Word::Index>,
+{
+    type Item = Id;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.inner.next().map(|word| Id::from(word.get()))
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.inner.size_hint()
+    }
+}
+
+impl<Word: BcsrWord, Id> ExactSizeIterator for BcsrIdSlice<'_, Word, Id>
+where
+    Id: From<Word::Index>,
+{
+    fn len(&self) -> usize {
+        self.inner.len()
+    }
+}
+
+impl<Word: BcsrWord, Id> DoubleEndedIterator for BcsrIdSlice<'_, Word, Id>
+where
+    Id: From<Word::Index>,
+{
+    fn next_back(&mut self) -> Option<Self::Item> {
+        self.inner.next_back().map(|word| Id::from(word.get()))
+    }
+}
 
 /// Iterator over a borrowed slice of vertex words.
 ///
 /// # Performance
 ///
 /// Advancing the iterator is `O(1)` and performs no allocation.
-#[derive(Clone, Debug)]
-pub struct BcsrVertexSlice<'view, Word: BcsrWord> {
-    /// Remaining vertex words for this slice.
-    inner: core::slice::Iter<'view, Word>,
-}
-
-impl<'view, Word: BcsrWord> BcsrVertexSlice<'view, Word> {
-    /// Constructs a slice iterator from a borrowed `Word` slice.
-    pub(in crate::internal) fn new(slice: &'view [Word]) -> Self {
-        Self {
-            inner: slice.iter(),
-        }
-    }
-}
-
-impl<Word: BcsrWord> Iterator for BcsrVertexSlice<'_, Word> {
-    type Item = BcsrVertexId<Word::Index>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.inner.next().map(|word| BcsrVertexId(word.get()))
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        self.inner.size_hint()
-    }
-}
-
-impl<Word: BcsrWord> ExactSizeIterator for BcsrVertexSlice<'_, Word> {
-    fn len(&self) -> usize {
-        self.inner.len()
-    }
-}
-
-impl<Word: BcsrWord> DoubleEndedIterator for BcsrVertexSlice<'_, Word> {
-    fn next_back(&mut self) -> Option<Self::Item> {
-        self.inner.next_back().map(|word| BcsrVertexId(word.get()))
-    }
-}
+pub type BcsrVertexSlice<'view, Word> =
+    BcsrIdSlice<'view, Word, BcsrVertexId<<Word as BcsrWord>::Index>>;
 
 /// Iterator over a borrowed slice of hyperedge words.
 ///
 /// # Performance
 ///
 /// Advancing the iterator is `O(1)` and performs no allocation.
-#[derive(Clone, Debug)]
-pub struct BcsrHyperedgeSlice<'view, Word: BcsrWord> {
-    /// Remaining hyperedge words for this slice.
-    inner: core::slice::Iter<'view, Word>,
-}
-
-impl<'view, Word: BcsrWord> BcsrHyperedgeSlice<'view, Word> {
-    /// Constructs a slice iterator from a borrowed `Word` slice.
-    pub(in crate::internal) fn new(slice: &'view [Word]) -> Self {
-        Self {
-            inner: slice.iter(),
-        }
-    }
-}
-
-impl<Word: BcsrWord> Iterator for BcsrHyperedgeSlice<'_, Word> {
-    type Item = BcsrHyperedgeId<Word::Index>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.inner.next().map(|word| BcsrHyperedgeId(word.get()))
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        self.inner.size_hint()
-    }
-}
-
-impl<Word: BcsrWord> ExactSizeIterator for BcsrHyperedgeSlice<'_, Word> {
-    fn len(&self) -> usize {
-        self.inner.len()
-    }
-}
-
-impl<Word: BcsrWord> DoubleEndedIterator for BcsrHyperedgeSlice<'_, Word> {
-    fn next_back(&mut self) -> Option<Self::Item> {
-        self.inner
-            .next_back()
-            .map(|word| BcsrHyperedgeId(word.get()))
-    }
-}
+pub type BcsrHyperedgeSlice<'view, Word> =
+    BcsrIdSlice<'view, Word, BcsrHyperedgeId<<Word as BcsrWord>::Index>>;
 
 /// Chained vertex iterator yielding head participants then tail participants.
 ///
@@ -318,57 +307,67 @@ where
     bucket_start.checked_add(local)
 }
 
-/// Iterator over successor vertices of a directed-hypergraph vertex.
+/// Iterator over neighbor vertices reached through a sequence of hyperedges
+/// resolved against an (offsets, participants) pair.
+///
+/// Backing type for both [`BcsrSuccessorVertices`] (outgoing relations →
+/// tail buckets) and [`BcsrPredecessorVertices`] (incoming relations →
+/// head buckets). Direction is encoded by which sections the constructor
+/// receives; the struct itself is direction-neutral.
 ///
 /// # Performance
 ///
 /// Advancing the iterator is `O(1)` amortised and performs no allocation.
 #[derive(Clone, Debug)]
-pub struct BcsrSuccessorVertices<'view, RelationWord, OffsetWord, VertexWord>
+pub struct BcsrNeighborVertices<'view, RelationWord, OffsetWord, VertexWord>
 where
     RelationWord: BcsrWord,
     OffsetWord: BcsrWord,
     VertexWord: BcsrWord,
 {
-    /// Remaining outgoing hyperedges for the source vertex.
-    outgoing: core::slice::Iter<'view, RelationWord>,
-    /// Remaining vertices in the current hyperedge's tail bucket.
-    current_tail: core::slice::Iter<'view, VertexWord>,
-    /// Hyperedge-major tail offsets.
-    tail_offsets: &'view [OffsetWord],
-    /// Hyperedge-major tail participants.
-    tail_participants: &'view [VertexWord],
+    /// Remaining hyperedges along this traversal direction.
+    relations: core::slice::Iter<'view, RelationWord>,
+    /// Remaining vertices in the current hyperedge's resolved bucket.
+    current_bucket: core::slice::Iter<'view, VertexWord>,
+    /// Hyperedge-major bucket offsets for the chosen direction (tail for
+    /// successors, head for predecessors).
+    bucket_offsets: &'view [OffsetWord],
+    /// Hyperedge-major participants for the chosen direction.
+    bucket_participants: &'view [VertexWord],
 }
 
 impl<'view, RelationWord, OffsetWord, VertexWord>
-    BcsrSuccessorVertices<'view, RelationWord, OffsetWord, VertexWord>
+    BcsrNeighborVertices<'view, RelationWord, OffsetWord, VertexWord>
 where
     RelationWord: BcsrWord,
     OffsetWord: BcsrWord,
     VertexWord: BcsrWord,
 {
-    /// Constructs a successor iterator for the given outgoing-hyperedge slice.
+    /// Constructs a neighbor iterator from a relation slice and the
+    /// (offsets, participants) pair for the desired direction. Use the
+    /// `tail_offsets` / `tail_participants` for successor traversal and
+    /// `head_offsets` / `head_participants` for predecessor traversal.
     pub(in crate::internal) fn new(
-        outgoing_slice: &'view [RelationWord],
-        tail_offsets: &'view [OffsetWord],
-        tail_participants: &'view [VertexWord],
+        relations: &'view [RelationWord],
+        bucket_offsets: &'view [OffsetWord],
+        bucket_participants: &'view [VertexWord],
     ) -> Self {
         Self {
-            outgoing: outgoing_slice.iter(),
-            current_tail: [].iter(),
-            tail_offsets,
-            tail_participants,
+            relations: relations.iter(),
+            current_bucket: [].iter(),
+            bucket_offsets,
+            bucket_participants,
         }
     }
 
-    /// Reloads `current_tail` from the next outgoing hyperedge if any remain.
+    /// Reloads `current_bucket` from the next relation if any remain.
     fn advance_outer(&mut self) -> bool {
-        match self.outgoing.next() {
+        match self.relations.next() {
             Some(h_word) => {
                 let h_index = index_to_usize_validated(h_word.get());
-                let start = index_to_usize_validated(self.tail_offsets[h_index].get());
-                let end = index_to_usize_validated(self.tail_offsets[h_index + 1].get());
-                self.current_tail = self.tail_participants[start..end].iter();
+                let start = index_to_usize_validated(self.bucket_offsets[h_index].get());
+                let end = index_to_usize_validated(self.bucket_offsets[h_index + 1].get());
+                self.current_bucket = self.bucket_participants[start..end].iter();
                 true
             }
             None => false,
@@ -377,7 +376,7 @@ where
 }
 
 impl<RelationWord, OffsetWord, VertexWord> Iterator
-    for BcsrSuccessorVertices<'_, RelationWord, OffsetWord, VertexWord>
+    for BcsrNeighborVertices<'_, RelationWord, OffsetWord, VertexWord>
 where
     RelationWord: BcsrWord,
     OffsetWord: BcsrWord,
@@ -387,7 +386,7 @@ where
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
-            if let Some(word) = self.current_tail.next() {
+            if let Some(word) = self.current_bucket.next() {
                 return Some(BcsrVertexId(word.get()));
             }
             if !self.advance_outer() {
@@ -396,82 +395,19 @@ where
         }
     }
 }
+
+/// Iterator over successor vertices of a directed-hypergraph vertex.
+///
+/// # Performance
+///
+/// Advancing the iterator is `O(1)` amortised and performs no allocation.
+pub type BcsrSuccessorVertices<'view, RelationWord, OffsetWord, VertexWord> =
+    BcsrNeighborVertices<'view, RelationWord, OffsetWord, VertexWord>;
 
 /// Iterator over predecessor vertices of a directed-hypergraph vertex.
 ///
 /// # Performance
 ///
 /// Advancing the iterator is `O(1)` amortised and performs no allocation.
-#[derive(Clone, Debug)]
-pub struct BcsrPredecessorVertices<'view, RelationWord, OffsetWord, VertexWord>
-where
-    RelationWord: BcsrWord,
-    OffsetWord: BcsrWord,
-    VertexWord: BcsrWord,
-{
-    /// Remaining incoming hyperedges for the target vertex.
-    incoming: core::slice::Iter<'view, RelationWord>,
-    /// Remaining vertices in the current hyperedge's head bucket.
-    current_head: core::slice::Iter<'view, VertexWord>,
-    /// Hyperedge-major head offsets.
-    head_offsets: &'view [OffsetWord],
-    /// Hyperedge-major head participants.
-    head_participants: &'view [VertexWord],
-}
-
-impl<'view, RelationWord, OffsetWord, VertexWord>
-    BcsrPredecessorVertices<'view, RelationWord, OffsetWord, VertexWord>
-where
-    RelationWord: BcsrWord,
-    OffsetWord: BcsrWord,
-    VertexWord: BcsrWord,
-{
-    /// Constructs a predecessor iterator for the given incoming-hyperedge slice.
-    pub(in crate::internal) fn new(
-        incoming_slice: &'view [RelationWord],
-        head_offsets: &'view [OffsetWord],
-        head_participants: &'view [VertexWord],
-    ) -> Self {
-        Self {
-            incoming: incoming_slice.iter(),
-            current_head: [].iter(),
-            head_offsets,
-            head_participants,
-        }
-    }
-
-    /// Reloads `current_head` from the next incoming hyperedge if any remain.
-    fn advance_outer(&mut self) -> bool {
-        match self.incoming.next() {
-            Some(h_word) => {
-                let h_index = index_to_usize_validated(h_word.get());
-                let start = index_to_usize_validated(self.head_offsets[h_index].get());
-                let end = index_to_usize_validated(self.head_offsets[h_index + 1].get());
-                self.current_head = self.head_participants[start..end].iter();
-                true
-            }
-            None => false,
-        }
-    }
-}
-
-impl<RelationWord, OffsetWord, VertexWord> Iterator
-    for BcsrPredecessorVertices<'_, RelationWord, OffsetWord, VertexWord>
-where
-    RelationWord: BcsrWord,
-    OffsetWord: BcsrWord,
-    VertexWord: BcsrWord,
-{
-    type Item = BcsrVertexId<VertexWord::Index>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        loop {
-            if let Some(word) = self.current_head.next() {
-                return Some(BcsrVertexId(word.get()));
-            }
-            if !self.advance_outer() {
-                return None;
-            }
-        }
-    }
-}
+pub type BcsrPredecessorVertices<'view, RelationWord, OffsetWord, VertexWord> =
+    BcsrNeighborVertices<'view, RelationWord, OffsetWord, VertexWord>;

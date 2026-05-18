@@ -5,11 +5,11 @@
 //! data, or yield an inconsistent view of the bipartite incidence relation.
 //! The depth of the walk is selected by [`BcsrValidation`].
 
-use oxgraph_csr_util::{OffsetIntegrityIssue, check_offset_section, check_value_range};
+use oxgraph_layout_util::{OffsetIntegrityIssue, check_offset_section, check_value_range};
 
 use crate::{
     error::{BcsrError, BcsrRoleSide, BcsrSection},
-    sections::BcsrSections,
+    internal::view::BcsrSections,
     word::{BcsrIndex, BcsrWord},
 };
 
@@ -298,7 +298,7 @@ where
 
 /// Validates one offset array: length is `count + 1`, first offset is 0,
 /// monotonic non-decreasing, final offset matches `value_len`. Delegates to
-/// [`oxgraph_csr_util::check_offset_section`] and stamps the [`BcsrSection`]
+/// [`oxgraph_layout_util::check_offset_section`] and stamps the [`BcsrSection`]
 /// discriminator on any returned issue.
 fn validate_one_offsets<Word: BcsrWord>(
     offsets: &[Word],
@@ -371,7 +371,7 @@ where
 }
 
 /// Returns `Err` if any vertex word is `>= vertex_count`. Delegates to
-/// [`oxgraph_csr_util::check_value_range`] and stamps [`BcsrSection`] on the
+/// [`oxgraph_layout_util::check_value_range`] and stamps [`BcsrSection`] on the
 /// returned issue.
 fn check_vertex_values<Word: BcsrWord>(
     values: &[Word],
@@ -383,7 +383,7 @@ fn check_vertex_values<Word: BcsrWord>(
 }
 
 /// Returns `Err` if any hyperedge word is `>= hyperedge_count`. Delegates to
-/// [`oxgraph_csr_util::check_value_range`] and stamps [`BcsrSection`] on the
+/// [`oxgraph_layout_util::check_value_range`] and stamps [`BcsrSection`] on the
 /// returned issue.
 fn check_hyperedge_values<Word: BcsrWord>(
     values: &[Word],

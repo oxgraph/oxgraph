@@ -9,7 +9,7 @@ use oxgraph_topology::{
 
 use crate::bfs::{
     BfsError,
-    core::{Bfs, Forward, Reverse, SeededWorkspaceFrontier, ValidatedStart},
+    core::{Bfs, EpochCounter, Forward, Reverse, SeededWorkspaceFrontier, ValidatedStart},
 };
 
 /// Owned reusable workspace for epoch-marked indexed BFS, branded to a
@@ -43,8 +43,8 @@ where
     marks: Vec<u32>,
     /// Queue storage for discovered elements.
     queue: Vec<ElementId<G>>,
-    /// Current non-zero traversal epoch. Zero is reserved for "never visited".
-    epoch: u32,
+    /// Epoch counter that owns the per-traversal advance / overflow logic.
+    epoch: EpochCounter,
     /// Brands the workspace to a specific view type without coupling
     /// `Send`/`Sync` to `G`.
     _graph: PhantomData<fn() -> G>,
@@ -78,7 +78,7 @@ where
         Self {
             marks: Vec::new(),
             queue: Vec::new(),
-            epoch: 0,
+            epoch: EpochCounter::new(),
             _graph: PhantomData,
         }
     }
@@ -110,7 +110,7 @@ where
         Self {
             marks: alloc::vec![0; element_bound],
             queue: Vec::with_capacity(element_bound),
-            epoch: 0,
+            epoch: EpochCounter::new(),
             _graph: PhantomData,
         }
     }
@@ -138,27 +138,6 @@ where
         if self.queue.capacity() < element_bound {
             self.queue.reserve(element_bound - self.queue.capacity());
         }
-    }
-
-    /// Advances to the next traversal epoch and returns it.
-    ///
-    /// On `u32` overflow, clears every mark to zero and resets the epoch to
-    /// `1`, preserving the invariant that mark `0` represents "never visited"
-    /// and any non-zero mark equal to the current epoch represents
-    /// "visited this traversal".
-    ///
-    /// # Performance
-    ///
-    /// Runs in `O(1)` except when the epoch overflows, where it clears all mark
-    /// entries in `O(self.element_bound_capacity())`.
-    fn advance_epoch(&mut self) -> u32 {
-        if self.epoch == u32::MAX {
-            self.marks.fill(0);
-            self.epoch = 1;
-        } else {
-            self.epoch += 1;
-        }
-        self.epoch
     }
 }
 
@@ -234,7 +213,7 @@ where
     let witness = ValidatedStart::new(graph, start)?;
     let bound = witness.bound();
     workspace.ensure_element_bound(bound);
-    let epoch = workspace.advance_epoch();
+    let epoch = workspace.epoch.advance(&mut workspace.marks);
     let frontier = SeededWorkspaceFrontier::new(
         &mut workspace.marks,
         &mut workspace.queue,
@@ -312,7 +291,7 @@ where
     let witness = ValidatedStart::new(graph, start)?;
     let bound = witness.bound();
     workspace.ensure_element_bound(bound);
-    let epoch = workspace.advance_epoch();
+    let epoch = workspace.epoch.advance(&mut workspace.marks);
     let frontier = SeededWorkspaceFrontier::new(
         &mut workspace.marks,
         &mut workspace.queue,

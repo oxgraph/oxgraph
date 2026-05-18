@@ -8,7 +8,7 @@ use oxgraph_topology::{
 
 use crate::bfs::{
     BfsError,
-    core::{Bfs, Forward, Reverse, SeededEpochFrontier, ValidatedScratch},
+    core::{Bfs, EpochCounter, Forward, Reverse, SeededEpochFrontier, ValidatedScratch},
 };
 
 /// Reusable caller-provided scratch for epoch-marked indexed BFS, branded to
@@ -44,8 +44,8 @@ where
     marks: &'scratch mut [u32],
     /// Queue storage for discovered elements.
     queue: &'scratch mut [ElementId<G>],
-    /// Current non-zero traversal epoch. Zero is reserved for "never visited".
-    epoch: u32,
+    /// Epoch counter that owns the per-traversal advance / overflow logic.
+    epoch: EpochCounter,
     /// Brands the scratch to a specific topology view type without coupling
     /// `Send`/`Sync` to `G`.
     _graph: PhantomData<fn() -> G>,
@@ -76,7 +76,7 @@ where
         Self {
             marks,
             queue,
-            epoch: 0,
+            epoch: EpochCounter::default(),
             _graph: PhantomData,
         }
     }
@@ -119,27 +119,6 @@ where
     #[must_use]
     pub const fn queue_capacity(&self) -> usize {
         self.queue.len()
-    }
-
-    /// Advances to the next traversal epoch and returns it.
-    ///
-    /// On `u32` overflow, clears every mark to zero and resets the epoch to
-    /// `1`, preserving the invariant that mark `0` represents "never visited"
-    /// and any non-zero mark equal to the current epoch represents
-    /// "visited this traversal".
-    ///
-    /// # Performance
-    ///
-    /// Runs in `O(1)` except when the epoch overflows, where it clears `O(m)`
-    /// mark entries for `m = self.mark_capacity()`.
-    fn advance_epoch(&mut self) -> u32 {
-        if self.epoch == u32::MAX {
-            self.marks.fill(0);
-            self.epoch = 1;
-        } else {
-            self.epoch += 1;
-        }
-        self.epoch
     }
 }
 
@@ -218,7 +197,7 @@ where
     G: ContainsElement + ElementSuccessors + ElementIndex,
 {
     let witness = ValidatedScratch::new(graph, start, scratch.marks.len(), scratch.queue.len())?;
-    let epoch = scratch.advance_epoch();
+    let epoch = scratch.epoch.advance(scratch.marks);
     let frontier = SeededEpochFrontier::new(scratch.marks, scratch.queue, epoch, start, witness);
     Ok(BreadthFirstSearchEpochScratch {
         inner: Bfs::new(graph, frontier),
@@ -289,7 +268,7 @@ where
     G: ContainsElement + ElementPredecessors + ElementIndex,
 {
     let witness = ValidatedScratch::new(graph, start, scratch.marks.len(), scratch.queue.len())?;
-    let epoch = scratch.advance_epoch();
+    let epoch = scratch.epoch.advance(scratch.marks);
     let frontier = SeededEpochFrontier::new(scratch.marks, scratch.queue, epoch, start, witness);
     Ok(ReverseBreadthFirstSearchEpochScratch {
         inner: Bfs::new(graph, frontier),

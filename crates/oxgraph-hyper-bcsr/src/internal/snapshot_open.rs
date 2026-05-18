@@ -7,8 +7,10 @@ use oxgraph_snapshot::{Section, Snapshot};
 
 use crate::{
     error::{BcsrSection, BcsrSnapshotError},
-    internal::{validation::BcsrValidation, view::BcsrHypergraph},
-    sections::BcsrSections,
+    internal::{
+        validation::BcsrValidation,
+        view::{BcsrHypergraph, BcsrSections},
+    },
     word::{BcsrSnapshotIndex, BcsrSnapshotWord},
 };
 

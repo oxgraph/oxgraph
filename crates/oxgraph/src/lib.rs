@@ -201,16 +201,13 @@ pub mod property {
 /// `perf: unspecified`; this module re-exports another crate.
 #[cfg(feature = "graph-build")]
 pub mod graph_build {
-    pub use oxgraph_graph_build::{
+    pub use oxgraph_csr::build::{
         BuildIndex, FrozenGraph, FrozenOutEdges, FrozenSuccessors, FrozenWeightedGraph,
         GraphBuildError, GraphBuilder, GraphEdgeId, GraphNodeId, WeightedGraphBuilder,
-    };
-    #[cfg(feature = "graph-snapshot")]
-    pub use oxgraph_graph_build::{
         csr_slice_to_le, export_csr_snapshot, export_weighted_csr_snapshot, identity_slice_to_le,
     };
     #[cfg(feature = "graph-property-arrow")]
-    pub use oxgraph_graph_build::{
+    pub use oxgraph_csr::build::{
         export_csr_snapshot_with_properties, export_weighted_csr_snapshot_with_properties,
     };
 }
@@ -222,18 +219,15 @@ pub mod graph_build {
 /// `perf: unspecified`; this module re-exports another crate.
 #[cfg(feature = "hyper-build")]
 pub mod hyper_build {
-    pub use oxgraph_hyper_build::{
+    pub use oxgraph_hyper_bcsr::build::{
         BuildIndex, FrozenHypergraph, FrozenWeightedHypergraph, HyperBuildError,
         HyperParticipantId, HyperParticipantRole, HyperVertexId, HyperedgeId, HyperedgeSliceIter,
         HypergraphBuilder, IncidentHyperedgeIter, ParticipantRangeIter, ParticipantSliceIter,
         PredecessorIter, SuccessorIter, VertexSliceIter, WeightedHypergraphBuilder,
-    };
-    #[cfg(feature = "hyper-snapshot")]
-    pub use oxgraph_hyper_build::{
         bcsr_slice_to_le, export_bcsr_snapshot, export_weighted_bcsr_snapshot,
     };
     #[cfg(feature = "hyper-property-arrow")]
-    pub use oxgraph_hyper_build::{
+    pub use oxgraph_hyper_bcsr::build::{
         export_bcsr_snapshot_with_properties, export_weighted_bcsr_snapshot_with_properties,
         identity_slice_to_le,
     };

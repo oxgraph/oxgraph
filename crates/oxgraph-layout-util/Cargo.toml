@@ -1,7 +1,7 @@
 [package]
-name = "oxgraph-csr-util"
+name = "oxgraph-layout-util"
 version = "0.0.0"
-description = "Offset-integrity primitives shared by oxgraph CSR and BCSR layouts."
+description = "Shared layout primitives for oxgraph: builder helpers + offset-integrity validation."
 publish = false
 
 authors.workspace = true

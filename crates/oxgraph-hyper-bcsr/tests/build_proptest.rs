@@ -5,10 +5,12 @@ use std::sync::Arc;
 use arrow_array::Int32Array;
 use arrow_schema::{DataType, Field};
 use oxgraph_hyper::{ContainsElement, ContainsRelation, HypergraphCounts, LocalElementIdentity};
-use oxgraph_hyper_bcsr::{BcsrSnapshotHypergraph, BcsrValidation};
-use oxgraph_hyper_build::{
-    HyperBuildError, HyperVertexId, HyperedgeId, HypergraphBuilder,
-    export_bcsr_snapshot_with_properties,
+use oxgraph_hyper_bcsr::{
+    BcsrSnapshotHypergraph, BcsrValidation,
+    build::{
+        HyperBuildError, HyperVertexId, HyperedgeId, HypergraphBuilder,
+        export_bcsr_snapshot_with_properties,
+    },
 };
 use oxgraph_property::{
     HyperPropertyLayers, IdFamily, LayerId, LayerRole, PropertyLayer, PropertyLayerDescriptor,

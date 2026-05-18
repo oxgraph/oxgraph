@@ -16,15 +16,11 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 oxgraph-algo = { version = "0.0.0", path = "../../crates/oxgraph-algo", features = ["std"] }
-oxgraph-csr = { version = "0.0.0", path = "../../crates/oxgraph-csr" }
+oxgraph-csr = { version = "0.0.0", path = "../../crates/oxgraph-csr", features = ["build"] }
 oxgraph-graph = { version = "0.0.0", path = "../../crates/oxgraph-graph" }
-oxgraph-graph-build = { version = "0.0.0", path = "../../crates/oxgraph-graph-build", features = [
-  "snapshot",
-] }
 oxgraph-hyper = { version = "0.0.0", path = "../../crates/oxgraph-hyper" }
-oxgraph-hyper-bcsr = { version = "0.0.0", path = "../../crates/oxgraph-hyper-bcsr" }
-oxgraph-hyper-build = { version = "0.0.0", path = "../../crates/oxgraph-hyper-build", features = [
-  "snapshot",
+oxgraph-hyper-bcsr = { version = "0.0.0", path = "../../crates/oxgraph-hyper-bcsr", features = [
+  "build",
 ] }
 oxgraph-snapshot = { version = "0.0.0", path = "../../crates/oxgraph-snapshot" }
 oxgraph-topology = { version = "0.0.0", path = "../../crates/oxgraph-topology" }

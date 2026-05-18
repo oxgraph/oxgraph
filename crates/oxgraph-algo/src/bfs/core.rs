@@ -40,13 +40,13 @@ use oxgraph_topology::{
 
 use crate::bfs::BfsError;
 
-/// Sealing supertrait for [`BfsStep`] and [`ExpansionDirection`].
+/// Sealing supertrait for [`BfsStep`], [`ExpansionDirection`], and [`VisitedSet`].
 ///
 /// Visible only inside `bfs/` (via `pub(super)` plus the private `mod core;`
 /// declaration), so external crates cannot `impl Sealed for ...` and therefore
-/// cannot implement [`BfsStep`] or [`ExpansionDirection`]. Required because
-/// [`Bfs::new`] is `pub(super)`, meaning any outside impl would be a dead-end
-/// API.
+/// cannot implement the sealed sibling traits. Required so that those traits
+/// can be `pub` (allowing them as bounds on `pub` BFS iterator types and
+/// entry-function signatures) without external impls becoming reachable.
 ///
 /// # Performance
 ///
@@ -913,6 +913,60 @@ where
         if self.visited.insert(target) {
             self.queue.push_back(target);
         }
+    }
+}
+
+/// Monotonic traversal-epoch counter with an automatic overflow reset.
+///
+/// Both [`crate::bfs::BfsEpochScratch`] and [`crate::bfs::BfsWorkspace`]
+/// share this state: a non-zero `u32` epoch that marks "visited this
+/// traversal" against a caller-owned `[u32]` mark slice. The method
+/// [`Self::advance`] is the single place that handles epoch increment and
+/// `u32::MAX` overflow (which clears the marks back to zero and resets the
+/// epoch to `1`).
+///
+/// # Performance
+///
+/// `advance` is `O(1)` except on overflow, where it clears the supplied
+/// `marks` slice in `O(marks.len())`.
+#[derive(Clone, Copy, Debug, Default)]
+pub(super) struct EpochCounter {
+    /// Current non-zero traversal epoch. Zero is reserved for "never
+    /// visited"; the first call to [`Self::advance`] returns `1`.
+    epoch: u32,
+}
+
+impl EpochCounter {
+    /// Creates a counter at epoch `0` (so the first [`Self::advance`]
+    /// returns `1`). Provided so callers in `const` context can construct
+    /// without going through [`Default`].
+    ///
+    /// # Performance
+    ///
+    /// `O(1)` field initialization.
+    pub(super) const fn new() -> Self {
+        Self { epoch: 0 }
+    }
+
+    /// Advances to the next traversal epoch and returns it.
+    ///
+    /// On `u32` overflow, clears every entry in `marks` to zero and resets
+    /// the epoch to `1`, preserving the invariant that mark `0` represents
+    /// "never visited" and any non-zero mark equal to the current epoch
+    /// represents "visited this traversal".
+    ///
+    /// # Performance
+    ///
+    /// `O(1)` unless the epoch overflows, where the mark clear is
+    /// `O(marks.len())`.
+    pub(super) fn advance(&mut self, marks: &mut [u32]) -> u32 {
+        if self.epoch == u32::MAX {
+            marks.fill(0);
+            self.epoch = 1;
+        } else {
+            self.epoch += 1;
+        }
+        self.epoch
     }
 }
 

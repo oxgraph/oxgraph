@@ -26,9 +26,7 @@ mod error;
 mod scratch;
 
 #[cfg(feature = "alloc")]
-mod generic_btree;
-#[cfg(feature = "std")]
-mod generic_hash;
+mod generic_set;
 #[cfg(feature = "alloc")]
 mod indexed;
 #[cfg(feature = "alloc")]
@@ -40,12 +38,12 @@ pub use epoch::{
 };
 pub use error::BfsError;
 #[cfg(feature = "alloc")]
-pub use generic_btree::{
+pub use generic_set::{
     GenericBreadthFirstSearch, GenericReverseBreadthFirstSearch, breadth_first_search_generic,
     reverse_breadth_first_search_generic,
 };
 #[cfg(feature = "std")]
-pub use generic_hash::{
+pub use generic_set::{
     HashBreadthFirstSearch, HashReverseBreadthFirstSearch, breadth_first_search_generic_hash,
     reverse_breadth_first_search_generic_hash,
 };

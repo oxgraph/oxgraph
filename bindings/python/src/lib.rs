@@ -28,7 +28,7 @@ use oxgraph_algo::{
 };
 use oxgraph_csr::CsrSnapshotGraph;
 use oxgraph_graph::{EdgeEndpointGraph, GraphCounts, OutgoingGraph};
-use oxgraph_graph_build::{
+use oxgraph_csr::build::{
     FrozenWeightedGraph, GraphBuildError, GraphEdgeId, GraphNodeId, WeightedGraphBuilder,
     export_weighted_csr_snapshot,
 };
@@ -37,7 +37,7 @@ use oxgraph_hyper::{
     HypergraphCounts,
 };
 use oxgraph_hyper_bcsr::{BcsrSnapshotHypergraph, BcsrValidation};
-use oxgraph_hyper_build::{
+use oxgraph_hyper_bcsr::build::{
     FrozenWeightedHypergraph, HyperBuildError, HyperParticipantId, HyperVertexId, HyperedgeId,
     WeightedHypergraphBuilder, export_weighted_bcsr_snapshot,
 };

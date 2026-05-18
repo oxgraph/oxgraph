@@ -14,9 +14,9 @@ use oxgraph_algo::{
     HyperWeighted, PageRankConfig, Weighted, breadth_first_search, pagerank_graph,
     pagerank_hypergraph,
 };
-use oxgraph_graph_build::{WeightedGraphBuilder, export_weighted_csr_snapshot_with_properties};
+use oxgraph_csr::build::{WeightedGraphBuilder, export_weighted_csr_snapshot_with_properties};
 use oxgraph_hyper::HypergraphCounts;
-use oxgraph_hyper_build::{
+use oxgraph_hyper_bcsr::build::{
     WeightedHypergraphBuilder, export_weighted_bcsr_snapshot_with_properties,
 };
 use oxgraph_property::{

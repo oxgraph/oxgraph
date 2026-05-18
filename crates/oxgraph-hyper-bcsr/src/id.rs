@@ -1,6 +1,27 @@
-//! Local identifier newtypes for bipartite-CSR hypergraph views.
+//! Local identifier newtypes and role enum for bipartite-CSR hypergraph
+//! views.
 
 use core::fmt;
+
+/// Side of a directed hyperedge an incidence belongs to.
+///
+/// `oxgraph-hyper` keeps the participation role as an associated type rather
+/// than a concrete enum so views can pick whatever vocabulary fits their
+/// storage. `BcsrRole` is the role chosen for [`BcsrHypergraph`](crate::BcsrHypergraph):
+/// each participant is either on the head side or the tail side of a directed
+/// hyperedge. Role bytes are not stored — the role is recovered from which
+/// section the participant lives in.
+///
+/// # Performance
+///
+/// Copying, comparing, ordering, hashing, and debug-formatting are `O(1)`.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum BcsrRole {
+    /// The vertex participates on the source (head) side of a directed hyperedge.
+    Head,
+    /// The vertex participates on the target (tail) side of a directed hyperedge.
+    Tail,
+}
 
 /// Local vertex ID for [`BcsrHypergraph`](crate::BcsrHypergraph).
 ///
@@ -26,6 +47,12 @@ where
     }
 }
 
+impl<VertexIndex> From<VertexIndex> for BcsrVertexId<VertexIndex> {
+    fn from(value: VertexIndex) -> Self {
+        Self(value)
+    }
+}
+
 /// Local hyperedge ID for [`BcsrHypergraph`](crate::BcsrHypergraph).
 ///
 /// Values are dense handles in `0..hyperedge_count` for one validated
@@ -47,6 +74,12 @@ where
             .debug_tuple("BcsrHyperedgeId")
             .field(&self.0)
             .finish()
+    }
+}
+
+impl<RelationIndex> From<RelationIndex> for BcsrHyperedgeId<RelationIndex> {
+    fn from(value: RelationIndex) -> Self {
+        Self(value)
     }
 }
 

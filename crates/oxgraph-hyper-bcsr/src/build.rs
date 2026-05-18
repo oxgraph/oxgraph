@@ -5,7 +5,7 @@
 //! behind explicit features.
 //! kani-skip: builders allocate variable-sized topology and snapshot buffers; proptests cover
 //! participant invariants and export roundtrips.
-#![no_std]
+
 #![cfg_attr(
     not(test),
     expect(
@@ -14,15 +14,9 @@
     )
 )]
 
-extern crate alloc;
-
 use alloc::{boxed::Box, vec, vec::Vec};
 use core::{error::Error, fmt, marker::PhantomData};
 
-pub use oxgraph_build_util::BuildIndex;
-use oxgraph_build_util::{
-    IdOutOfBounds, OffsetOverflow, build_offset_index, id_to_slot, index_from_usize, slot_or_max,
-};
 use oxgraph_hyper::{
     CanonicalElementIdentity, CanonicalIncidenceIdentity, CanonicalRelationIdentity,
     ContainsElement, ContainsIncidence, ContainsRelation, DirectedHyperedgeIncidences,
@@ -35,16 +29,19 @@ use oxgraph_hyper::{
     RelationIncidences, RelationIndex as RelationIndexTrait, RelationWeight, TopologyBase,
     TopologyCounts,
 };
-#[cfg(feature = "snapshot")]
-use oxgraph_hyper_bcsr::BcsrSnapshotIndex;
-#[cfg(feature = "property-arrow")]
+pub use oxgraph_layout_util::BuildIndex;
+use oxgraph_layout_util::{
+    IdOutOfBounds, OffsetOverflow, build_offset_index, id_to_slot, index_from_usize, slot_or_max,
+};
+#[cfg(feature = "build-property-arrow")]
 use oxgraph_property::{
     EncodedPropertySnapshot, HyperPropertyLayers, IdFamily, IdentityModeRecord, PropertyError,
     PropertyLayer, PropertySnapshotMetaWord, SNAPSHOT_PROPERTY_VERSION,
     encode_hyper_property_snapshot, rekey_layer_to_local,
 };
-#[cfg(feature = "snapshot")]
 use oxgraph_snapshot::{PlanError, SnapshotBuilder};
+
+use crate::BcsrSnapshotIndex;
 
 /// Result returned by unweighted hypergraph freeze operations.
 type FrozenHypergraphResult<VertexIndex, RelationIndex, IncidenceIndex> = Result<
@@ -173,13 +170,13 @@ pub enum HyperBuildError<VertexIndex, RelationIndex, IncidenceIndex> {
         value: usize,
     },
     /// An attached property layer used an unknown future ID family.
-    #[cfg(feature = "property-arrow")]
+    #[cfg(feature = "build-property-arrow")]
     UnsupportedPropertyFamily {
         /// Unsupported family.
         id_family: IdFamily,
     },
     /// A property layer was too short for the frozen topology.
-    #[cfg(feature = "property-arrow")]
+    #[cfg(feature = "build-property-arrow")]
     PropertyLayerTooShort {
         /// Property layer ID family.
         id_family: IdFamily,
@@ -189,13 +186,12 @@ pub enum HyperBuildError<VertexIndex, RelationIndex, IncidenceIndex> {
         actual: usize,
     },
     /// Property snapshot encoding failed.
-    #[cfg(feature = "property-arrow")]
+    #[cfg(feature = "build-property-arrow")]
     Property {
         /// Underlying property-layer error.
         source: PropertyError,
     },
     /// Snapshot export failed.
-    #[cfg(feature = "snapshot")]
     SnapshotPlan {
         /// Underlying snapshot planning error.
         source: PlanError,
@@ -234,12 +230,12 @@ where
             Self::IdOverflow { value } => {
                 write!(formatter, "hypergraph builder ID overflow at {value}")
             }
-            #[cfg(feature = "property-arrow")]
+            #[cfg(feature = "build-property-arrow")]
             Self::UnsupportedPropertyFamily { id_family } => write!(
                 formatter,
                 "unsupported hypergraph property family {id_family:?}"
             ),
-            #[cfg(feature = "property-arrow")]
+            #[cfg(feature = "build-property-arrow")]
             Self::PropertyLayerTooShort {
                 id_family,
                 required,
@@ -248,11 +244,10 @@ where
                 formatter,
                 "hypergraph property layer for {id_family:?} too short: required {required}, got {actual}"
             ),
-            #[cfg(feature = "property-arrow")]
+            #[cfg(feature = "build-property-arrow")]
             Self::Property { source } => {
                 write!(formatter, "property snapshot export failed: {source}")
             }
-            #[cfg(feature = "snapshot")]
             Self::SnapshotPlan { source } => write!(formatter, "snapshot export failed: {source}"),
         }
     }
@@ -267,9 +262,8 @@ where
 {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
-            #[cfg(feature = "property-arrow")]
+            #[cfg(feature = "build-property-arrow")]
             Self::Property { source } => Some(source),
-            #[cfg(feature = "snapshot")]
             Self::SnapshotPlan { source } => Some(source),
             Self::InvalidVertex { .. }
             | Self::InvalidHyperedge { .. }
@@ -277,13 +271,12 @@ where
             | Self::ParticipantPositionOutOfBounds { .. }
             | Self::DuplicateParticipant { .. }
             | Self::IdOverflow { .. } => None,
-            #[cfg(feature = "property-arrow")]
+            #[cfg(feature = "build-property-arrow")]
             Self::UnsupportedPropertyFamily { .. } | Self::PropertyLayerTooShort { .. } => None,
         }
     }
 }
 
-#[cfg(feature = "snapshot")]
 impl<VertexIndex, RelationIndex, IncidenceIndex> From<PlanError>
     for HyperBuildError<VertexIndex, RelationIndex, IncidenceIndex>
 {
@@ -292,7 +285,7 @@ impl<VertexIndex, RelationIndex, IncidenceIndex> From<PlanError>
     }
 }
 
-#[cfg(feature = "property-arrow")]
+#[cfg(feature = "build-property-arrow")]
 impl<VertexIndex, RelationIndex, IncidenceIndex> From<PropertyError>
     for HyperBuildError<VertexIndex, RelationIndex, IncidenceIndex>
 {
@@ -960,7 +953,7 @@ fn participant_slot<IncidenceIndex: BuildIndex>(
     slot_or_max::<IncidenceIndex>(participant.0)
 }
 
-/// Maps an [`OffsetOverflow`] from `oxgraph_build_util` into a typed
+/// Maps an [`OffsetOverflow`] from `oxgraph_layout_util` into a typed
 /// [`HyperBuildError`].
 const fn map_offset_overflow<VertexIndex, RelationIndex, IncidenceIndex>(
     error: OffsetOverflow,
@@ -1774,7 +1767,6 @@ where
 /// # Performance
 ///
 /// This function is `O(values.len())`.
-#[cfg(feature = "snapshot")]
 pub fn bcsr_slice_to_le<I>(values: &[I]) -> Vec<I::LittleEndianWord>
 where
     I: BcsrSnapshotIndex,
@@ -1791,7 +1783,7 @@ where
 /// # Performance
 ///
 /// This function is `O(values.len())`.
-#[cfg(feature = "property-arrow")]
+#[cfg(feature = "build-property-arrow")]
 pub fn identity_slice_to_le<I>(
     values: &[I],
 ) -> Vec<<I as oxgraph_property::PropertyIndex>::LittleEndianWord>
@@ -1814,7 +1806,6 @@ where
 /// # Performance
 ///
 /// This function is `O(v + h + p)`.
-#[cfg(feature = "snapshot")]
 pub fn export_bcsr_snapshot<VertexIndex, RelationIndex, IncidenceIndex>(
     graph: &FrozenHypergraph<VertexIndex, RelationIndex, IncidenceIndex>,
 ) -> Result<Vec<u8>, HyperBuildError<VertexIndex, RelationIndex, IncidenceIndex>>
@@ -1839,7 +1830,6 @@ where
 /// # Performance
 ///
 /// This function is `O(v + h + p)`.
-#[cfg(feature = "snapshot")]
 pub fn export_weighted_bcsr_snapshot<VertexIndex, RelationIndex, IncidenceIndex, EW, RW, IW>(
     graph: &FrozenWeightedHypergraph<VertexIndex, RelationIndex, IncidenceIndex, EW, RW, IW>,
 ) -> Result<Vec<u8>, HyperBuildError<VertexIndex, RelationIndex, IncidenceIndex>>
@@ -1861,7 +1851,7 @@ where
 /// # Performance
 ///
 /// This function is `O(v + h + p + property bytes)`.
-#[cfg(feature = "property-arrow")]
+#[cfg(feature = "build-property-arrow")]
 pub fn export_bcsr_snapshot_with_properties<VertexIndex, RelationIndex, IncidenceIndex, Id>(
     graph: &FrozenHypergraph<VertexIndex, RelationIndex, IncidenceIndex>,
     layers: HyperPropertyLayers<'_, Id, VertexIndex, RelationIndex, IncidenceIndex>,
@@ -1886,7 +1876,7 @@ where
 /// # Performance
 ///
 /// This function is `O(v + h + p + property bytes)`.
-#[cfg(feature = "property-arrow")]
+#[cfg(feature = "build-property-arrow")]
 pub fn export_weighted_bcsr_snapshot_with_properties<
     VertexIndex,
     RelationIndex,
@@ -2110,7 +2100,6 @@ where
         .map_err(|_: IdOutOfBounds| HyperBuildError::InvalidHyperedge { hyperedge })
 }
 
-#[cfg(feature = "snapshot")]
 fn export_topology_snapshot<VertexIndex, RelationIndex, IncidenceIndex>(
     topology: &FrozenTopology<VertexIndex, RelationIndex, IncidenceIndex>,
 ) -> Result<Vec<u8>, HyperBuildError<VertexIndex, RelationIndex, IncidenceIndex>>
@@ -2163,7 +2152,7 @@ where
     builder.finish().map_err(HyperBuildError::from)
 }
 
-#[cfg(feature = "property-arrow")]
+#[cfg(feature = "build-property-arrow")]
 fn encode_hyper_properties<VertexIndex, RelationIndex, IncidenceIndex, Id>(
     topology: &FrozenTopology<VertexIndex, RelationIndex, IncidenceIndex>,
     layers: HyperPropertyLayers<'_, Id, VertexIndex, RelationIndex, IncidenceIndex>,
@@ -2196,7 +2185,7 @@ where
     })?)
 }
 
-#[cfg(feature = "property-arrow")]
+#[cfg(feature = "build-property-arrow")]
 fn validate_property_lengths<Id, I, VertexIndex, RelationIndex, IncidenceIndex>(
     topology: &FrozenTopology<VertexIndex, RelationIndex, IncidenceIndex>,
     layers: &[PropertyLayer<Id, I>],
@@ -2230,7 +2219,7 @@ where
     Ok(())
 }
 
-#[cfg(feature = "property-arrow")]
+#[cfg(feature = "build-property-arrow")]
 fn export_topology_property_snapshot<VertexIndex, RelationIndex, IncidenceIndex>(
     topology: &FrozenTopology<VertexIndex, RelationIndex, IncidenceIndex>,
     property: EncodedPropertySnapshot,
@@ -2322,7 +2311,7 @@ where
     builder.finish().map_err(HyperBuildError::from)
 }
 
-#[cfg(feature = "property-arrow")]
+#[cfg(feature = "build-property-arrow")]
 fn bcsr_local_incidence_to_canonical<VertexIndex, RelationIndex, IncidenceIndex>(
     topology: &FrozenTopology<VertexIndex, RelationIndex, IncidenceIndex>,
 ) -> Result<Vec<IncidenceIndex>, HyperBuildError<VertexIndex, RelationIndex, IncidenceIndex>>
@@ -2358,27 +2347,27 @@ where
 mod tests {
     //! Tests for hypergraph builder freeze and export semantics.
 
-    #[cfg(feature = "property-arrow")]
+    #[cfg(feature = "build-property-arrow")]
     use alloc::sync::Arc;
     use alloc::vec;
-    #[cfg(feature = "property-arrow")]
+    #[cfg(feature = "build-property-arrow")]
     use core::error::Error;
 
-    #[cfg(feature = "property-arrow")]
+    #[cfg(feature = "build-property-arrow")]
     use arrow_array::Int32Array;
-    #[cfg(feature = "property-arrow")]
+    #[cfg(feature = "build-property-arrow")]
     use arrow_schema::{DataType, Field};
-    #[cfg(feature = "property-arrow")]
-    use oxgraph_hyper_bcsr::{BcsrSnapshotHypergraph, BcsrValidation};
-    #[cfg(feature = "property-arrow")]
+    #[cfg(feature = "build-property-arrow")]
     use oxgraph_property::{
         HyperPropertyLayers, IdFamily, LayerId, LayerRole, PropertyLayer, PropertyLayerDescriptor,
         StorageMode, validate_identity_snapshot, validate_property_snapshot,
     };
-    #[cfg(feature = "property-arrow")]
+    #[cfg(feature = "build-property-arrow")]
     use oxgraph_snapshot::Snapshot;
 
     use super::*;
+    #[cfg(feature = "build-property-arrow")]
+    use crate::{BcsrSnapshotHypergraph, BcsrValidation};
 
     /// Weighted builders require explicit weights and preserve updates.
     #[test]
@@ -2412,7 +2401,7 @@ mod tests {
     }
 
     /// Snapshot export writes BCSR topology, identity, and property sections.
-    #[cfg(feature = "property-arrow")]
+    #[cfg(feature = "build-property-arrow")]
     #[test]
     fn snapshot_includes_identity_and_property_sections() -> Result<(), Box<dyn Error>> {
         let mut builder = HypergraphBuilder::<u32, u32, u32>::new();

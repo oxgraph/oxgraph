@@ -17,5 +17,5 @@ pub use self::{
         BcsrSuccessorVertices, BcsrVertexSlice,
     },
     validation::BcsrValidation,
-    view::BcsrHypergraph,
+    view::{BcsrHypergraph, BcsrSections},
 };

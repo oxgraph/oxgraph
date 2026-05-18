@@ -1,39 +1,36 @@
 //! Append/freeze builders for directed graph topology.
 //!
 //! Core builders are `no_std + alloc` and do not know about Arrow, named
-//! properties, snapshots, or Python. Snapshot and property export helpers live
-//! behind explicit features.
+//! properties, or Python. Snapshot export is always available alongside
+//! builders. Property snapshot export lives behind the
+//! `build-property-arrow` feature.
 // kani-skip: builders allocate variable-sized topology and snapshot buffers; proptests cover
 // shape invariants and export roundtrips.
-#![no_std]
-
-extern crate alloc;
 
 use alloc::{boxed::Box, vec, vec::Vec};
 use core::{error::Error, fmt};
 
-pub use oxgraph_build_util::BuildIndex;
-use oxgraph_build_util::{
-    IdOutOfBounds, OffsetOverflow, id_to_slot, index_from_usize, slot_or_max,
-};
-#[cfg(feature = "snapshot")]
-use oxgraph_csr::CsrSnapshotIndex;
 use oxgraph_graph::{
     CanonicalElementIdentity, CanonicalRelationIdentity, ContainsElement, ContainsRelation,
     EdgeSourceGraph, EdgeTargetGraph, ElementIndex, ElementSuccessors, ElementWeight, GraphCounts,
     LocalElementIdentity, LocalRelationIdentity, OutgoingEdgeCount, OutgoingGraph, RelationIndex,
     RelationWeight, TopologyBase, TopologyCounts,
 };
-#[cfg(feature = "property-arrow")]
+pub use oxgraph_layout_util::BuildIndex;
+use oxgraph_layout_util::{
+    IdOutOfBounds, OffsetOverflow, id_to_slot, index_from_usize, slot_or_max,
+};
+#[cfg(feature = "build-property-arrow")]
 use oxgraph_property::{
     EncodedPropertySnapshot, GraphPropertyLayers, IdFamily, IdentityModeRecord,
     PropertySnapshotMetaWord, SNAPSHOT_PROPERTY_VERSION, encode_graph_property_snapshot,
     rekey_layer_to_local,
 };
-#[cfg(feature = "property-arrow")]
+#[cfg(feature = "build-property-arrow")]
 use oxgraph_property::{PropertyError, PropertyLayer};
-#[cfg(feature = "snapshot")]
 use oxgraph_snapshot::{PlanError, SnapshotBuilder};
+
+use crate::CsrSnapshotIndex;
 
 /// Result returned by weighted graph freeze operations.
 type FrozenWeightedGraphResult<NodeIndex, EdgeIndex, EW, RW> = Result<
@@ -83,7 +80,7 @@ pub enum GraphBuildError<NodeIndex, EdgeIndex> {
         value: usize,
     },
     /// A property layer was too short for the frozen topology.
-    #[cfg(feature = "property-arrow")]
+    #[cfg(feature = "build-property-arrow")]
     PropertyLayerTooShort {
         /// Property layer ID family.
         id_family: IdFamily,
@@ -93,13 +90,12 @@ pub enum GraphBuildError<NodeIndex, EdgeIndex> {
         actual: usize,
     },
     /// Property snapshot encoding failed.
-    #[cfg(feature = "property-arrow")]
+    #[cfg(feature = "build-property-arrow")]
     Property {
         /// Underlying property-layer error.
         source: PropertyError,
     },
     /// Snapshot export failed.
-    #[cfg(feature = "snapshot")]
     SnapshotPlan {
         /// Underlying snapshot planning error.
         source: PlanError,
@@ -116,7 +112,7 @@ where
             Self::InvalidNode { node } => write!(formatter, "invalid graph node ID {node:?}"),
             Self::InvalidEdge { edge } => write!(formatter, "invalid graph edge ID {edge:?}"),
             Self::IdOverflow { value } => write!(formatter, "graph builder ID overflow at {value}"),
-            #[cfg(feature = "property-arrow")]
+            #[cfg(feature = "build-property-arrow")]
             Self::PropertyLayerTooShort {
                 id_family,
                 required,
@@ -125,11 +121,10 @@ where
                 formatter,
                 "graph property layer for {id_family:?} too short: required {required}, got {actual}"
             ),
-            #[cfg(feature = "property-arrow")]
+            #[cfg(feature = "build-property-arrow")]
             Self::Property { source } => {
                 write!(formatter, "property snapshot export failed: {source}")
             }
-            #[cfg(feature = "snapshot")]
             Self::SnapshotPlan { source } => write!(formatter, "snapshot export failed: {source}"),
         }
     }
@@ -142,25 +137,23 @@ where
 {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
-            #[cfg(feature = "property-arrow")]
+            #[cfg(feature = "build-property-arrow")]
             Self::Property { source } => Some(source),
-            #[cfg(feature = "snapshot")]
             Self::SnapshotPlan { source } => Some(source),
             Self::InvalidNode { .. } | Self::InvalidEdge { .. } | Self::IdOverflow { .. } => None,
-            #[cfg(feature = "property-arrow")]
+            #[cfg(feature = "build-property-arrow")]
             Self::PropertyLayerTooShort { .. } => None,
         }
     }
 }
 
-#[cfg(feature = "snapshot")]
 impl<NodeIndex, EdgeIndex> From<PlanError> for GraphBuildError<NodeIndex, EdgeIndex> {
     fn from(source: PlanError) -> Self {
         Self::SnapshotPlan { source }
     }
 }
 
-#[cfg(feature = "property-arrow")]
+#[cfg(feature = "build-property-arrow")]
 impl<NodeIndex, EdgeIndex> From<PropertyError> for GraphBuildError<NodeIndex, EdgeIndex> {
     fn from(source: PropertyError) -> Self {
         Self::Property { source }
@@ -984,7 +977,7 @@ where
     })
 }
 
-/// Maps an [`OffsetOverflow`] from `oxgraph_build_util` into a typed
+/// Maps an [`OffsetOverflow`] from `oxgraph_layout_util` into a typed
 /// [`GraphBuildError`].
 const fn map_offset_overflow<NodeIndex, EdgeIndex>(
     error: OffsetOverflow,
@@ -1069,7 +1062,6 @@ where
 /// # Performance
 ///
 /// This function is `O(values.len())`.
-#[cfg(feature = "snapshot")]
 pub fn csr_slice_to_le<I>(values: &[I]) -> Vec<I::LittleEndianWord>
 where
     I: CsrSnapshotIndex,
@@ -1086,7 +1078,6 @@ where
 /// # Performance
 ///
 /// This function is `O(values.len())`.
-#[cfg(feature = "snapshot")]
 pub fn identity_slice_to_le<I>(values: &[I]) -> Vec<I::LittleEndianWord>
 where
     I: CsrSnapshotIndex,
@@ -1104,7 +1095,6 @@ where
 /// # Performance
 ///
 /// This function is `O(n + m)`.
-#[cfg(feature = "snapshot")]
 pub fn export_csr_snapshot<NodeIndex, EdgeIndex>(
     graph: &FrozenGraph<NodeIndex, EdgeIndex>,
 ) -> Result<Vec<u8>, GraphBuildError<NodeIndex, EdgeIndex>>
@@ -1128,7 +1118,6 @@ where
 /// # Performance
 ///
 /// This function is `O(n + m)`.
-#[cfg(feature = "snapshot")]
 pub fn export_weighted_csr_snapshot<NodeIndex, EdgeIndex, EW, RW>(
     graph: &FrozenWeightedGraph<NodeIndex, EdgeIndex, EW, RW>,
 ) -> Result<Vec<u8>, GraphBuildError<NodeIndex, EdgeIndex>>
@@ -1149,7 +1138,7 @@ where
 /// # Performance
 ///
 /// This function is `O(n + m + property bytes)`.
-#[cfg(feature = "property-arrow")]
+#[cfg(feature = "build-property-arrow")]
 pub fn export_csr_snapshot_with_properties<NodeIndex, EdgeIndex, Id>(
     graph: &FrozenGraph<NodeIndex, EdgeIndex>,
     layers: GraphPropertyLayers<'_, Id, NodeIndex, EdgeIndex>,
@@ -1173,7 +1162,7 @@ where
 /// # Performance
 ///
 /// This function is `O(n + m + property bytes)`.
-#[cfg(feature = "property-arrow")]
+#[cfg(feature = "build-property-arrow")]
 pub fn export_weighted_csr_snapshot_with_properties<NodeIndex, EdgeIndex, EW, RW, Id>(
     graph: &FrozenWeightedGraph<NodeIndex, EdgeIndex, EW, RW>,
     layers: GraphPropertyLayers<'_, Id, NodeIndex, EdgeIndex>,
@@ -1188,7 +1177,7 @@ where
 }
 
 /// Encodes graph property layers after relation rekeying.
-#[cfg(feature = "property-arrow")]
+#[cfg(feature = "build-property-arrow")]
 fn encode_graph_properties<NodeIndex, EdgeIndex, Id>(
     topology: &FrozenTopology<NodeIndex, EdgeIndex>,
     layers: GraphPropertyLayers<'_, Id, NodeIndex, EdgeIndex>,
@@ -1217,7 +1206,7 @@ where
 }
 
 /// Validates property layers against topology counts.
-#[cfg(feature = "property-arrow")]
+#[cfg(feature = "build-property-arrow")]
 #[expect(
     clippy::match_same_arms,
     reason = "non-exhaustive IdFamily requires a wildcard; graph snapshots treat unsupported families as empty"
@@ -1251,7 +1240,6 @@ where
 }
 
 /// Exports topology.
-#[cfg(feature = "snapshot")]
 fn export_topology_snapshot<NodeIndex, EdgeIndex>(
     topology: &FrozenTopology<NodeIndex, EdgeIndex>,
 ) -> Result<Vec<u8>, GraphBuildError<NodeIndex, EdgeIndex>>
@@ -1268,7 +1256,7 @@ where
 }
 
 /// Exports topology, identity, and encoded property payloads.
-#[cfg(feature = "property-arrow")]
+#[cfg(feature = "build-property-arrow")]
 fn export_topology_property_snapshot<NodeIndex, EdgeIndex>(
     topology: &FrozenTopology<NodeIndex, EdgeIndex>,
     property: EncodedPropertySnapshot,
@@ -1316,7 +1304,7 @@ where
 }
 
 /// Converts an identity-map payload slice into explicit little-endian words.
-#[cfg(feature = "property-arrow")]
+#[cfg(feature = "build-property-arrow")]
 fn property_identity_slice_to_le<I>(
     values: &[I],
 ) -> Vec<<I as oxgraph_property::PropertyIndex>::LittleEndianWord>
@@ -1385,11 +1373,11 @@ mod tests {
     }
 
     /// Snapshot export writes little-endian CSR sections.
-    #[cfg(feature = "snapshot")]
     #[test]
     fn snapshot_export_roundtrips_topology() -> Result<(), Box<dyn Error>> {
-        use oxgraph_csr::CsrSnapshotGraph;
         use oxgraph_snapshot::Snapshot;
+
+        use crate::CsrSnapshotGraph;
 
         let mut builder = GraphBuilder::<u32, u32>::new();
         let a = builder.add_node()?;
@@ -1401,9 +1389,9 @@ mod tests {
         let graph = CsrSnapshotGraph::<u32, u32>::from_snapshot(&snapshot)?;
         assert_eq!(
             graph
-                .element_successors(oxgraph_csr::CsrNodeId(0))
+                .element_successors(crate::CsrNodeId(0))
                 .collect::<Vec<_>>(),
-            vec![oxgraph_csr::CsrNodeId(1)]
+            vec![crate::CsrNodeId(1)]
         );
         Ok(())
     }

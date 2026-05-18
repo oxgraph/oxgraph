@@ -1,9 +1,7 @@
-//! Criterion benchmarks for hypergraph builder ingest, freeze, and feature-gated snapshot export.
+//! Criterion benchmarks for hypergraph builder ingest, freeze, and snapshot export.
 
 use criterion::{Criterion, criterion_group, criterion_main};
-#[cfg(feature = "snapshot")]
-use oxgraph_hyper_build::export_bcsr_snapshot;
-use oxgraph_hyper_build::{HyperBuildError, HypergraphBuilder};
+use oxgraph_hyper_bcsr::build::{HyperBuildError, HypergraphBuilder, export_bcsr_snapshot};
 
 /// Benchmark hypergraph builder type.
 type BenchBuilder = HypergraphBuilder<u32, u32, u32>;
@@ -38,19 +36,16 @@ fn hyper_builder(c: &mut Criterion) {
                 .unwrap_or_else(|error| panic!("benchmark hypergraph should freeze: {error}"))
         });
     });
-    #[cfg(feature = "snapshot")]
-    {
-        c.bench_function("hyper_builder_snapshot_10k", |b| {
-            let graph = build_transitions(10_000)
-                .unwrap_or_else(|error| panic!("benchmark hypergraph should build: {error}"))
-                .freeze()
-                .unwrap_or_else(|error| panic!("benchmark hypergraph should freeze: {error}"));
-            b.iter(|| {
-                export_bcsr_snapshot(&graph)
-                    .unwrap_or_else(|error| panic!("benchmark hypergraph should snapshot: {error}"))
-            });
+    c.bench_function("hyper_builder_snapshot_10k", |b| {
+        let graph = build_transitions(10_000)
+            .unwrap_or_else(|error| panic!("benchmark hypergraph should build: {error}"))
+            .freeze()
+            .unwrap_or_else(|error| panic!("benchmark hypergraph should freeze: {error}"));
+        b.iter(|| {
+            export_bcsr_snapshot(&graph)
+                .unwrap_or_else(|error| panic!("benchmark hypergraph should snapshot: {error}"))
         });
-    }
+    });
 }
 
 criterion_group!(benches, hyper_builder);
