@@ -47,9 +47,9 @@ realization:
     metadata:
       summary: All hypergraph traits — HypergraphBase, counts, indexes, HyperedgeParticipants, IncidentHyperedges, DirectedHyperedgeParticipants/Incidences, DirectedVertexHyperedges, DirectedVertexSuccessors/Predecessors, Hypergraph bundles.
   role: primary
-parents:
-- id: 1
-  role: component
 amendment_log:
 - 6
 - 8
+parents:
+- id: 1
+  role: component

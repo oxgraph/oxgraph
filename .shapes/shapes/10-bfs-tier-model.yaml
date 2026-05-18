@@ -2,18 +2,20 @@ id: 10
 name: BFS tier model
 description: |
   Six BFS storage tiers that span no_std, alloc, and std environments — scratch,
-  epoch_scratch, workspace, indexed, generic_btree, generic_hash — plus a single
-  direction-parameterized core driver. Forward variants bind on ElementSuccessors;
-  reverse variants bind on ElementPredecessors. The reusable BfsEpochScratch and
-  BfsWorkspace types are direction-agnostic and serve both directions over the same
-  view without a full mark clear between runs. The sealed ExpansionDirection policy
-  monomorphizes to one direct call into element_successors / element_predecessors per
-  yield.
+  epoch_scratch, workspace, indexed, generic (BTreeSet-backed, alloc-only) and
+  generic-hash (HashSet-backed, std-only) — plus a single direction-parameterized
+  core driver. The two set-backed tiers share one `bfs/generic_set.rs` core with
+  cfg-gated public type aliases (see amendment 24). Forward variants bind on
+  ElementSuccessors; reverse variants bind on ElementPredecessors. The reusable
+  BfsEpochScratch and BfsWorkspace types are direction-agnostic and serve both
+  directions over the same view without a full mark clear between runs. The
+  sealed ExpansionDirection policy monomorphizes to one direct call into
+  element_successors / element_predecessors per yield.
 profile: 1
 status: canonical
 intent:
   kind: feature
-  summary: BFS storage tiers — scratch, epoch_scratch, workspace, indexed, generic_btree, generic_hash, plus a single direction-parameterized core
+  summary: BFS storage tiers — scratch, epoch_scratch, workspace, indexed, generic (BTreeSet), generic-hash (HashSet), plus a single direction-parameterized core
   source: human
   goals: |
     - Expose a tier per environment so callers pick visibility/membership storage that
@@ -39,7 +41,7 @@ realization:
   - scheme: path
     value: crates/oxgraph-algo/src/bfs/mod.rs
     metadata:
-      summary: Tier exports — scratch / epoch / workspace / indexed / generic_btree / generic_hash, plus the BfsError type.
+      summary: Tier exports — scratch / epoch / workspace / indexed / generic (BTreeSet, alloc) / generic-hash (HashSet, std), plus the BfsError type.
   - scheme: path
     value: crates/oxgraph-algo/src/bfs/core.rs
     metadata:
@@ -47,18 +49,23 @@ realization:
   - scheme: path
     value: crates/oxgraph-algo/src/bfs/epoch.rs
     metadata:
-      summary: BfsEpochScratch — direction-agnostic reusable scratch with epoch counter to avoid full mark clears.
+      summary: BfsEpochScratch — direction-agnostic reusable scratch with epoch counter to avoid full mark clears. Shares a single EpochCounter type with BfsWorkspace (amendment 24).
   - scheme: path
     value: crates/oxgraph-algo/src/bfs/workspace.rs
     metadata:
-      summary: BfsWorkspace — direction-agnostic reusable workspace.
+      summary: BfsWorkspace — direction-agnostic reusable workspace. Shares the EpochCounter type with BfsEpochScratch (amendment 24).
+  - scheme: path
+    value: crates/oxgraph-algo/src/bfs/generic_set.rs
+    metadata:
+      summary: Shared core for the BTreeSet-backed (alloc, GenericBreadthFirstSearch) and HashSet-backed (std, HashBreadthFirstSearch) tiers, with cfg-gated public type aliases preserving the prior names. Collapses the prior generic_btree.rs + generic_hash.rs into one file (amendment 24).
   - scheme: path
     value: crates/oxgraph-algo/src/bfs/indexed.rs
     metadata:
       summary: Allocating indexed BFS — Vec<u8> visited storage; bitset upgrade gated on benchmarks per constraint 24.
   role: primary
+amendment_log:
+- 5
+- 24
 parents:
 - id: 9
   role: component
-amendment_log:
-- 5

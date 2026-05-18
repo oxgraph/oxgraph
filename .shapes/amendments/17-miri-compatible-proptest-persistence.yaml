@@ -28,13 +28,13 @@ realization:
     metadata:
       summary: PageRank generated graph proptest keeps its strategy and assertions while disabling file-backed failure persistence for Miri.
   - scheme: path
-    value: crates/oxgraph-graph-build/tests/proptest.rs
+    value: crates/oxgraph-csr/tests/build_proptest.rs
     metadata:
-      summary: Graph builder generated freeze/export proptest keeps its strategy and assertions while disabling file-backed failure persistence for Miri.
+      summary: Graph builder generated freeze/export proptest keeps its strategy and assertions while disabling file-backed failure persistence for Miri. (Moved from oxgraph-graph-build/tests/proptest.rs when the builder was folded into oxgraph-csr behind the `build` feature by amendment 24.)
   - scheme: path
-    value: crates/oxgraph-hyper-build/tests/proptest.rs
+    value: crates/oxgraph-hyper-bcsr/tests/build_proptest.rs
     metadata:
-      summary: Hypergraph builder generated freeze/export proptest keeps its strategy and assertions while disabling file-backed failure persistence for Miri.
+      summary: Hypergraph builder generated freeze/export proptest keeps its strategy and assertions while disabling file-backed failure persistence for Miri. (Moved from oxgraph-hyper-build/tests/proptest.rs when the builder was folded into oxgraph-hyper-bcsr behind the `build` feature by amendment 24.)
   - scheme: path
     value: crates/oxgraph-property/tests/proptest.rs
     metadata:

@@ -39,13 +39,9 @@ realization:
   - scheme: path
     value: .claude/hooks/block-bypass.sh
     metadata:
-      summary: The bash script that reads tool-use JSON on stdin, extracts tool_input.command, denies on bypass patterns, and fails closed on parse error.
-  - scheme: path
-    value: .claude/settings.local.json
-    metadata:
-      summary: Gitignored local settings — wires block-bypass.sh as the PreToolUse Bash matcher.
+      summary: The bash script that reads tool-use JSON on stdin, extracts tool_input.command, denies on bypass patterns, and fails closed on parse error. Wired locally as the PreToolUse Bash matcher via the gitignored `.claude/settings.local.json` file (path not bound because the file is gitignored and absent in fresh worktrees; see `.gitignore`).
   - scheme: path
     value: README.md
     metadata:
-      summary: README "Strictness" + "Getting started" sections explain how to install the hook locally.
+      summary: README "Strictness" + "Getting started" sections explain how to install the hook locally (including the local `.claude/settings.local.json` wiring).
   role: primary

@@ -17,14 +17,14 @@ intent:
   kind: boundary
   summary: PyO3 unsafe boundary is crate-local and documented
   source: ai
+  impact_if_violated: |
+    Unsafe policy would erode across the workspace, and Python ownership or panic
+    behavior could become implicit instead of an explicit API contract.
   rationale: |
     Python interop is a higher-layer FFI concern. The substrate can expose a Python
     facade without allowing unsafe code to leak into topology, layout, snapshot,
     property, builder, or algorithm crates. Documenting the boundary keeps the exception
     visible and reviewable.
-  impact_if_violated: |
-    Unsafe policy would erode across the workspace, and Python ownership or panic
-    behavior could become implicit instead of an explicit API contract.
   verification_method: |
     Manual review of bindings/python Cargo lint settings and SAFETY.md. Foundation
     crates continue to inherit workspace unsafe_code = forbid.

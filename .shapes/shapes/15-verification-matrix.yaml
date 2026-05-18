@@ -1,20 +1,20 @@
 id: 15
-name: "verification matrix"
+name: verification matrix
 description: |
-    The four-row matrix from CLAUDE.md that defines what verification a public construct
-    requires: public fn taking data → proptest exercising its invariants; data type with
-    an algebraic contract → kani proof per property (symmetry, totality, roundtrip,
-    merge laws); public API taking a measurable input → criterion bench defending a
-    stated perf contract; every pub item's doc → "O(n)" / "≤ 1ms for n ≤ 10k" perf
-    contract or explicit "perf: unspecified". The matrix is BOTH a floor (every stated
-    contract gets matrix verification) AND a ceiling (don't bench or prove things that
-    defend no contract — noise is noise regardless of who produced it).
+  The four-row matrix from CLAUDE.md that defines what verification a public construct
+  requires: public fn taking data → proptest exercising its invariants; data type with
+  an algebraic contract → kani proof per property (symmetry, totality, roundtrip,
+  merge laws); public API taking a measurable input → criterion bench defending a
+  stated perf contract; every pub item's doc → "O(n)" / "≤ 1ms for n ≤ 10k" perf
+  contract or explicit "perf: unspecified". The matrix is BOTH a floor (every stated
+  contract gets matrix verification) AND a ceiling (don't bench or prove things that
+  defend no contract — noise is noise regardless of who produced it).
 profile: 1
 status: canonical
 intent:
-  kind: "pattern"
-  summary: "Floor-and-ceiling verification: proptest for public fns, kani for algebraic contracts, criterion for perf contracts, perf annotations on every pub doc"
-  source: "human"
+  kind: pattern
+  summary: 'Floor-and-ceiling verification: proptest for public fns, kani for algebraic contracts, criterion for perf contracts, perf annotations on every pub doc'
+  source: human
   goals: |
     - Every public fn taking data is exercised by a proptest strategy over its
       documented invariants.
@@ -24,56 +24,52 @@ intent:
     - Every public API taking a measurable input has a criterion bench defending a
       stated perf contract.
     - Every pub item documents a perf contract or explicitly states `perf: unspecified`.
+  non_goals: |
+    Not coverage chasing. Not benchmarks for things with no perf contract. Not
+    proving what the type system already guarantees. Not aspirational — meeting the
+    matrix for a stated public contract is a defect-floor, not a stretch goal.
   rationale: |
     Agent write-cost is ~0; CI compute and signal quality are the real constraints.
     Without a matrix that is BOTH floor and ceiling, an agent can drown the project in
     coverage-chasing benchmarks and proofs of things the type system already guarantees
     — noise that looks like progress. The matrix exists so verification quantity tracks
     contract quantity.
-  non_goals: |
-    Not coverage chasing. Not benchmarks for things with no perf contract. Not
-    proving what the type system already guarantees. Not aspirational — meeting the
-    matrix for a stated public contract is a defect-floor, not a stretch goal.
-
-parents:
-  - id: 1
-    role: pattern
-
 constraints:
-  - 6
-  - 7
-  - 8
-  - 9
-  - 10
-
+- 6
+- 7
+- 8
+- 9
+- 10
 realization:
-  - bindings:
-      - scheme: path
-        value: CLAUDE.md
-        metadata:
-          summary: The verification-defaults table; the source of truth for the matrix.
-      - scheme: path
-        value: justfile
-        metadata:
-          summary: '`just ci` (fast gate — fmt/taplo/clippy/deny/test) and `just verify` (heavy gate — miri/kani).'
-      - scheme: path
-        value: crates/oxgraph-snapshot/src/proofs.rs
-        metadata:
-          summary: Kani harnesses for the snapshot container — header parsing totality, malformed-bytes never panic, plan/open roundtrip.
-      - scheme: path
-        value: crates/oxgraph-hyper-bcsr/src/proofs.rs
-        metadata:
-          summary: Kani harnesses for bipartite-CSR validation — Layout and Strict totality, u32 cap arithmetic, narrowing safety.
-      - scheme: path
-        value: crates/oxgraph-csr/benches/csr.rs
-        metadata:
-          summary: Criterion bench for CSR validation and outgoing traversal over deterministic regular graphs.
-      - scheme: path
-        value: crates/oxgraph-algo/benches/bfs.rs
-        metadata:
-          summary: Criterion bench for BFS storage tiers over CSR-backed graph shapes.
-    role: primary
-
+- bindings:
+  - scheme: path
+    value: CLAUDE.md
+    metadata:
+      summary: The verification-defaults table; the source of truth for the matrix.
+  - scheme: path
+    value: justfile
+    metadata:
+      summary: '`just ci` (fast gate — fmt/taplo/clippy/deny/test) and `just verify` (heavy gate — miri/kani).'
+  - scheme: path
+    value: crates/oxgraph-snapshot/src/proofs.rs
+    metadata:
+      summary: Kani harnesses for the snapshot container — header parsing totality, malformed-bytes never panic, plan/open roundtrip.
+  - scheme: path
+    value: crates/oxgraph-hyper-bcsr/src/proofs.rs
+    metadata:
+      summary: Kani harnesses for bipartite-CSR validation — Layout and Strict totality, u32 cap arithmetic, narrowing safety.
+  - scheme: path
+    value: crates/oxgraph-csr/benches/csr.rs
+    metadata:
+      summary: Criterion bench for CSR validation and outgoing traversal over deterministic regular graphs.
+  - scheme: path
+    value: crates/oxgraph-algo/benches/bfs.rs
+    metadata:
+      summary: Criterion bench for BFS storage tiers over CSR-backed graph shapes.
+  role: primary
 amendment_log:
-  - 7
-  - 17
+- 7
+- 17
+parents:
+- id: 1
+  role: pattern

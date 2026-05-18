@@ -38,7 +38,7 @@ realization:
     metadata:
       summary: Library discipline — Errors are concrete enums implementing Display and core::error::Error. No Box<dyn Error> / anyhow on the public surface.
   - scheme: path
-    value: crates/oxgraph-snapshot/src/container/error.rs
+    value: crates/oxgraph-snapshot/src/container_error.rs
     metadata:
       summary: Concrete SnapshotError, PlanError, SectionViewError enums — exhaustively listed variants, Display + core::error::Error impls.
   - scheme: path

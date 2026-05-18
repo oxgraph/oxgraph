@@ -47,11 +47,11 @@ realization:
     metadata:
       summary: CsrGraph, CsrSnapshotGraph, CsrOutEdges, CsrOutNeighbors, CsrSnapshotIndex endian conversion, CsrSnapshotError, from_snapshot, registered SNAPSHOT_KIND_CSR_* constants. Offset-integrity predicates (length / first-zero / monotonicity / final-offset / value-range) are delegated to oxgraph-csr-util (shape 26); the layout maps each OffsetIntegrityIssue to a typed CsrError at the validation boundary.
   role: primary
-parents:
-- id: 1
-  role: component
 amendment_log:
 - 3
 - 12
 - 16
 - 19
+parents:
+- id: 1
+  role: component

@@ -30,9 +30,6 @@ intent:
     invariant the function documents is unverified beyond example tests.
   verification_method: |
     PR review. The verification matrix table in CLAUDE.md is the authoritative source.
-parents:
-- id: 10
-  role: component
 realization:
 - bindings:
   - scheme: path
@@ -48,3 +45,6 @@ realization:
     metadata:
       summary: Example proptest — Snapshot::open over arbitrary Vec<u8> returns Result, never panics.
   role: primary
+parents:
+- id: 10
+  role: component

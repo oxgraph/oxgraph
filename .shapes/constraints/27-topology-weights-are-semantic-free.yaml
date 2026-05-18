@@ -17,22 +17,19 @@ intent:
   kind: invariant
   summary: Topology weight traits expose total Copy values without domain semantics
   source: ai
+  impact_if_violated: |
+    Algorithms and users would infer semantics from the foundation trait itself,
+    pushing meaning into the no_std substrate and making unrelated backends pay for a
+    domain interpretation.
   rationale: |
     Many graph-like topology families need a lightweight value on elements, relations,
     or incidences, and algorithms should be able to bind on that capability without
     depending on storage or property crates. The value must stay semantic-free so the
     topology substrate does not absorb probability, metric, property-graph, or domain
     vocabulary.
-  impact_if_violated: |
-    Algorithms and users would infer semantics from the foundation trait itself,
-    pushing meaning into the no_std substrate and making unrelated backends pay for a
-    domain interpretation.
   verification_method: |
     Manual review of topology trait docs and algorithm docs. Algorithm modules must
     state their numeric contracts separately from the weight capability traits.
-children:
-- constraint: 29
-  role: component
 realization:
 - bindings:
   - scheme: path
@@ -40,3 +37,6 @@ realization:
     metadata:
       summary: ElementWeight, RelationWeight, and IncidenceWeight optional capability traits with Copy return values.
   role: primary
+children:
+- constraint: 29
+  role: component

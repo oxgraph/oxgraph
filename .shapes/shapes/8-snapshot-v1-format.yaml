@@ -45,20 +45,13 @@ constraints:
 realization:
 - bindings:
   - scheme: path
-    value: crates/oxgraph-snapshot/src/container/header.rs
+    value: crates/oxgraph-snapshot/src/container.rs
     metadata:
-      summary: RawHeader — 32-byte fixed header with the four u32 LE fields + 8-byte reserved tail; alignment 1 so it borrows from any byte slice.
-  - scheme: path
-    value: crates/oxgraph-snapshot/src/container/section.rs
-    metadata:
-      summary: RawSectionEntry — 32-byte section table entry; reserved_checksum/flags/reserved fields gated to zero in v1.
-  - scheme: path
-    value: crates/oxgraph-snapshot/src/container/validate.rs
-    metadata:
-      summary: ValidationLevel and the layout walk that enforces zero-reserved invariants and bounds.
+      summary: Hosts RawHeader (32-byte fixed header — magic + four u32 LE fields + 8-byte reserved tail; alignment 1), RawSectionEntry (32-byte section table entry; reserved_checksum/flags/reserved fields gated to zero in v1), and ValidationLevel together with the layout walk that enforces the zero-reserved invariants and the MAX_SECTION_COUNT / MAX_ALIGNMENT_LOG2 bounds.
   role: primary
+amendment_log:
+- 2
+- 24
 parents:
 - id: 7
   role: component
-amendment_log:
-- 2

@@ -55,12 +55,12 @@ realization:
     metadata:
       summary: Layout and Strict validators — Strict adds cross-direction multiset equality. Offset-integrity predicates (length / first-zero / monotonicity / final-offset / value-range) are delegated to oxgraph-csr-util (shape 26); BcsrWord opts into the shared ZerocopyWord trait and each OffsetIntegrityIssue is mapped to a typed BcsrError stamped with the appropriate section discriminator.
   role: primary
-parents:
-- id: 1
-  role: component
 amendment_log:
 - 4
 - 8
 - 12
 - 16
 - 19
+parents:
+- id: 1
+  role: component

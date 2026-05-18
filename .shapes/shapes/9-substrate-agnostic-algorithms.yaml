@@ -45,6 +45,8 @@ realization:
 amendment_log:
 - 8
 - 20
+- 22
+- 24
 parents:
 - id: 1
   role: component

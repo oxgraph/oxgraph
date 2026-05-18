@@ -1,0 +1,207 @@
+id: 24
+name: LOC reduction and crate consolidation
+description: |
+  Greenfield LOC reduction pass with two themes: in-crate structural
+  deduplication that collapses parallel implementations into one generic
+  core, and workspace-level crate consolidation that takes the workspace
+  from 13 members to 10 by absorbing tiny single-responsibility utility and
+  builder crates into their natural homes. No public-name renames; the
+  umbrella crate preserves every feature it previously exposed. Snapshot
+  bytes, section kinds, and observable algorithmic behavior are unchanged.
+  Verification matrix (proptest, kani, criterion, miri, prek) stays green
+  end-to-end with no flags weakened.
+targets:
+  shape_ids:
+  - 7
+  - 8
+  - 9
+  - 10
+  - 14
+  - 19
+  - 20
+  - 22
+  - 25
+  - 26
+  - 27
+status: proposed
+version_impact: major
+intent:
+  kind: amendment
+  summary: Phase 1 in-crate dedup (BFS generic_set, BCSR iterator collapse, property AxisIndex/PropertySnapshotEncoder, doc compression) and Phase 2 crate consolidation (oxgraph-build-util + oxgraph-csr-util -> oxgraph-layout-util; oxgraph-graph-build -> oxgraph-csr build feature; oxgraph-hyper-build -> oxgraph-hyper-bcsr build feature; oxgraph-snapshot/src/container/ -> container.rs + container_error.rs)
+  source: human
+  goals: |
+    Phase 1 — in-crate structural dedup:
+    - oxgraph-algo: collapse `bfs/generic_btree.rs` and `bfs/generic_hash.rs`
+      into one `bfs/generic_set.rs` with cfg-gated type aliases over a single
+      `BTreeBfs<...>` / `HashBfs<...>` core; share a single `EpochCounter`
+      between `BfsEpochScratch` and `BfsWorkspace`; replace
+      `fill_hyper_personalization_{from_input,uniform}` with a single
+      `PersonalizationSource` enum dispatched once.
+    - oxgraph-hyper-bcsr: collapse `Successor`/`Predecessor` and
+      `Vertex`/`Hyperedge` iterators into single generic structs
+      (`BcsrNeighborVertices<RelationWord, OffsetWord, VertexWord>`,
+      `BcsrIdSlice<Word, Id>`) with public `pub type` aliases so call sites
+      keep their previous names; fold `role.rs` into `id.rs` and `sections.rs`
+      into `view.rs`; share a `BcsrSections::for_kani` constructor across the
+      four proofs.
+    - oxgraph-property: introduce `AxisIndex<A>` collapsing the three parallel
+      `DenseWeights` / `SparseWeights` constructors; consolidate the graph and
+      hypergraph encoders into one `PropertySnapshotEncoder<W>`; use zerocopy
+      `as_bytes` / `read_from_bytes` on `PropertySnapshotRecord<W>`; lift the
+      620-line tests module out of `lib.rs` into a sibling `tests.rs`.
+    - Compress per-const docs via module-level tables in
+      `oxgraph-hyper-bcsr/snapshot.rs`, `oxgraph-csr/lib.rs`, and
+      `oxgraph-property/lib.rs`; tighten the perf-boilerplate prose in
+      `oxgraph-graph` and `oxgraph-hyper`.
+
+    Phase 2 — crate consolidation (13 workspace members -> 10):
+    - 2A: merge `oxgraph-build-util` (shape:25) and `oxgraph-csr-util`
+      (shape:26) into a single `oxgraph-layout-util` (new shape:27) that
+      hosts both build-time primitives (`BuildIndex`, `id_to_slot`,
+      `slot_or_max`, `index_from_usize`, `build_offset_index`,
+      `IdOutOfBounds`, `OffsetOverflow`) and read-time integrity primitives
+      (`ZerocopyWord`, `OffsetIntegrityIssue`, `check_offsets_monotonic`,
+      `check_value_range`, `check_offset_section`).
+    - 2B: fold `oxgraph-graph-build` into `oxgraph-csr` behind a `build`
+      feature (with `build-property-arrow` for the Arrow snapshot export
+      adapter) and `oxgraph-hyper-build` into `oxgraph-hyper-bcsr` behind a
+      `build` feature (with `build-property-arrow` for the Arrow snapshot
+      export adapter); each layout crate now owns its builder. The umbrella
+      `oxgraph` crate preserves its public feature names by rerouting
+      `graph-build` / `hyper-build` / `*-snapshot` / `*-property-arrow` to
+      the layout crates' new features.
+    - 2C: flatten `oxgraph-snapshot/src/container/` from eight modules
+      (`mod.rs`, `header.rs`, `section.rs`, `plan.rs`, `reader.rs`,
+      `validate.rs`, `builder.rs`, `error.rs`) into `container.rs` +
+      `container_error.rs` with no public API change.
+
+    Verification:
+    - `cargo +nightly fmt --all --check`
+    - `cargo clippy --workspace --all-features --all-targets -- -D warnings`
+    - `cargo test --workspace --all-features` (all suites pass, including
+      kani and miri legs of `just verify`)
+    - Feature matrix builds:
+      `oxgraph-csr {default, build, build-property-arrow}`,
+      `oxgraph-hyper-bcsr {default, build, build-property-arrow}`, and the
+      umbrella's `full` / `graph-property-arrow` / `hyper-property-arrow`
+      combos.
+  non_goals: |
+    No public-name renames, no semver-equivalent changes to public types,
+    no algorithm semantics changes, no snapshot ABI movement, no section-kind
+    renumbering, no umbrella public-feature renames (the umbrella reroutes
+    internally; downstream call sites are unchanged), no behavior changes in
+    BFS or PageRank, and no Miri / kani / prek flag weakening. Construction
+    builders (shape:20) keep the same input/output surfaces; only their
+    crate location and the workspace member count change. Shapes 25 and 26
+    remain in the graph as historical records (status: superseded) rather
+    than being deleted, so the lineage `oxgraph-build-util -> oxgraph-layout-util`
+    and `oxgraph-csr-util -> oxgraph-layout-util` stays inspectable.
+  rationale: |
+    The two utility crates (`oxgraph-build-util`, `oxgraph-csr-util`) landed
+    one amendment apart (18 and 19) and both ended up tiny, zerocopy-only,
+    no-other-oxgraph-deps crates living side by side. Merging them halves
+    the workspace-member churn for what is the same architectural pattern
+    (a deliberate utility seam below the layout layer) and lets the
+    sealed-trait patterns (BuildIndex + ZerocopyWord) share one kani-proof
+    file.
+
+    The two builder crates (`oxgraph-graph-build`, `oxgraph-hyper-build`)
+    each had exactly one layout consumer (`oxgraph-csr` and
+    `oxgraph-hyper-bcsr` respectively) and shipped their snapshot/property
+    export adapters behind features that always combined with the matching
+    layout crate. Folding each builder into its layout crate behind a `build`
+    feature collapses that one-to-one relationship into a single crate per
+    layout while preserving the umbrella's feature surface unchanged.
+
+    The eight-file `container/` submodule had grown its size mostly from
+    structural ceremony (per-file imports, per-file documentation tables,
+    per-file `mod ... { pub use ... }` boilerplate). Flattening to one
+    `container.rs` + one `container_error.rs` removes the ceremony without
+    moving the public symbols (which were already re-exported at the crate
+    root). The `proofs.rs` kani harnesses stay where they were.
+
+    Phase 1 dedup follows the same greenfield-no-aliases discipline already
+    applied by amendments 20-23: where two parallel implementations differed
+    only in a policy (set-backed visited storage, neighbor-iterator-id
+    parameterization, axis marker), the new generic core is the single
+    canonical surface and consumers spell the axis or storage policy
+    explicitly via `pub type` aliases or generic arguments. LLVM
+    monomorphizes per-call-site, so per-iteration costs and the perf
+    contracts attached to each public surface are preserved.
+realization:
+- bindings:
+  - scheme: path
+    value: Cargo.toml
+    metadata:
+      summary: Workspace members trimmed from 13 to 10. The remaining crates are oxgraph, oxgraph-algo, oxgraph-csr, oxgraph-graph, oxgraph-hyper, oxgraph-hyper-bcsr, oxgraph-layout-util, oxgraph-property, oxgraph-snapshot, oxgraph-topology.
+  - scheme: path
+    value: crates/oxgraph-layout-util/src/lib.rs
+    metadata:
+      summary: New unified utility crate (Phase 2A). Hosts both the build-time BuildIndex sealed trait and helpers (id_to_slot, slot_or_max, index_from_usize, build_offset_index) and the read-time ZerocopyWord sealed trait and predicates (check_offsets_monotonic, check_value_range, check_offset_section). Replaces oxgraph-build-util and oxgraph-csr-util.
+  - scheme: path
+    value: crates/oxgraph-layout-util/src/proofs.rs
+    metadata:
+      summary: Unified kani proofs for build_offset_index algebraic contracts + overflow totality and for the three offset-integrity predicates' totality + algebraic contracts.
+  - scheme: path
+    value: crates/oxgraph-csr/src/build.rs
+    metadata:
+      summary: Graph builder folded into oxgraph-csr behind the `build` feature (Phase 2B). Reuses CsrSnapshotIndex for word conversion and oxgraph-layout-util for BuildIndex / helpers. Was crates/oxgraph-graph-build/src/lib.rs.
+  - scheme: path
+    value: crates/oxgraph-csr/tests/build_proptest.rs
+    metadata:
+      summary: Builder proptest test relocated alongside the folded builder; requires the `build-property-arrow` feature. Was crates/oxgraph-graph-build/tests/proptest.rs.
+  - scheme: path
+    value: crates/oxgraph-hyper-bcsr/src/build.rs
+    metadata:
+      summary: Hypergraph builder folded into oxgraph-hyper-bcsr behind the `build` feature (Phase 2B). Reuses BcsrSnapshotIndex for word conversion and oxgraph-layout-util for BuildIndex / helpers. Was crates/oxgraph-hyper-build/src/lib.rs.
+  - scheme: path
+    value: crates/oxgraph-hyper-bcsr/tests/build_proptest.rs
+    metadata:
+      summary: Hypergraph builder proptest test relocated alongside the folded builder; requires the `build-property-arrow` feature. Was crates/oxgraph-hyper-build/tests/proptest.rs.
+  - scheme: path
+    value: crates/oxgraph-snapshot/src/container.rs
+    metadata:
+      summary: Phase 2C container flattening. The eight-file container/ submodule (mod.rs, header.rs, section.rs, plan.rs, reader.rs, validate.rs, builder.rs) collapses into one container.rs hosting format constants, RawHeader, RawSectionEntry, ValidationLevel, Section / SectionIter / Snapshot / HeaderOnlySnapshot, SnapshotPlan (no-alloc writer), and the alloc-gated SnapshotBuilder. No public API change — all public symbols were already re-exported at the crate root.
+  - scheme: path
+    value: crates/oxgraph-snapshot/src/container_error.rs
+    metadata:
+      summary: Phase 2C container flattening. Concrete SnapshotError / PlanError / SectionViewError enums migrated wholesale from the prior container/error.rs file.
+  - scheme: path
+    value: crates/oxgraph-algo/src/bfs/generic_set.rs
+    metadata:
+      summary: Phase 1 dedup. Replaces bfs/generic_btree.rs + bfs/generic_hash.rs. One generic_set.rs module hosts the shared BTreeBfs / HashBfs cores with cfg-gated public type aliases (GenericBreadthFirstSearch / HashBreadthFirstSearch + reverse variants) so call sites keep their original spellings.
+  - scheme: path
+    value: crates/oxgraph-algo/src/bfs/epoch.rs
+    metadata:
+      summary: Phase 1 dedup. BfsEpochScratch and BfsWorkspace share a single EpochCounter type instead of carrying duplicate epoch counters.
+  - scheme: path
+    value: crates/oxgraph-algo/src/pagerank.rs
+    metadata:
+      summary: Phase 1 dedup. fill_hyper_personalization_{from_input,uniform} replaced by a PersonalizationSource enum dispatched once inside hypergraph PageRank entry points (entry-point collapse itself is amendment 20 + amendment 22; this is the personalization plumbing follow-up).
+  - scheme: path
+    value: crates/oxgraph-hyper-bcsr/src/internal/iter.rs
+    metadata:
+      summary: Phase 1 dedup. Successor/Predecessor and Vertex/Hyperedge iterators collapse into BcsrNeighborVertices<RelationWord, OffsetWord, VertexWord> and BcsrIdSlice<Word, Id> with `pub type` aliases (BcsrSuccessorVertices, BcsrPredecessorVertices, BcsrVertexSlice, BcsrHyperedgeSlice, chained-iterator aliases) preserving prior names.
+  - scheme: path
+    value: crates/oxgraph-hyper-bcsr/src/id.rs
+    metadata:
+      summary: Phase 1 dedup. Absorbs the prior role.rs (BcsrParticipantRole) so role + ID definitions live in one file.
+  - scheme: path
+    value: crates/oxgraph-hyper-bcsr/src/internal/view.rs
+    metadata:
+      summary: Phase 1 dedup. Absorbs the prior sections.rs (BcsrSections aggregate) so the view layer holds its own section bundle.
+  - scheme: path
+    value: crates/oxgraph-property/src/lib.rs
+    metadata:
+      summary: Phase 1 dedup. Introduces AxisIndex<A> (a topology-base supertrait per PropertyAxis marker) collapsing the three parallel DenseWeights / SparseWeights constructor families. Consolidates graph and hypergraph encoders into one PropertySnapshotEncoder<W>; uses zerocopy as_bytes / read_from_bytes on PropertySnapshotRecord<W>.
+  - scheme: path
+    value: crates/oxgraph-property/src/tests.rs
+    metadata:
+      summary: Phase 1 dedup. The 620-line tests module previously inside lib.rs is lifted into a sibling tests.rs.
+  - scheme: path
+    value: crates/oxgraph/Cargo.toml
+    metadata:
+      summary: Umbrella feature surface preserved across Phase 2B. graph-build / hyper-build / *-snapshot / *-property-arrow features now route to the layout crates' `build` / `build-property-arrow` features instead of the now-folded standalone builder crates.
+  role: primary
+initiated_by:
+  type: human
