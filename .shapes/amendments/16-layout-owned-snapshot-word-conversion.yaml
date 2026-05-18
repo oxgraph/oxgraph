@@ -32,13 +32,13 @@ realization:
     metadata:
       summary: BcsrSnapshotIndex owns little-endian word conversion alongside BCSR snapshot section-kind metadata.
   - scheme: path
-    value: crates/oxgraph-graph-build/src/lib.rs
+    value: crates/oxgraph-csr/src/build.rs
     metadata:
-      summary: Graph builder snapshot export helpers use CsrSnapshotIndex directly and no longer define GraphSnapshotIndex.
+      summary: Graph builder snapshot export helpers use CsrSnapshotIndex directly and no longer define GraphSnapshotIndex. (Builder folded into oxgraph-csr behind the `build` feature by amendment 24; previously oxgraph-graph-build/src/lib.rs.)
   - scheme: path
-    value: crates/oxgraph-hyper-build/src/lib.rs
+    value: crates/oxgraph-hyper-bcsr/src/build.rs
     metadata:
-      summary: Hypergraph builder snapshot export helpers use BcsrSnapshotIndex directly and no longer define HyperSnapshotIndex.
+      summary: Hypergraph builder snapshot export helpers use BcsrSnapshotIndex directly and no longer define HyperSnapshotIndex. (Builder folded into oxgraph-hyper-bcsr behind the `build` feature by amendment 24; previously oxgraph-hyper-build/src/lib.rs.)
   role: primary
 initiated_by:
   type: human

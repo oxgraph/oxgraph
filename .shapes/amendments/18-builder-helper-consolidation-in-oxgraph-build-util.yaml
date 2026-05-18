@@ -39,17 +39,17 @@ intent:
 realization:
 - bindings:
   - scheme: path
-    value: crates/oxgraph-build-util
+    value: crates/oxgraph-layout-util
     metadata:
-      summary: New crate hosting BuildIndex + helper functions + typed data enums.
+      summary: Successor crate hosting BuildIndex + helper functions + typed data enums. (Originally landed as oxgraph-build-util in this amendment; merged with oxgraph-csr-util into oxgraph-layout-util by amendment 24.)
   - scheme: path
-    value: crates/oxgraph-graph-build/src/lib.rs
+    value: crates/oxgraph-csr/src/build.rs
     metadata:
-      summary: BuildIndex deleted; ensure_node / ensure_edge / node_slot / edge_slot replaced with oxgraph_build_util helpers; freeze_topology bucketing migrated to build_offset_index where the patterns align.
+      summary: BuildIndex deleted; ensure_node / ensure_edge / node_slot / edge_slot replaced with oxgraph_layout_util helpers; freeze_topology bucketing migrated to build_offset_index where the patterns align. (Originally in oxgraph-graph-build/src/lib.rs; builder folded into oxgraph-csr behind the `build` feature by amendment 24.)
   - scheme: path
-    value: crates/oxgraph-hyper-build/src/lib.rs
+    value: crates/oxgraph-hyper-bcsr/src/build.rs
     metadata:
-      summary: BuildIndex deleted; vertex_index_checked / hyperedge_index_checked / vertex_slot / hyperedge_slot / participant_slot / index_from_usize replaced with oxgraph_build_util helpers; build_vertex_relation_index / build_element_incidence_index replaced with build_offset_index.
+      summary: BuildIndex deleted; vertex_index_checked / hyperedge_index_checked / vertex_slot / hyperedge_slot / participant_slot / index_from_usize replaced with oxgraph_layout_util helpers; build_vertex_relation_index / build_element_incidence_index replaced with build_offset_index. (Originally in oxgraph-hyper-build/src/lib.rs; builder folded into oxgraph-hyper-bcsr behind the `build` feature by amendment 24.)
   role: primary
 initiated_by:
   type: human

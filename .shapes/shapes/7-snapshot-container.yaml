@@ -45,18 +45,22 @@ realization:
     metadata:
       summary: The crate root. Topology-agnostic byte-level snapshot container.
   - scheme: path
-    value: crates/oxgraph-snapshot/src/container/mod.rs
+    value: crates/oxgraph-snapshot/src/container.rs
     metadata:
-      summary: Format constants — FORMAT_MAGIC, FORMAT_MAJOR=1, FORMAT_MINOR=0, MAX_SUPPORTED_MINOR=0, HEADER_SIZE=32, SECTION_ENTRY_SIZE=32, MAX_ALIGNMENT_LOG2=12, MAX_SECTION_COUNT=1024.
+      summary: The consolidated container module. Holds the format constants (FORMAT_MAGIC, FORMAT_MAJOR=1, FORMAT_MINOR=0, MAX_SUPPORTED_MINOR=0, HEADER_SIZE=32, SECTION_ENTRY_SIZE=32, MAX_ALIGNMENT_LOG2=12, MAX_SECTION_COUNT=1024), the zerocopy RawHeader and RawSectionEntry byte structs, Section / SectionIter / Snapshot / HeaderOnlySnapshot readers, ValidationLevel and the layout walk, the no-alloc SnapshotPlan writer, and the alloc-gated SnapshotBuilder. Will move wholesale if the container ever graduates to a separate topology-snapshot crate.
   - scheme: path
-    value: crates/oxgraph-snapshot/src/container
+    value: crates/oxgraph-snapshot/src/container_error.rs
     metadata:
-      summary: Module tree — header, section, plan, reader, validate, builder, error. Will move wholesale if the container ever graduates to a separate topology-snapshot crate.
+      summary: Concrete SnapshotError, PlanError, and SectionViewError enums returned by the container — Display + core::error::Error without alloc/std.
   - scheme: path
     value: crates/oxgraph-snapshot/src/proofs.rs
     metadata:
       summary: Kani harnesses — header parsing totality, Snapshot::open never panics on arbitrary 64-byte input, two-section roundtrip, FORMAT_MAGIC constant.
   role: primary
+amendment_log:
+- 1
+- 8
+- 24
 parents:
 - id: 1
   role: component
@@ -65,6 +69,3 @@ children:
   role: component
 - shape: 21
   role: component
-amendment_log:
-- 1
-- 8

@@ -37,13 +37,9 @@ constraints:
 realization:
 - bindings:
   - scheme: path
-    value: crates/oxgraph-snapshot/src/container/header.rs
+    value: crates/oxgraph-snapshot/src/container.rs
     metadata:
-      summary: RawHeader uses zerocopy derives; alignment 1 so it borrows from any byte slice.
-  - scheme: path
-    value: crates/oxgraph-snapshot/src/container/section.rs
-    metadata:
-      summary: RawSectionEntry uses zerocopy derives; Section::try_as_slice checks actual pointer alignment at the call site.
+      summary: RawHeader and RawSectionEntry use zerocopy derives (FromBytes, IntoBytes, Immutable, KnownLayout); alignment 1 so both borrow from any byte slice. Section::try_as_slice checks actual pointer alignment at the call site, not on the producer's declared metadata.
   - scheme: path
     value: crates/oxgraph-csr/src/lib.rs
     metadata:
@@ -53,6 +49,8 @@ realization:
     metadata:
       summary: Sections 18 ("Zero-Copy Friendly by Default"), 19 ("Snapshot Format Is Not Rust Serialization"), 22 ("Safety Model").
   role: primary
+amendment_log:
+- 24
 parents:
 - id: 1
   role: pattern

@@ -28,9 +28,6 @@ intent:
     benches without contracts produce noise that looks like progress but isn't.
   verification_method: |
     `cargo bench --workspace` reviewed against documented perf contracts.
-parents:
-- id: 10
-  role: component
 realization:
 - bindings:
   - scheme: path
@@ -50,3 +47,6 @@ realization:
     metadata:
       summary: Criterion bench — Layout/Strict validation, hyperedge-major head/tail iteration, vertex-major incident iteration, directed successor expansion.
   role: primary
+parents:
+- id: 10
+  role: component

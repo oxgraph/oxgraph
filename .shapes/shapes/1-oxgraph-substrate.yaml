@@ -125,3 +125,5 @@ children:
   role: component
 - shape: 26
   role: component
+- shape: 27
+  role: component

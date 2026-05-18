@@ -1,0 +1,81 @@
+id: 27
+name: layout utilities
+description: |
+  Unified no_std + alloc utility crate that owns two layout responsibilities for
+  oxgraph: build-time primitives shared by the graph and hypergraph builders
+  (sealed BuildIndex trait + id-to-slot validation + bucketed offset-index
+  construction + the typed data enums those helpers return) and read-time
+  offset-integrity primitives shared by the CSR and BCSR layouts (sealed
+  ZerocopyWord supertrait + length / first-zero / monotonicity / final-offset /
+  value-range predicates). Returns small typed data enums (IdOutOfBounds,
+  OffsetOverflow, OffsetIntegrityIssue); each calling crate maps the issue to
+  its typed error at the boundary. Has no public domain semantics — it is a
+  deliberate utility seam, not a layer. Replaces shapes 25 (oxgraph-build-util)
+  and 26 (oxgraph-csr-util) after the Phase 2A consolidation in commit
+  af3289e (amendment 24).
+profile: 1
+status: proposed
+intent:
+  kind: module
+  summary: Unified utility crate hosting build-time BuildIndex/helpers and read-time offset-integrity primitives
+  source: human
+  goals: |
+    - Own the canonical BuildIndex sealed-trait definition with native
+      u16/u32/u64/usize impls; provide id_to_slot, slot_or_max,
+      index_from_usize, and build_offset_index as ordinary pub fns over
+      BuildIndex (no trait indirection beyond BuildIndex itself).
+    - Own the canonical ZerocopyWord sealed-trait definition (opted into by
+      CsrWord and BcsrWord via supertrait) with native u16/u32/u64/usize and
+      little-endian U16<LE>/U32<LE>/U64<LE> impls; provide the three
+      offset-integrity predicates (check_offsets_monotonic, check_value_range,
+      check_offset_section) as ordinary pub fns returning OffsetIntegrityIssue.
+    - Return small typed data enums (IdOutOfBounds, OffsetOverflow,
+      OffsetIntegrityIssue) so each calling crate maps the issue to its typed
+      error variant; no Box<dyn Error>, no anyhow.
+    - Keep predicate-level and bucketing-level kani proofs here; end-to-end
+      proofs in oxgraph-csr and oxgraph-hyper-bcsr stay unchanged.
+    - Stay no_std + alloc, dependency-light. Depend only on zerocopy for LE
+      word sealing; depend on nothing from any other oxgraph crate.
+  non_goals: |
+    No domain semantics, no public trait surface beyond BuildIndex and
+    ZerocopyWord, no graph/hypergraph/layout-specific types, no snapshot
+    container or Arrow dependencies, no error type embedding layout-specific
+    section discriminators (those are caller-mapped at the boundary), and no
+    place for future builder utilities that need crate-specific knowledge.
+  rationale: |
+    BuildIndex and the slot/bucketing primitives were duplicated byte-for-byte
+    between oxgraph-graph-build and oxgraph-hyper-build (amendment 18 shed
+    that into oxgraph-build-util); the five offset-walk predicates were
+    duplicated between oxgraph-csr's inline CsrGraph::validate and
+    oxgraph-hyper-bcsr's internal/validation.rs helpers (amendment 19 shed
+    that into oxgraph-csr-util). Both utility crates were tiny, depended only
+    on zerocopy, and lived alongside each other on the dependency graph.
+    Merging them into a single oxgraph-layout-util crate (Phase 2A of
+    amendment 24) keeps the dedup honest, halves the workspace-member churn,
+    and lets the build-time and read-time primitives share the sealed-trait
+    pattern with one set of kani proofs. Per shape:2, topology explicitly
+    excludes builders and CSR/snapshot-format primitives, so the canonical
+    home cannot be oxgraph-topology; a dedicated utility crate is the
+    consistent answer.
+constraints:
+- 4
+realization:
+- bindings:
+  - scheme: path
+    value: crates/oxgraph-layout-util
+    metadata:
+      summary: The crate root. Single no_std + alloc utility crate hosting both build-time and read-time layout primitives. Depends only on zerocopy.
+  - scheme: path
+    value: crates/oxgraph-layout-util/src/lib.rs
+    metadata:
+      summary: Sealed BuildIndex trait (native u16/u32/u64/usize impls) and the build-time helpers id_to_slot / slot_or_max / index_from_usize / build_offset_index returning IdOutOfBounds / OffsetOverflow. Sealed ZerocopyWord trait (native + little-endian U16<LE>/U32<LE>/U64<LE> impls) and the read-time predicates check_offsets_monotonic / check_value_range / check_offset_section returning OffsetIntegrityIssue.
+  - scheme: path
+    value: crates/oxgraph-layout-util/src/proofs.rs
+    metadata:
+      summary: Kani proofs for build_offset_index algebraic contracts and overflow totality plus predicate totality and the algebraic contract of the three offset-integrity checks.
+  role: primary
+amendment_log:
+- 24
+parents:
+- id: 1
+  role: component

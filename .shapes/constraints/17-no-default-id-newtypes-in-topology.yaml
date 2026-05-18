@@ -1,25 +1,29 @@
 id: 17
-name: "no default id newtypes in topology"
+name: no default id newtypes in topology
 description: |
-    oxgraph-topology stays associated-type-only. It does not provide default concrete
-    ID newtypes (e.g., no `pub struct ElementId(u32)` exposed by the crate). Each
-    view picks its own ID representation per the layered identity model in vision
-    §11.
-kind: "invariant"
+  oxgraph-topology stays associated-type-only. It does not provide default concrete
+  ID newtypes (e.g., no `pub struct ElementId(u32)` exposed by the crate). Each
+  view picks its own ID representation per the layered identity model in vision
+  §11.
+kind: invariant
 rule: |
-    `oxgraph-topology` exposes ID identity exclusively through `TopologyBase::ElementId`,
-    `TopologyBase::RelationId`, and `IncidenceBase::IncidenceId` associated types.
-    No public concrete ID struct, type alias to a fixed-width integer, or default ID
-    type lives in this crate. Re-exports through `oxgraph-graph` and `oxgraph-hyper`
-    follow the same rule (NodeId<G> / VertexId<H> are TYPE ALIASES OVER the view's
-    associated type, not concrete types).
+  `oxgraph-topology` exposes ID identity exclusively through `TopologyBase::ElementId`,
+  `TopologyBase::RelationId`, and `IncidenceBase::IncidenceId` associated types.
+  No public concrete ID struct, type alias to a fixed-width integer, or default ID
+  type lives in this crate. Re-exports through `oxgraph-graph` and `oxgraph-hyper`
+  follow the same rule (NodeId<G> / VertexId<H> are TYPE ALIASES OVER the view's
+  associated type, not concrete types).
 enforcement: manual
 profile: 1
 status: canonical
 intent:
-  kind: "invariant"
-  summary: "oxgraph-topology is associated-type-only — no default concrete ID newtypes are exposed by the crate"
-  source: "human"
+  kind: invariant
+  summary: oxgraph-topology is associated-type-only — no default concrete ID newtypes are exposed by the crate
+  source: human
+  impact_if_violated: |
+    A default newtype either presupposes an identity layer (locking views) or a
+    width (locking targets). Either way, the substrate's "anything can be built on
+    top" promise weakens for any consumer that wanted the other choice.
   rationale: |
     Confirmed in interview as the chosen position from foundation-progress.md's
     open questions. Two reasons stack: (1) identity is layer-specific — layout-
@@ -29,26 +33,21 @@ intent:
     may want u64, and locking width is a substrate-level decision that can't be
     undone later. Together these are why associated-type-only is the long-term
     answer, not just the current state.
-  impact_if_violated: |
-    A default newtype either presupposes an identity layer (locking views) or a
-    width (locking targets). Either way, the substrate's "anything can be built on
-    top" promise weakens for any consumer that wanted the other choice.
   verification_method: |
     Manual review at PR time, plus the pause-and-ask gate (constraint 21) on any
     public API reshuffle in oxgraph-topology.
-
 realization:
-  - bindings:
-      - scheme: path
-        value: crates/oxgraph-topology/src/lib.rs
-        metadata:
-          summary: All ID identity is exposed through TopologyId, TopologyBase, IncidenceBase associated types — no concrete newtype defined.
-      - scheme: path
-        value: vision.md
-        metadata:
-          summary: Section 11 — three-tier identity model (topology-local, canonical substrate, domain) that motivates associated-type-only.
-      - scheme: path
-        value: foundation-progress.md
-        metadata:
-          summary: '"No Concrete ID Newtypes In Core" deviation note — captures the original choice; constraint 17 is the long-term commitment.'
-    role: primary
+- bindings:
+  - scheme: path
+    value: crates/oxgraph-topology/src/lib.rs
+    metadata:
+      summary: All ID identity is exposed through TopologyId, TopologyBase, IncidenceBase associated types — no concrete newtype defined.
+  - scheme: path
+    value: vision.md
+    metadata:
+      summary: Section 11 — three-tier identity model (topology-local, canonical substrate, domain) that motivates associated-type-only.
+  - scheme: path
+    value: foundation-progress.md
+    metadata:
+      summary: '"No Concrete ID Newtypes In Core" deviation note — captures the original choice; constraint 17 is the long-term commitment.'
+  role: primary

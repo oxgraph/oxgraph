@@ -33,9 +33,6 @@ intent:
     Manual review of public Rust APIs and manifests. `rg` checks for f64-specialized
     public symbols are useful triage, but context decides whether each occurrence is an
     explicitly named specialization or an architectural scalar lock.
-parents:
-- id: 27
-  role: component
 realization:
 - bindings:
   - scheme: path
@@ -51,3 +48,6 @@ realization:
     metadata:
       summary: PageRank rank-scalar and input-weight conversion traits must realize this constraint.
   role: primary
+parents:
+- id: 27
+  role: component

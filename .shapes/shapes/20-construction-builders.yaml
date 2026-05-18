@@ -38,13 +38,13 @@ constraints:
 realization:
 - bindings:
   - scheme: path
-    value: crates/oxgraph-graph-build
+    value: crates/oxgraph-csr/src/build.rs
     metadata:
-      summary: no_std + alloc graph builders split into unweighted/weighted cores with feature-gated CSR/property export helpers that reuse layout-owned CsrSnapshotIndex conversion. BuildIndex and id-to-slot / index_from_usize / build_offset_index helpers come from oxgraph-build-util (shape:25).
+      summary: no_std + alloc graph builder folded into oxgraph-csr behind the `build` cargo feature (with `build-property-arrow` for the Arrow snapshot export adapter). Unweighted/weighted cores reuse layout-owned CsrSnapshotIndex word conversion; BuildIndex and the id-to-slot / index_from_usize / build_offset_index helpers come from oxgraph-layout-util (shape:27).
   - scheme: path
-    value: crates/oxgraph-hyper-build
+    value: crates/oxgraph-hyper-bcsr/src/build.rs
     metadata:
-      summary: no_std + alloc hypergraph builders split into unweighted/weighted cores with feature-gated BCSR/property export helpers that reuse layout-owned BcsrSnapshotIndex conversion. BuildIndex and id-to-slot / index_from_usize / build_offset_index helpers come from oxgraph-build-util (shape:25).
+      summary: no_std + alloc hypergraph builder folded into oxgraph-hyper-bcsr behind the `build` cargo feature (with `build-property-arrow` for the Arrow snapshot export adapter). Unweighted/weighted cores reuse layout-owned BcsrSnapshotIndex word conversion; BuildIndex and the id-to-slot / index_from_usize / build_offset_index helpers come from oxgraph-layout-util (shape:27).
   role: primary
 amendment_log:
 - 9
@@ -53,6 +53,7 @@ amendment_log:
 - 16
 - 17
 - 18
+- 24
 parents:
 - id: 16
   role: component

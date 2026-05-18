@@ -19,6 +19,10 @@ intent:
   kind: boundary
   summary: Named properties and Arrow/Python semantics stay above foundation crates
   source: ai
+  impact_if_violated: |
+    Foundation crates would inherit std/Arrow/Python dependencies or domain semantics;
+    no_std consumers would pay for features they do not use; algorithms would silently
+    conflate topology weights with probabilities or properties.
   rationale: |
     The project invariant is "Topology here. Meaning elsewhere. Storage anywhere."
     Weight capability traits are topology primitives because many topology families can
@@ -26,10 +30,6 @@ intent:
     schemas, labels, and probability semantics are meanings layered on top. Keeping the
     boundary explicit prevents the Python and property work from contaminating no_std
     foundation crates.
-  impact_if_violated: |
-    Foundation crates would inherit std/Arrow/Python dependencies or domain semantics;
-    no_std consumers would pay for features they do not use; algorithms would silently
-    conflate topology weights with probabilities or properties.
   verification_method: |
     Manual review of dependency DAGs, manifests, and public APIs. Foundation crate
     manifests must not depend on oxgraph-property, Arrow, or PyO3.

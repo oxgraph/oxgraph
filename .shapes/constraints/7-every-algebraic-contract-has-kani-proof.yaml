@@ -32,9 +32,6 @@ intent:
     compute and is the ceiling violation the matrix exists to prevent.
   verification_method: |
     `cargo kani --workspace` (heavy `just verify` gate, run pre-PR or on demand).
-parents:
-- id: 10
-  role: component
 realization:
 - bindings:
   - scheme: path
@@ -50,3 +47,6 @@ realization:
     metadata:
       summary: Kani harnesses for bipartite-CSR — Layout/Strict totality, u32-cap arithmetic non-overflow, u32→usize narrowing safety.
   role: primary
+parents:
+- id: 10
+  role: component

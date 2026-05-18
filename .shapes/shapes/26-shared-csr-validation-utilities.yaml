@@ -1,18 +1,19 @@
 id: 26
 name: shared CSR validation utilities
 description: |
-  Tiny no_std utility crate that owns the offset-integrity predicates shared
-  by oxgraph-csr (binary CSR) and oxgraph-hyper-bcsr (bipartite CSR) layouts.
-  Hosts a sealed ZerocopyWord trait (opted into by CsrWord and BcsrWord) and
-  small pure functions for length / first-zero / monotonicity / final-offset /
-  value-range checks. Returns OffsetIntegrityIssue; each layout maps the
-  issue to its typed error at the boundary, stamping any section discriminator
-  the layout needs.
+  Originally a tiny no_std utility crate (oxgraph-csr-util) that was to own
+  the offset-integrity predicates shared by oxgraph-csr (binary CSR) and
+  oxgraph-hyper-bcsr (bipartite CSR) layouts, hosting a sealed ZerocopyWord
+  trait and the predicate functions. The crate was created (amendment 19)
+  and then immediately merged with oxgraph-build-util (shape:25) into a
+  single utility crate oxgraph-layout-util by commit af3289e
+  (amendment 24). The unified crate is covered by shape:27 (layout
+  utilities); this shape is retained as a historical record.
 profile: 1
-status: proposed
+status: superseded
 intent:
   kind: module
-  summary: Shared offset-integrity primitives consumed by CSR and BCSR layouts
+  summary: Superseded — folded together with shape:25 into shape:27 (layout utilities); see oxgraph-layout-util
   source: human
   goals: |
     - Own the sealed ZerocopyWord trait that both CsrWord and BcsrWord use
@@ -32,30 +33,29 @@ intent:
     The five offset-walk predicates were duplicated between oxgraph-csr's
     inline CsrGraph::validate and oxgraph-hyper-bcsr's
     internal/validation.rs::validate_one_offsets et al. Promoting them to a
-    shared crate gives one canonical predicate path with one set of kani
+    shared crate gave one canonical predicate path with one set of kani
     proofs, while letting each layout keep its typed error and
     section-discriminator vocabulary at the boundary. Per shape:2, topology
     explicitly excludes CSR/snapshot-format primitives, so the canonical
-    home is a dedicated utility crate.
+    home is a dedicated utility crate. The post-consolidation home for these
+    primitives is oxgraph-layout-util (shape:27), which also absorbs the
+    build-time primitives that shape:25 used to own.
 constraints:
 - 4
 realization:
 - bindings:
   - scheme: path
-    value: crates/oxgraph-csr-util
+    value: crates/oxgraph-layout-util/src/lib.rs
     metadata:
-      summary: The crate root. Hosts ZerocopyWord, OffsetIntegrityIssue, and the three offset-integrity predicates.
+      summary: Successor location. Hosts ZerocopyWord (sealed; native u16/u32/u64/usize and little-endian U16<LE>/U32<LE>/U64<LE> impls), OffsetIntegrityIssue, and the three offset-integrity predicates (check_offsets_monotonic, check_value_range, check_offset_section) alongside the build-time primitives shape:25 used to own.
   - scheme: path
-    value: crates/oxgraph-csr-util/src/lib.rs
+    value: crates/oxgraph-layout-util/src/proofs.rs
     metadata:
-      summary: Sealed ZerocopyWord trait with native (u16/u32/u64/usize) and little-endian (U16<LE>/U32<LE>/U64<LE>) impls. Predicates check_offsets_monotonic, check_value_range, check_offset_section.
-  - scheme: path
-    value: crates/oxgraph-csr-util/src/proofs.rs
-    metadata:
-      summary: kani proofs for predicate totality and the algebraic contract of the three checks.
+      summary: Successor location for the kani proofs of predicate totality and the algebraic contract of the three offset-integrity checks.
   role: primary
 amendment_log:
 - 19
+- 24
 parents:
 - id: 1
   role: component

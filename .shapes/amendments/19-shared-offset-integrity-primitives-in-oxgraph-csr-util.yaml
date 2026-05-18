@@ -48,17 +48,17 @@ intent:
 realization:
 - bindings:
   - scheme: path
-    value: crates/oxgraph-csr-util
+    value: crates/oxgraph-layout-util
     metadata:
-      summary: New crate hosting ZerocopyWord, OffsetIntegrityIssue, and the three predicate fns.
+      summary: Successor crate hosting ZerocopyWord, OffsetIntegrityIssue, and the three predicate fns. (Originally landed as oxgraph-csr-util in this amendment; merged with oxgraph-build-util into oxgraph-layout-util by amendment 24.)
   - scheme: path
     value: crates/oxgraph-csr/src/lib.rs
     metadata:
-      summary: CsrWord gains oxgraph_csr_util::ZerocopyWord supertrait. CsrGraph::validate replaced with calls to check_offset_section and check_value_range, mapping OffsetIntegrityIssue to typed CsrError variants via map_offsets_issue / map_targets_issue.
+      summary: CsrWord gains oxgraph_layout_util::ZerocopyWord supertrait. CsrGraph::validate replaced with calls to check_offset_section and check_value_range, mapping OffsetIntegrityIssue to typed CsrError variants via map_offsets_issue / map_targets_issue.
   - scheme: path
     value: crates/oxgraph-hyper-bcsr/src/word.rs
     metadata:
-      summary: BcsrWord gains oxgraph_csr_util::ZerocopyWord supertrait via the existing leaf-type impls.
+      summary: BcsrWord gains oxgraph_layout_util::ZerocopyWord supertrait via the existing leaf-type impls.
   - scheme: path
     value: crates/oxgraph-hyper-bcsr/src/internal/validation.rs
     metadata:

@@ -27,16 +27,12 @@ intent:
   rationale: |
     The plan needs new public capability traits and workspace crates. Capturing the
     change as an amendment preserves the reason and scope before source changes land.
-initiated_by:
-  type: human
 realization:
 - bindings:
   - scheme: path
-    value: plans/python-bindings-birdsong.md
-    metadata:
-      summary: Source plan being implemented; birdsong remains out of scope.
-  - scheme: path
     value: docs/architecture.md
     metadata:
-      summary: Durable architecture document created from the accepted plan.
+      summary: Durable architecture document created from the accepted plan (the original `plans/python-bindings-birdsong.md` plan file was archived after the work landed; this doc is the surviving artifact).
   role: primary
+initiated_by:
+  type: human

@@ -42,7 +42,7 @@ realization:
     metadata:
       summary: Sections 6.1, 8.4, 9.3, 12.2 — explicit non-goals and "must not know about" lists.
   - scheme: path
-    value: crates/oxgraph-snapshot/src/container/section.rs
+    value: crates/oxgraph-snapshot/src/container.rs
     metadata:
       summary: RawSectionEntry.kind is `u32` the container assigns no semantics to — upper layers register kinds (CSR, BCSR, future).
   role: primary

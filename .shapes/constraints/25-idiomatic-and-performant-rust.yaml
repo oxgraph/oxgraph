@@ -1,206 +1,214 @@
 id: 25
-name: "idiomatic and performant rust"
+name: idiomatic and performant rust
 description: |
-    The catch-all judgment-call constraint that defines what "good Rust" means in
-    oxgraph beyond what the workspace clippy lints already enforce. Workspace lints
-    catch a lot — `clippy::all` / `cargo` / `nursery` / `pedantic` are all denied,
-    `expect_used` / `unwrap_used` / `allow_attributes` / `missing_docs` /
-    `missing_docs_in_private_items` are denied, and the cognitive_complexity /
-    excessive_nesting / too_many_arguments / too_many_lines / type_complexity
-    thresholds bound the coarse smells. This constraint covers the judgment calls
-    those lints can't make: allocation discipline on the data path, type-system
-    moves that make invalid states unrepresentable, iterator-first composition and
-    monomorphized abstraction, API surface hygiene, performance attributes that
-    need measurement to justify, lifetime / self-reference discipline, and
-    no_std / alloc / std portability gating. Every contributor (human or agent)
-    producing Rust in this workspace is expected to read this rule end-to-end and
-    apply each clause. Three areas are deliberately deferred until the shape that
-    introduces them lands: RAII / Drop discipline (waits for builders or
-    mmap helpers, shape 16 + snapshot v1 reserved std feature), concurrency
-    (waits for mutation, shape 16), and testing-structure conventions (already
-    followed; codify only if drift appears).
-kind: "invariant"
+  The catch-all judgment-call constraint that defines what "good Rust" means in
+  oxgraph beyond what the workspace clippy lints already enforce. Workspace lints
+  catch a lot — `clippy::all` / `cargo` / `nursery` / `pedantic` are all denied,
+  `expect_used` / `unwrap_used` / `allow_attributes` / `missing_docs` /
+  `missing_docs_in_private_items` are denied, and the cognitive_complexity /
+  excessive_nesting / too_many_arguments / too_many_lines / type_complexity
+  thresholds bound the coarse smells. This constraint covers the judgment calls
+  those lints can't make: allocation discipline on the data path, type-system
+  moves that make invalid states unrepresentable, iterator-first composition and
+  monomorphized abstraction, API surface hygiene, performance attributes that
+  need measurement to justify, lifetime / self-reference discipline, and
+  no_std / alloc / std portability gating. Every contributor (human or agent)
+  producing Rust in this workspace is expected to read this rule end-to-end and
+  apply each clause. Three areas are deliberately deferred until the shape that
+  introduces them lands: RAII / Drop discipline (waits for builders or
+  mmap helpers, shape 16 + snapshot v1 reserved std feature), concurrency
+  (waits for mutation, shape 16), and testing-structure conventions (already
+  followed; codify only if drift appears).
+kind: invariant
 rule: |
-    Seven rule families, ALL of which apply to every public and private surface in
-    every oxgraph crate. A violation in any family is a defect to fix in the same
-    PR — there is no "we'll address it later" clause, because greenfield posture
-    (constraint 3) means there is no later.
+  Seven rule families, ALL of which apply to every public and private surface in
+  every oxgraph crate. A violation in any family is a defect to fix in the same
+  PR — there is no "we'll address it later" clause, because greenfield posture
+  (constraint 3) means there is no later.
 
-    --- 1. Allocation and data-path discipline ---
+  --- 1. Allocation and data-path discipline ---
 
-    1.1 No speculative allocation on the data path. `.collect::<Vec<_>>()` is
-        forbidden when the caller will iterate the result once — return
-        `impl Iterator` instead. Intermediate `Vec` / `String` / `Box` on the
-        data path requires a contract-level justification in the doc.
-    1.2 Borrow on entry, own on return. Function parameters are `&str` / `&[T]` /
-        `impl Iterator` / `impl IntoIterator`, never `&String` / `&Vec<T>`.
-        Returns own only when the caller demonstrably needs ownership; use
-        `Cow<'_, X>` when ownership is conditional.
-    1.3 No `.clone()` in any function carrying a stated perf contract
-        (constraint 9) without an inline `// CLONE: <reason>` comment naming the
-        invariant the clone preserves.
-    1.4 Never `.clone()` to silence the borrow checker. Restructure, borrow
-        longer, lift the binding to an outer scope, or use `Rc` / `Arc` when
-        sharing is genuinely the model. A clone whose justification is "the
-        borrow checker complained" is a code smell that hides a real ownership
-        question.
-    1.5 IO-boundary structs use zerocopy derives (this is constraint 15;
-        repeated here for completeness — the rule families form one contract).
-    1.6 Stack arrays and `&[T; N]` over `Vec<T>` for fixed or small data.
-        `SmallVec` / `ArrayVec` for hot-path bounded storage where heap
-        allocation would dominate. `Vec<T>` is for genuinely unbounded
-        collections, not the default.
+  1.1 No speculative allocation on the data path. `.collect::<Vec<_>>()` is
+      forbidden when the caller will iterate the result once — return
+      `impl Iterator` instead. Intermediate `Vec` / `String` / `Box` on the
+      data path requires a contract-level justification in the doc.
+  1.2 Borrow on entry, own on return. Function parameters are `&str` / `&[T]` /
+      `impl Iterator` / `impl IntoIterator`, never `&String` / `&Vec<T>`.
+      Returns own only when the caller demonstrably needs ownership; use
+      `Cow<'_, X>` when ownership is conditional.
+  1.3 No `.clone()` in any function carrying a stated perf contract
+      (constraint 9) without an inline `// CLONE: <reason>` comment naming the
+      invariant the clone preserves.
+  1.4 Never `.clone()` to silence the borrow checker. Restructure, borrow
+      longer, lift the binding to an outer scope, or use `Rc` / `Arc` when
+      sharing is genuinely the model. A clone whose justification is "the
+      borrow checker complained" is a code smell that hides a real ownership
+      question.
+  1.5 IO-boundary structs use zerocopy derives (this is constraint 15;
+      repeated here for completeness — the rule families form one contract).
+  1.6 Stack arrays and `&[T; N]` over `Vec<T>` for fixed or small data.
+      `SmallVec` / `ArrayVec` for hot-path bounded storage where heap
+      allocation would dominate. `Vec<T>` is for genuinely unbounded
+      collections, not the default.
 
-    --- 2. Make invalid states unrepresentable ---
+  --- 2. Make invalid states unrepresentable ---
 
-    2.1 Use `NonZeroU32` / `NonZeroUsize` / `NonZeroU64` / `NonEmpty<T>` instead
-        of runtime `assert!(x != 0)` or `debug_assert!(!v.is_empty())`. The type
-        carries the invariant; runtime checks become the caller's problem at
-        the boundary, not the callee's problem on every call.
-    2.2 Sealed traits (`pub trait Foo: private::Sealed`) for any trait that
-        downstream crates should NOT implement. `ExpansionDirection` in
-        `crates/oxgraph-algo/src/bfs/core.rs` is the canonical example; new
-        trait DAGs follow the same pattern by default unless extension is an
-        explicit feature.
-    2.3 `#[non_exhaustive]` on every public enum and on every public struct
-        that may grow new fields. This is forward-compatibility insurance; the
-        cost is one attribute per type, the savings is not breaking consumers
-        on every minor.
-    2.4 `#[must_use]` on every type where ignoring the result is a likely bug:
-        `Result`-shaped enums, builders, validation outcomes, iterator
-        wrappers, anything whose existence implies the caller MUST observe it.
-    2.5 Newtype primitives that carry meaning. `pub struct VertexCount(u32)` /
-        `pub struct EdgeOffset(u32)` over bare `u32` in any signature where
-        the integer is a domain handle, not just a counter. Caveat: this rule
-        applies BELOW the topology layer — concrete views (CSR, BCSR), payload
-        layers, and section types use newtypes; the topology trait surface
-        itself stays associated-type-only per constraint 17.
-    2.6 No `bool` flag parameters that gate behavior. `fn render(verbose: bool)`
-        is two functions or a two-variant enum (`enum Verbosity { Quiet, Loud }`).
-        Same for sentinel values — `usize::MAX` to mean "not present" is an
-        `Option<usize>`. The compiler's exhaustive-match checking is the win.
-    2.7 Derive `Copy` only on small, value-semantic wrappers. Don't derive
-        `Copy` on a struct that holds an `Arc` (sharing semantics get implicit
-        and surprising) or that is large enough that implicit copies become a
-        perf footgun. ID newtypes around `u32` / `u64` are fine; anything
-        carrying owned heap data is not.
+  2.1 Use `NonZeroU32` / `NonZeroUsize` / `NonZeroU64` / `NonEmpty<T>` instead
+      of runtime `assert!(x != 0)` or `debug_assert!(!v.is_empty())`. The type
+      carries the invariant; runtime checks become the caller's problem at
+      the boundary, not the callee's problem on every call.
+  2.2 Sealed traits (`pub trait Foo: private::Sealed`) for any trait that
+      downstream crates should NOT implement. `ExpansionDirection` in
+      `crates/oxgraph-algo/src/bfs/core.rs` is the canonical example; new
+      trait DAGs follow the same pattern by default unless extension is an
+      explicit feature.
+  2.3 `#[non_exhaustive]` on every public enum and on every public struct
+      that may grow new fields. This is forward-compatibility insurance; the
+      cost is one attribute per type, the savings is not breaking consumers
+      on every minor.
+  2.4 `#[must_use]` on every type where ignoring the result is a likely bug:
+      `Result`-shaped enums, builders, validation outcomes, iterator
+      wrappers, anything whose existence implies the caller MUST observe it.
+  2.5 Newtype primitives that carry meaning. `pub struct VertexCount(u32)` /
+      `pub struct EdgeOffset(u32)` over bare `u32` in any signature where
+      the integer is a domain handle, not just a counter. Caveat: this rule
+      applies BELOW the topology layer — concrete views (CSR, BCSR), payload
+      layers, and section types use newtypes; the topology trait surface
+      itself stays associated-type-only per constraint 17.
+  2.6 No `bool` flag parameters that gate behavior. `fn render(verbose: bool)`
+      is two functions or a two-variant enum (`enum Verbosity { Quiet, Loud }`).
+      Same for sentinel values — `usize::MAX` to mean "not present" is an
+      `Option<usize>`. The compiler's exhaustive-match checking is the win.
+  2.7 Derive `Copy` only on small, value-semantic wrappers. Don't derive
+      `Copy` on a struct that holds an `Arc` (sharing semantics get implicit
+      and surprising) or that is large enough that implicit copies become a
+      perf footgun. ID newtypes around `u32` / `u64` are fine; anything
+      carrying owned heap data is not.
 
-    --- 3. Iterator-first composition and monomorphized abstraction ---
+  --- 3. Iterator-first composition and monomorphized abstraction ---
 
-    3.1 Iterator combinators (`map` / `filter` / `fold` / `try_fold` / `scan` /
-        `zip` / `chain` / `take_while` / `skip_while`) over manual `for` loops
-        when the operation is genuinely a fold / map / filter / reduce. Manual
-        `for` is for cases where combinators read worse, not as a default.
-    3.2 GAT-based iterator return types over `Box<dyn Iterator<…>>` for trait
-        methods. This is already the convention across `oxgraph-topology`,
-        `oxgraph-graph`, and `oxgraph-hyper`; codify it as the project rule.
-    3.3 Generics with monomorphization are the default for abstraction. Reach
-        for `dyn Trait` ONLY for: (a) heterogeneous collections (`Vec<Box<dyn
-        Foo>>` of mixed concrete types), (b) plugin / extension points where
-        the impl set is genuinely open at runtime, (c) binary-size pressure
-        with measured evidence. "I want abstraction" is not a reason for
-        `dyn Trait`; generics give it cheaper.
-    3.4 `impl Trait` in return position to hide iterator / future / closure /
-        complex generic types. Public functions that return an iterator return
-        `impl Iterator<Item = T>` (or a named GAT-bound type), not the
-        concrete `core::iter::Map<…>` chain. Hides implementation churn from
-        the consumer.
+  3.1 Iterator combinators (`map` / `filter` / `fold` / `try_fold` / `scan` /
+      `zip` / `chain` / `take_while` / `skip_while`) over manual `for` loops
+      when the operation is genuinely a fold / map / filter / reduce. Manual
+      `for` is for cases where combinators read worse, not as a default.
+  3.2 GAT-based iterator return types over `Box<dyn Iterator<…>>` for trait
+      methods. This is already the convention across `oxgraph-topology`,
+      `oxgraph-graph`, and `oxgraph-hyper`; codify it as the project rule.
+  3.3 Generics with monomorphization are the default for abstraction. Reach
+      for `dyn Trait` ONLY for: (a) heterogeneous collections (`Vec<Box<dyn
+      Foo>>` of mixed concrete types), (b) plugin / extension points where
+      the impl set is genuinely open at runtime, (c) binary-size pressure
+      with measured evidence. "I want abstraction" is not a reason for
+      `dyn Trait`; generics give it cheaper.
+  3.4 `impl Trait` in return position to hide iterator / future / closure /
+      complex generic types. Public functions that return an iterator return
+      `impl Iterator<Item = T>` (or a named GAT-bound type), not the
+      concrete `core::iter::Map<…>` chain. Hides implementation churn from
+      the consumer.
 
-    --- 4. API surface hygiene ---
+  --- 4. API surface hygiene ---
 
-    4.1 Conversions go through `From` / `TryFrom`, not arbitrary `from_x` /
-        `to_y` methods. `Default` is implemented only when there is a genuinely
-        correct default — `Default for FooBuilder` is fine; `Default for FooId`
-        when zero is not actually meaningful is not.
-    4.2 No `impl Into<X>` / `AsRef<X>` decoration on parameters. The
-        legitimate use case is genuine multi-source caller ergonomics — a
-        function that naturally accepts both `String` and `&str` and the
-        conversion at the call site is a real win. The illegitimate use is
-        ergonomic noise on a function that only ever gets called with one
-        type. `X` directly is the default; `impl Into<X>` is opt-in for the
-        multi-source case with a doc comment naming the sources it serves.
-    4.3 Trait bound minimalism: require only what is used. `T: Clone + Debug +
-        Send + Sync` is forbidden when only `Clone` is touched in the body.
-        Add bounds when the body needs them, not preemptively.
-    4.4 Private by default. Widen via `pub(crate)` / `pub(super)` /
-        `pub(in path)` BEFORE reaching for `pub`. Every `pub` item is a
-        year-long support commitment (CLAUDE.md); narrowing visibility once a
-        consumer depends on the wider one is a breaking change.
-    4.5 One concept per module. Crate root re-exports the public surface;
-        consumers depend on `oxgraph_snapshot::Snapshot`, not
-        `oxgraph_snapshot::container::reader::Snapshot`. Internal module paths
-        are refactor-free; re-exported crate-root paths are the contract.
-    4.6 Public functions document the standard sections where applicable:
-        `# Errors` whenever the function returns `Result`, `# Panics` whenever
-        the function can panic (which in library code should be never per
-        constraint 12 — so the section is "this function does not panic"),
-        `# Safety` whenever the function is `unsafe fn` (which the workspace
-        forbids per constraint 11), and `# Performance` always (constraint 9).
-    4.7 Typed error per module or per crate. Cross-boundary error conversion
-        goes through `From` + `?`, with concrete enum variants carrying the
-        underlying source via `#[source]` / `#[from]`. No type-erased errors
-        on the public surface (constraint 14). The error enum IS the failure-
-        mode contract.
+  4.1 Conversions go through `From` / `TryFrom`, not arbitrary `from_x` /
+      `to_y` methods. `Default` is implemented only when there is a genuinely
+      correct default — `Default for FooBuilder` is fine; `Default for FooId`
+      when zero is not actually meaningful is not.
+  4.2 No `impl Into<X>` / `AsRef<X>` decoration on parameters. The
+      legitimate use case is genuine multi-source caller ergonomics — a
+      function that naturally accepts both `String` and `&str` and the
+      conversion at the call site is a real win. The illegitimate use is
+      ergonomic noise on a function that only ever gets called with one
+      type. `X` directly is the default; `impl Into<X>` is opt-in for the
+      multi-source case with a doc comment naming the sources it serves.
+  4.3 Trait bound minimalism: require only what is used. `T: Clone + Debug +
+      Send + Sync` is forbidden when only `Clone` is touched in the body.
+      Add bounds when the body needs them, not preemptively.
+  4.4 Private by default. Widen via `pub(crate)` / `pub(super)` /
+      `pub(in path)` BEFORE reaching for `pub`. Every `pub` item is a
+      year-long support commitment (CLAUDE.md); narrowing visibility once a
+      consumer depends on the wider one is a breaking change.
+  4.5 One concept per module. Crate root re-exports the public surface;
+      consumers depend on `oxgraph_snapshot::Snapshot`, not
+      `oxgraph_snapshot::container::reader::Snapshot`. Internal module paths
+      are refactor-free; re-exported crate-root paths are the contract.
+  4.6 Public functions document the standard sections where applicable:
+      `# Errors` whenever the function returns `Result`, `# Panics` whenever
+      the function can panic (which in library code should be never per
+      constraint 12 — so the section is "this function does not panic"),
+      `# Safety` whenever the function is `unsafe fn` (which the workspace
+      forbids per constraint 11), and `# Performance` always (constraint 9).
+  4.7 Typed error per module or per crate. Cross-boundary error conversion
+      goes through `From` + `?`, with concrete enum variants carrying the
+      underlying source via `#[source]` / `#[from]`. No type-erased errors
+      on the public surface (constraint 14). The error enum IS the failure-
+      mode contract.
 
-    --- 5. Performance attributes need justification AND measurement ---
+  --- 5. Performance attributes need justification AND measurement ---
 
-    5.1 No `#[inline]` / `#[inline(always)]` / `#[inline(never)]` without a
-        criterion bench delta or a clear cross-crate generic justification in
-        the doc. "Felt right" is not justification; cross-crate generics that
-        rustc cannot inline without the attribute IS justification, written
-        down once.
-    5.2 Prefer `const fn` and `const` over runtime equivalents wherever the
-        compiler accepts. A function that COULD be `const fn` is an unstated
-        loss of constant-folding opportunity for the caller.
-    5.3 `Box<[T]>` over `Vec<T>` for finalized read-only collections. Saves a
-        `usize` per allocation, signals immutability to readers.
-    5.4 Profile before micro-optimizing. Trust zero-cost abstractions until
-        evidence says otherwise. Hand-unrolled loops, manual SIMD, custom
-        memory allocators, and layout reordering all need a criterion delta
-        attached to the PR. The optimizer is on our side until benchmarks
-        prove it isn't.
+  5.1 No `#[inline]` / `#[inline(always)]` / `#[inline(never)]` without a
+      criterion bench delta or a clear cross-crate generic justification in
+      the doc. "Felt right" is not justification; cross-crate generics that
+      rustc cannot inline without the attribute IS justification, written
+      down once.
+  5.2 Prefer `const fn` and `const` over runtime equivalents wherever the
+      compiler accepts. A function that COULD be `const fn` is an unstated
+      loss of constant-folding opportunity for the caller.
+  5.3 `Box<[T]>` over `Vec<T>` for finalized read-only collections. Saves a
+      `usize` per allocation, signals immutability to readers.
+  5.4 Profile before micro-optimizing. Trust zero-cost abstractions until
+      evidence says otherwise. Hand-unrolled loops, manual SIMD, custom
+      memory allocators, and layout reordering all need a criterion delta
+      attached to the PR. The optimizer is on our side until benchmarks
+      prove it isn't.
 
-    --- 6. Lifetimes and self-reference ---
+  --- 6. Lifetimes and self-reference ---
 
-    6.1 Lean on lifetime elision. Name lifetimes ONLY when the relationship
-        between input and output borrows actually needs to be expressed. No
-        `'_` ceremony, no explicit lifetime parameters that elision rules
-        would have inferred identically.
-    6.2 Avoid self-referential structs. Use indices, handles, or arena IDs to
-        express "this field references that other field" — the borrow checker
-        rejects self-reference for sound reasons; routing around it with
-        `Pin` / `unsafe` / `'static` is almost always reaching for the wrong
-        tool. Substrate-relevant: snapshot views borrow from external bytes,
-        not from sibling fields.
-    6.3 `'static` is a constraint, not a goal. Reach for it only when actually
-        required (spawned threads, type erasure across an API boundary).
-        Adding `'static` "to make the bound easier" pushes the cost of forced
-        ownership onto every consumer.
+  6.1 Lean on lifetime elision. Name lifetimes ONLY when the relationship
+      between input and output borrows actually needs to be expressed. No
+      `'_` ceremony, no explicit lifetime parameters that elision rules
+      would have inferred identically.
+  6.2 Avoid self-referential structs. Use indices, handles, or arena IDs to
+      express "this field references that other field" — the borrow checker
+      rejects self-reference for sound reasons; routing around it with
+      `Pin` / `unsafe` / `'static` is almost always reaching for the wrong
+      tool. Substrate-relevant: snapshot views borrow from external bytes,
+      not from sibling fields.
+  6.3 `'static` is a constraint, not a goal. Reach for it only when actually
+      required (spawned threads, type erasure across an API boundary).
+      Adding `'static` "to make the bound easier" pushes the cost of forced
+      ownership onto every consumer.
 
-    --- 7. Portability — core / alloc / std ---
+  --- 7. Portability — core / alloc / std ---
 
-    7.1 Default to `core` types in library code. Gate `alloc` behind
-        `feature = "alloc"` and `std` behind `feature = "std"` — the pattern
-        `oxgraph-snapshot` and `oxgraph-algo` already follow. Default builds
-        stay no_std.
-    7.2 Don't assume `Box`, `String`, `Vec`, `BTreeMap`, `BTreeSet`, `Rc`,
-        `Arc` exist outside `alloc`-gated code. `String` literals are `&str`;
-        boxed slices are gated behind `alloc`; collections come from `alloc`
-        when needed.
-    7.3 Keep core logic allocation-free where the target may be no_std. The
-        BFS scratch tier is the canonical example — it runs in pure no_std
-        with caller-provided storage; the alloc-gated tiers add convenience
-        on top, they do not become the only path.
-    7.4 Abstract I/O behind traits rather than depending on `std::io`
-        directly. (No I/O surface today; the rule is forward-loaded for when
-        the snapshot crate's reserved `std` feature ships mmap helpers.)
+  7.1 Default to `core` types in library code. Gate `alloc` behind
+      `feature = "alloc"` and `std` behind `feature = "std"` — the pattern
+      `oxgraph-snapshot` and `oxgraph-algo` already follow. Default builds
+      stay no_std.
+  7.2 Don't assume `Box`, `String`, `Vec`, `BTreeMap`, `BTreeSet`, `Rc`,
+      `Arc` exist outside `alloc`-gated code. `String` literals are `&str`;
+      boxed slices are gated behind `alloc`; collections come from `alloc`
+      when needed.
+  7.3 Keep core logic allocation-free where the target may be no_std. The
+      BFS scratch tier is the canonical example — it runs in pure no_std
+      with caller-provided storage; the alloc-gated tiers add convenience
+      on top, they do not become the only path.
+  7.4 Abstract I/O behind traits rather than depending on `std::io`
+      directly. (No I/O surface today; the rule is forward-loaded for when
+      the snapshot crate's reserved `std` feature ships mmap helpers.)
 enforcement: manual
 profile: 1
 status: canonical
 intent:
-  kind: "invariant"
-  summary: "Seven-family rule for idiomatic and performant Rust beyond what clippy can catch — allocation discipline, invalid-states-unrepresentable, iterator-first + monomorphized abstraction, API hygiene, performance-needs-measurement, lifetime / self-reference discipline, no_std / alloc / std gating"
-  source: "human"
+  kind: invariant
+  summary: Seven-family rule for idiomatic and performant Rust beyond what clippy can catch — allocation discipline, invalid-states-unrepresentable, iterator-first + monomorphized abstraction, API hygiene, performance-needs-measurement, lifetime / self-reference discipline, no_std / alloc / std gating
+  source: human
+  impact_if_violated: |
+    Hot paths slow down (speculative allocations, manual loops the optimizer
+    cannot match against iterator combinators, dynamic dispatch where GAT
+    would have given monomorphization). Public API surfaces accumulate runtime
+    checks the type system could have enforced. Future API breakages become
+    necessary because we forgot `#[non_exhaustive]` on a struct that grew, or
+    leaked an internal module path through a public re-export. The substrate
+    stops being something other Rust authors point at as exemplary.
   rationale: |
     Clippy at the level we run it (all/cargo/nursery/pedantic + named
     complexity / panic-shortcut / allow-attribute denials) catches the coarse
@@ -212,14 +220,6 @@ intent:
     unidiomatic, allocation-leaky, or runtime-checking what the type system
     could enforce. Confirmed in interview as the catch-all judgment rule that
     sits at root and is inherited by every crate.
-  impact_if_violated: |
-    Hot paths slow down (speculative allocations, manual loops the optimizer
-    cannot match against iterator combinators, dynamic dispatch where GAT
-    would have given monomorphization). Public API surfaces accumulate runtime
-    checks the type system could have enforced. Future API breakages become
-    necessary because we forgot `#[non_exhaustive]` on a struct that grew, or
-    leaked an internal module path through a public re-export. The substrate
-    stops being something other Rust authors point at as exemplary.
   verification_method: |
     Manual review at PR time, with this constraint as the checklist. Per-rule
     spot checks run via `shapes get constraint 25` to surface the full list to
@@ -228,7 +228,6 @@ intent:
     `#[inline]` / `const fn` choices, `cargo +nightly check --target
     thumbv7m-none-eabi` for no_std portability — the tooling output lives
     with the PR.
-
 realization:
 - bindings:
   - scheme: path
@@ -248,7 +247,7 @@ realization:
     metadata:
       summary: Sealed `ExpansionDirection` policy — canonical example of rule 2.2 (sealed trait pattern for substrate-internal trait DAGs).
   - scheme: path
-    value: crates/oxgraph-snapshot/src/container/error.rs
+    value: crates/oxgraph-snapshot/src/container_error.rs
     metadata:
       summary: Concrete `SnapshotError` enum with documented variants — canonical example of rules 2.3 (`#[non_exhaustive]`) and 4.7 (typed error per module + From conversion).
   - scheme: path
