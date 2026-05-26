@@ -52,6 +52,10 @@ realization:
 amendment_log:
 - 2
 - 24
+- 28
 parents:
 - id: 7
+  role: component
+children:
+- shape: 28
   role: component

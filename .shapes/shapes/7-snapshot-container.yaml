@@ -61,6 +61,7 @@ amendment_log:
 - 1
 - 8
 - 24
+- 28
 parents:
 - id: 1
   role: component
@@ -68,4 +69,6 @@ children:
 - shape: 8
   role: component
 - shape: 21
+  role: component
+- shape: 28
   role: component

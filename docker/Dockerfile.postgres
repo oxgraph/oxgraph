@@ -1,0 +1,22 @@
+# PostgreSQL image for oxgraph-pgrx integration testing.
+FROM postgres:16-bookworm
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    curl \
+    git \
+    libclang-dev \
+    pkg-config \
+    postgresql-server-dev-16 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Rust toolchain and build the extension inside the image.
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+WORKDIR /oxgraph
+COPY . /oxgraph
+
+RUN cargo install cargo-pgrx --version 0.18.0 --locked \
+    && cargo pgrx init --pg16 download \
+    && cargo pgrx install --package oxgraph-pgrx --features pg16

@@ -1,0 +1,4 @@
+# Required on macOS so pgrx extensions link against the running Postgres binary
+# (symbols resolve at load time). See cargo-pgrx extension templates.
+[target.aarch64-apple-darwin]
+rustflags = ["-Clink-arg=-Wl,-undefined,dynamic_lookup"]

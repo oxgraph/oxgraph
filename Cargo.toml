@@ -3,10 +3,27 @@ members = [
   "crates/oxgraph",
   "crates/oxgraph-algo",
   "crates/oxgraph-csr",
+  "crates/oxgraph-csc",
   "crates/oxgraph-graph",
   "crates/oxgraph-hyper",
   "crates/oxgraph-hyper-bcsr",
   "crates/oxgraph-layout-util",
+  "crates/oxgraph-pgrx",
+  "crates/oxgraph-postgres",
+  "crates/oxgraph-property",
+  "crates/oxgraph-snapshot",
+  "crates/oxgraph-topology",
+]
+default-members = [
+  "crates/oxgraph",
+  "crates/oxgraph-algo",
+  "crates/oxgraph-csr",
+  "crates/oxgraph-csc",
+  "crates/oxgraph-graph",
+  "crates/oxgraph-hyper",
+  "crates/oxgraph-hyper-bcsr",
+  "crates/oxgraph-layout-util",
+  "crates/oxgraph-postgres",
   "crates/oxgraph-property",
   "crates/oxgraph-snapshot",
   "crates/oxgraph-topology",
@@ -25,6 +42,7 @@ arrow-array = "58.2.0"
 arrow-ipc = "58.2.0"
 arrow-schema = "58.2.0"
 arrow-select = "58.2.0"
+yoke = { version = "0.8.2", features = ["derive"] }
 zerocopy = { version = "0.8.48", default-features = false, features = ["derive"] }
 
 # Dev / test

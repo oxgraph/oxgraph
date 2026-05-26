@@ -1,0 +1,47 @@
+[package]
+name = "oxgraph-pgrx"
+version = "0.0.0"
+description = "PostgreSQL extension facade for OxGraph (pgrx SQL/SPI glue)."
+publish = false
+authors.workspace = true
+edition.workspace = true
+repository.workspace = true
+
+[package.metadata.pgrx]
+pg14 = "pg14"
+pg15 = "pg15"
+pg16 = "pg16"
+pg17 = "pg17"
+pg18 = "pg18"
+
+[lib]
+# pgrx 0.18: single cdylib build; SQL metadata comes from the .so (no pgrx_embed / rlib).
+crate-type = ["cdylib"]
+
+[features]
+default = ["pg16"]
+pg14 = ["pgrx/pg14", "pgrx-tests/pg14"]
+pg15 = ["pgrx/pg15", "pgrx-tests/pg15"]
+pg16 = ["pgrx/pg16", "pgrx-tests/pg16"]
+pg17 = ["pgrx/pg17", "pgrx-tests/pg17"]
+pg18 = ["pgrx/pg18", "pgrx-tests/pg18"]
+pg_test = ["pgrx-tests/pg_test", "oxgraph-postgres/bench-fixture"]
+pg_bench = ["dep:pgrx-bench", "oxgraph-postgres/bench-fixture"]
+
+[dependencies]
+oxgraph-postgres = { version = "0.0.0", path = "../oxgraph-postgres" }
+pgrx = "=0.18.0"
+pgrx-bench = { version = "=0.18.0", optional = true }
+pgrx-tests = { version = "=0.18.0", default-features = false, optional = true }
+
+[lints.rust]
+missing_docs = "deny"
+unreachable_pub = "deny"
+# pgrx SPI and Postgres FFI require unsafe at the extension boundary only.
+unsafe_code = { level = "allow", priority = 1 }
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+# pgrx test harness and SPI glue use expect/unwrap at the boundary.
+unwrap_used = { level = "allow", priority = 1 }
+expect_used = { level = "allow", priority = 1 }

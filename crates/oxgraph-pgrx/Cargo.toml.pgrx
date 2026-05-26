@@ -1,0 +1,11 @@
+[package]
+name = "oxgraph-pgrx"
+version = "0.0.0"
+
+[package.metadata.pgrx]
+# cargo-pgrx auto-detects this sole workspace cdylib crate.
+pg14 = "pg14"
+pg15 = "pg15"
+pg16 = "pg16"
+pg17 = "pg17"
+pg18 = "pg18"

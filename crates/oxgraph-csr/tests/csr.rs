@@ -33,6 +33,29 @@ fn valid_csr_traverses_outgoing_edges() -> Result<(), CsrError<u32, u32>> {
 }
 
 #[test]
+fn for_each_out_target_matches_outgoing_neighbors() -> Result<(), CsrError<u32, u32>> {
+    let graph = fixture()?;
+
+    let mut collected = Vec::new();
+    graph.for_each_out_target(CsrNodeId(0), |target| {
+        collected.push(target);
+        false
+    });
+    assert_eq!(
+        collected,
+        graph.outgoing_neighbors(CsrNodeId(0)).collect::<Vec<_>>()
+    );
+
+    let stopped = graph.for_each_out_target(CsrNodeId(0), |target| {
+        assert_eq!(target, CsrNodeId(1));
+        true
+    });
+    assert!(stopped);
+
+    Ok(())
+}
+
+#[test]
 fn valid_csr_traverses_outgoing_neighbors_directly() -> Result<(), CsrError<u32, u32>> {
     let graph = fixture()?;
 

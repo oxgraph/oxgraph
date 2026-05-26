@@ -1,0 +1,85 @@
+[package]
+name = "oxgraph-postgres"
+version = "0.0.0"
+description = "Postgres-backed OxGraph engine: catalog, build, artifact I/O, query, sync."
+publish = false
+
+authors.workspace = true
+edition.workspace = true
+repository.workspace = true
+
+[features]
+default = ["std"]
+std = ["oxgraph-algo/alloc", "oxgraph-csr/build", "oxgraph-snapshot/alloc", "serde"]
+serde = ["dep:serde"]
+bench-fixture = ["std"]
+
+[dependencies]
+oxgraph-algo = { version = "0.0.0", path = "../oxgraph-algo", default-features = false, features = [
+  "alloc",
+] }
+oxgraph-csc = { version = "0.0.0", path = "../oxgraph-csc" }
+oxgraph-csr = { version = "0.0.0", path = "../oxgraph-csr", features = ["build"] }
+oxgraph-graph = { version = "0.0.0", path = "../oxgraph-graph" }
+oxgraph-snapshot = { version = "0.0.0", path = "../oxgraph-snapshot", features = ["alloc"] }
+serde = { version = "1.0.228", optional = true, features = ["derive"] }
+yoke = { workspace = true }
+zerocopy = { workspace = true }
+
+[dev-dependencies]
+criterion = { workspace = true }
+oxgraph-csc = { version = "0.0.0", path = "../oxgraph-csc" }
+oxgraph-csr = { version = "0.0.0", path = "../oxgraph-csr", features = ["build"] }
+proptest = { workspace = true }
+
+[[bench]]
+name = "engine"
+harness = false
+
+[[bench]]
+name = "compare_pggraph"
+harness = false
+required-features = ["bench-fixture"]
+
+[[test]]
+name = "e2e"
+required-features = ["std", "bench-fixture"]
+
+[[test]]
+name = "artifact_proptest"
+required-features = ["std"]
+
+[[test]]
+name = "traverse"
+required-features = ["std"]
+
+[[test]]
+name = "traverse_proptest"
+required-features = ["std"]
+
+[[test]]
+name = "bench_profile"
+required-features = ["std", "bench-fixture"]
+
+[[test]]
+name = "pin_contract"
+required-features = ["std"]
+
+[[test]]
+name = "query"
+required-features = ["std"]
+
+[[test]]
+name = "query_proptest"
+required-features = ["std"]
+
+[[test]]
+name = "catalog_proptest"
+required-features = ["std"]
+
+[[test]]
+name = "sync_proptest"
+required-features = ["std"]
+
+[lints]
+workspace = true

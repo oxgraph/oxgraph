@@ -1,0 +1,32 @@
+[package]
+name = "oxgraph-csc"
+version = "0.0.0"
+description = "Borrowed compressed-sparse-column (inbound) graph views from Postgres snapshot sections."
+publish = false
+
+authors.workspace = true
+edition.workspace = true
+repository.workspace = true
+
+[features]
+default = []
+build = ["oxgraph-csr/build", "oxgraph-snapshot/alloc"]
+
+[dependencies]
+oxgraph-csr = { version = "0.0.0", path = "../oxgraph-csr" }
+oxgraph-graph = { version = "0.0.0", path = "../oxgraph-graph" }
+oxgraph-snapshot = { version = "0.0.0", path = "../oxgraph-snapshot" }
+oxgraph-topology = { version = "0.0.0", path = "../oxgraph-topology" }
+
+[dev-dependencies]
+oxgraph-csr = { version = "0.0.0", path = "../oxgraph-csr", features = ["build"] }
+oxgraph-postgres = { version = "0.0.0", path = "../oxgraph-postgres", features = ["std"] }
+oxgraph-snapshot = { version = "0.0.0", path = "../oxgraph-snapshot", features = ["alloc"] }
+proptest = { workspace = true }
+
+[[test]]
+name = "roundtrip"
+required-features = []
+
+[lints]
+workspace = true

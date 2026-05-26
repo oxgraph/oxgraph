@@ -1,0 +1,66 @@
+id: 30
+name: Postgres verification tiers
+description: |
+  Splits Postgres verification into engine-only Criterion (oxgraph-postgres vs pgGraph) and
+  extension-tier `cargo pgrx test` / `cargo pgrx bench` covering SQL via Spi, catalog scans,
+  GUC registration, ACL, and sync triggers. Adds `just postgres-verify` on-demand orchestration.
+targets:
+  shape_ids:
+  - 28
+  - 29
+status: canonical
+version_impact: minor
+intent:
+  kind: amendment
+  summary: Engine vs extension SQL/SPI verification tiers
+  source: ai
+  rationale: |
+    Engine benches alone do not defend CREATE EXTENSION, Spi catalog paths, or pgrx SQL entrypoints;
+    extension integration tests and pg_bench close that gap without pulling pgrx into fast CI.
+realization:
+- bindings:
+  - scheme: path
+    value: crates/oxgraph-postgres/src/bench_fixture
+    metadata:
+      summary: Shared graph_gen and relational fixtures for engine and extension tiers.
+  - scheme: path
+    value: crates/oxgraph-pgrx/src/fixtures.rs
+    metadata:
+      summary: Spi SQL helpers and seed routines for pg_test/pg_bench.
+  - scheme: path
+    value: crates/oxgraph-pgrx/src/integration_tests.rs
+    metadata:
+      summary: |
+        SQL-via-Spi pg_test integration coverage (40 tests): sync trigger contract
+        (invisible-before-reload, batch reload, net-zero), BaseOnly/OverlayAware via
+        oxgraph.query_freshness GUC, rebuild/maintenance vs overlay, reset/load_persisted
+        session simulation, and engine e2e parity in crates/oxgraph-postgres/tests/e2e.rs.
+  - scheme: path
+    value: crates/oxgraph-postgres/tests/e2e.rs
+    metadata:
+      summary: |
+        Engine-tier lifecycle e2e — overlay invisibility, rebuild clears overlay,
+        BaseOnly vs OverlayAware divergence, maintenance-disabled rejection.
+  - scheme: path
+    value: crates/oxgraph-pgrx/src/gucs.rs
+    metadata:
+      summary: oxgraph.query_freshness GUC (0=BaseOnly, 1=OverlayAware) for SQL freshness tests.
+  - scheme: path
+    value: crates/oxgraph-pgrx/src/benches.rs
+    metadata:
+      summary: In-Postgres pg_bench workloads for extension SQL/SPI paths.
+  - scheme: path
+    value: scripts/postgres-bench-engine.sh
+    metadata:
+      summary: Tier 0 engine Criterion comparison script.
+  - scheme: path
+    value: scripts/postgres-bench-extension.sh
+    metadata:
+      summary: Tier 1 cargo pgrx bench script.
+  - scheme: path
+    value: justfile
+    metadata:
+      summary: postgres-verify, postgres-bench-engine, postgres-bench-extension targets.
+  role: primary
+initiated_by:
+  type: human

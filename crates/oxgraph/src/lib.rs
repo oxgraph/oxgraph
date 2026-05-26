@@ -62,6 +62,19 @@ pub mod hyper {
     };
 }
 
+/// Borrowed compressed-sparse-column (inbound) graph views.
+///
+/// # Performance
+///
+/// `perf: unspecified`; this module re-exports another crate.
+#[cfg(feature = "csc")]
+pub mod csc {
+    pub use oxgraph_csc::{
+        CscNodeId, CscSnapshotError, CscSnapshotGraph, SNAPSHOT_KIND_PG_INBOUND_OFFSETS_U32,
+        SNAPSHOT_KIND_PG_INBOUND_TARGETS_U32,
+    };
+}
+
 /// Borrowed CSR graph layout.
 ///
 /// # Performance
@@ -230,5 +243,27 @@ pub mod hyper_build {
     pub use oxgraph_hyper_bcsr::build::{
         export_bcsr_snapshot_with_properties, export_weighted_bcsr_snapshot_with_properties,
         identity_slice_to_le,
+    };
+}
+
+/// `PostgreSQL` graph engine library.
+///
+/// # Performance
+///
+/// `perf: unspecified`; this module re-exports another crate.
+#[cfg(feature = "postgres")]
+pub mod postgres {
+    pub use oxgraph_csc::{
+        CscNodeId, CscSnapshotError, CscSnapshotGraph, SNAPSHOT_KIND_PG_INBOUND_OFFSETS_U32,
+        SNAPSHOT_KIND_PG_INBOUND_TARGETS_U32,
+    };
+    pub use oxgraph_postgres::{
+        BuildError, BuildEstimate, Catalog, CatalogError, Config, ConfigError,
+        DualTopologySnapshot, EdgeId, EdgeRow, Engine, EngineBuilder, EngineStatus, FilterColumn,
+        ForwardCsr, GraphRole, GraphTopology, InboundCsc, NodeKey, OverlayEdge, OverlayState,
+        PostgresGraphError, PostgresMetadata, QueryError, QueryFreshness, RegisteredEdge,
+        RegisteredTable, SNAPSHOT_KIND_PG_CATALOG, SNAPSHOT_KIND_PG_METADATA, SearchPredicate,
+        SnapshotRebuild, SyncAction, SyncActionCodec, SyncError, SyncHealth, SyncRow, TableId,
+        TraversalDirection, TraverseLimits, estimate_build,
     };
 }

@@ -1,0 +1,50 @@
+id: 31
+name: BFS collect kernel redesign
+description: |
+  Replaces layered run_traverse / snapshot_frontier with a single profile-dispatched BFS
+  kernel. Collect returns all nodes within max_depth in BFS first-discovery order (same
+  cardinality as visited_count). Count and collect share one kernel (TraverseMode only).
+targets:
+  shape_ids:
+  - 28
+status: canonical
+intent:
+  kind: amendment
+  summary: Unified BFS kernel, BFS-order collect semantics, lazy unique adjacency, TopologyHot session
+  source: human
+  rationale: |
+    Wave-emitted collect under-counted boundary nodes vs pgGraph and visited_count.
+    Per-wave snapshot_frontier allocation and split count fast paths inflated engine BFS cost.
+realization:
+- bindings:
+  - scheme: path
+    value: crates/oxgraph-postgres/src/traverse/kernel.rs
+    metadata:
+      summary: Single depth-limited BFS kernel for Collect and Count modes.
+  - scheme: path
+    value: crates/oxgraph-postgres/src/traverse/session.rs
+    metadata:
+      summary: TraverseSession assembled once per query with canonical node_count.
+  - scheme: path
+    value: crates/oxgraph-postgres/src/traverse/profile.rs
+    metadata:
+      summary: TraverseProfile matrix (OutUnique, OutParallel, InUnique, InParallel).
+  - scheme: path
+    value: crates/oxgraph-postgres/src/traverse/scratch.rs
+    metadata:
+      summary: Vec frontiers and reused collect output buffer (no VecDeque).
+  - scheme: path
+    value: crates/oxgraph-postgres/src/topology.rs
+    metadata:
+      summary: TopologyHot views and slice walks for out/in neighbors.
+  - scheme: path
+    value: crates/oxgraph-postgres/src/engine.rs
+    metadata:
+      summary: Lazy UniqueAdjacency built on first BaseOnly query; node_count(); removed split-borrow accessors.
+  - scheme: path
+    value: crates/oxgraph-csc/src/lib.rs
+    metadata:
+      summary: for_each_predecessor slice walk for inbound hot path.
+  role: primary
+initiated_by:
+  type: human

@@ -1,0 +1,58 @@
+id: 32
+name: Postgres greenfield API overhaul
+description: |
+  Greenfield redesign of oxgraph-postgres and oxgraph-pgrx public surfaces: Engine owns
+  query/sync/maintenance operations, structured error enums replace string erasure, enum
+  impl blocks own behavior, unified traverse kernel with QueryFreshness-driven profiles,
+  oxgraph-csc substrate alignment, and pgrx SessionEngine plus typed status reports.
+targets:
+  shape_ids:
+  - 28
+  - 29
+status: canonical
+version_impact: major
+intent:
+  kind: amendment
+  summary: Method-centric Engine API, structured errors, pgrx session split, CSC parity
+  source: ai
+  rationale: |
+    Procedural free functions on Engine hid ownership boundaries, errored errors into strings,
+    and duplicated traverse entry layers. Consolidating behavior onto types matches substrate
+    conventions and removes dead parameters without a backward-compatibility shim.
+realization:
+- bindings:
+  - scheme: path
+    value: crates/oxgraph-postgres/src/engine.rs
+    metadata:
+      summary: Engine traverse/search/sync/rebuild methods; no public query.rs free functions.
+  - scheme: path
+    value: crates/oxgraph-postgres/src/error.rs
+    metadata:
+      summary: Nested Catalog/Build/Sync/Query/Config errors; AccessDenied with GraphRole.
+  - scheme: path
+    value: crates/oxgraph-postgres/src/role.rs
+    metadata:
+      summary: GraphRole satisfies/require lattice; replaces acl free function.
+  - scheme: path
+    value: crates/oxgraph-postgres/src/traverse/kernel.rs
+    metadata:
+      summary: Single multi-seed BFS kernel; pub(crate) only from traverse module.
+  - scheme: path
+    value: crates/oxgraph-csc/src/lib.rs
+    metadata:
+      summary: CscNodeId, CscSnapshotError enum, ElementPredecessors, shared CSR slice walks.
+  - scheme: path
+    value: crates/oxgraph-pgrx/src/session.rs
+    metadata:
+      summary: SessionEngine thread-local holder replacing with_loaded_engine callbacks.
+  - scheme: path
+    value: crates/oxgraph-pgrx/src/api
+    metadata:
+      summary: admin/query/status SQL modules with EngineStatusReport and SyncHealthReport.
+  - scheme: path
+    value: crates/oxgraph/src/lib.rs
+    metadata:
+      summary: postgres and csc feature re-exports without procedural Engine helpers.
+  role: primary
+initiated_by:
+  type: human

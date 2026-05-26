@@ -1,0 +1,49 @@
+id: 28
+name: Postgres two-crate workspace slice
+description: |
+  Adds workspace members `crates/oxgraph-postgres` and `crates/oxgraph-pgrx`, shapes 28–29,
+  umbrella `postgres` / `postgres-extension` features, justfile targets for postgres-test
+  and postgres-bench, and the first vertical slice of artifact/build/query/sync/ops surfaces.
+  User-directed implementation proceeds past constraint 21 pause for this approved plan slice.
+targets:
+  shape_ids:
+  - 1
+  - 7
+  - 8
+  - 11
+  - 28
+  - 29
+status: canonical
+version_impact: minor
+intent:
+  kind: amendment
+  summary: Land Postgres engine + pgrx extension as two workspace crates
+  source: ai
+  rationale: |
+    Postgres support requires new workspace crates and shapes before code lands; capturing the
+    slice preserves scope for review and keeps foundation crates unchanged.
+realization:
+- bindings:
+  - scheme: path
+    value: crates/oxgraph-postgres
+    metadata:
+      summary: Postgres graph engine library.
+  - scheme: path
+    value: crates/oxgraph-pgrx
+    metadata:
+      summary: pgrx extension crate.
+  - scheme: path
+    value: crates/oxgraph-csc
+    metadata:
+      summary: Inbound CSC view crate consumed by oxgraph-postgres.
+  - scheme: path
+    value: Cargo.toml
+    metadata:
+      summary: Workspace members for postgres crates and CI split.
+  - scheme: path
+    value: justfile
+    metadata:
+      summary: Fast CI excludes pgrx; postgres-test and postgres-bench on demand.
+  role: primary
+initiated_by:
+  type: human

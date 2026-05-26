@@ -1,0 +1,55 @@
+id: 29
+name: Postgres pgrx extension
+description: |
+  Thin PostgreSQL extension crate `oxgraph-pgrx`: cdylib only, pgrx 0.18 SQL/SPI glue
+  delegating graph engine work to `oxgraph-postgres`. Owns bootstrap DDL, GUCs, ACL,
+  sync log persistence, background maintenance worker hooks, and SQL facades for admin,
+  discovery, build, traverse, search, sync, and maintenance.
+profile: 1
+status: canonical
+intent:
+  kind: interface
+  summary: pgrx extension facade over oxgraph-postgres
+  source: ai
+  goals: |
+    - `crate-type = ["cdylib"]` as the sole workspace pgrx target for cargo-pgrx auto-detect.
+    - Register SQL functions for admin, discovery, build, traverse, search, sync, maintenance.
+    - Bootstrap DDL for catalog tables, sync log, snapshot store, and edge sync trigger function.
+    - GUCs for traverse/search limits, maintenance toggle, and session graph role override.
+    - ACL mapping superusers to admin and honoring `oxgraph.graph_role` for other sessions.
+    - Background worker that rebuilds from catalog scans and persists snapshot bytes.
+    - Isolate pgrx-required unsafe and test-only unwrap via crate-local lint overrides with SAFETY docs.
+    - Ship Docker/scripts and PG 14–18 feature matrix hooks for heavy verification.
+  non_goals: |
+    - No graph algorithms or snapshot encoding logic beyond delegation.
+    - No lifting workspace `unsafe_code = forbid` globally.
+    - No per-table trigger attachment without calling `graph_attach_sync_trigger`.
+  rationale: |
+    pgrx packaging and SPI boundaries belong in a dedicated extension crate so the reusable
+    library stays testable in default CI while Postgres integration runs on demand.
+constraints:
+- 21
+realization:
+- bindings:
+  - scheme: path
+    value: crates/oxgraph-pgrx
+    metadata:
+      summary: pgrx SQL extension delegating to oxgraph-postgres (GUCs, SPI, SQL, worker).
+  - scheme: path
+    value: crates/oxgraph-pgrx/sql/bootstrap.sql
+    metadata:
+      summary: Bootstrap schema, catalog tables, sync log, snapshot store, sync trigger function.
+  - scheme: path
+    value: docker/Dockerfile.postgres
+    metadata:
+      summary: Postgres 16 image building and installing oxgraph-pgrx via cargo-pgrx.
+  role: primary
+parents:
+- id: 28
+  role: component
+- id: 11
+  role: component
+amendment_log:
+- 28
+- 30
+- 32

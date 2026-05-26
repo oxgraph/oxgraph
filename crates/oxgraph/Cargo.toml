@@ -34,21 +34,27 @@ hyper-property-arrow = [
   "property-arrow",
   "oxgraph-hyper-bcsr/build-property-arrow",
 ]
+postgres = ["dep:oxgraph-postgres", "dep:oxgraph-csc"]
+csc = ["dep:oxgraph-csc"]
+postgres-extension = ["postgres"]
 full = [
   "algo-std",
   "csr",
   "graph-property-arrow",
   "hyper-bcsr",
   "hyper-property-arrow",
+  "postgres",
   "snapshot-alloc",
 ]
 
 [dependencies]
 oxgraph-algo = { version = "0.0.0", path = "../oxgraph-algo", optional = true, default-features = false }
+oxgraph-csc = { version = "0.0.0", path = "../oxgraph-csc", optional = true }
 oxgraph-csr = { version = "0.0.0", path = "../oxgraph-csr", optional = true }
 oxgraph-graph = { version = "0.0.0", path = "../oxgraph-graph", optional = true }
 oxgraph-hyper = { version = "0.0.0", path = "../oxgraph-hyper", optional = true }
 oxgraph-hyper-bcsr = { version = "0.0.0", path = "../oxgraph-hyper-bcsr", optional = true }
+oxgraph-postgres = { version = "0.0.0", path = "../oxgraph-postgres", optional = true }
 oxgraph-property = { version = "0.0.0", path = "../oxgraph-property", optional = true }
 oxgraph-snapshot = { version = "0.0.0", path = "../oxgraph-snapshot", optional = true, default-features = false }
 oxgraph-topology = { version = "0.0.0", path = "../oxgraph-topology", optional = true }

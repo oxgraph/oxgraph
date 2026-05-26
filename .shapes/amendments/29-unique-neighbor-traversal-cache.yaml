@@ -1,0 +1,35 @@
+id: 29
+name: Unique-neighbor traversal cache
+description: |
+  Adds an engine-local unique-neighbor traversal cache for node-global count BFS while
+  preserving the canonical Postgres artifact's parallel edges and edge IDs.
+targets:
+  shape_ids:
+  - 28
+status: canonical
+intent:
+  kind: amendment
+  summary: Preserve parallel Postgres edges while adding a node-unique traversal cache for count-only BFS
+  source: human
+  rationale: |
+    pgGraph's d1 benchmark walks deduplicated neighbor slots, while oxgraph-postgres
+    preserves parallel edges in its base CSR. The cache narrows the benchmark gap for
+    node-unique traversal without changing storage semantics, tombstone behavior, or
+    future edge-property fidelity.
+realization:
+- bindings:
+  - scheme: path
+    value: crates/oxgraph-postgres/src/topology.rs
+    metadata:
+      summary: Unique-neighbor adjacency cache built from parallel forward and inbound topology.
+  - scheme: path
+    value: crates/oxgraph-postgres/src/engine.rs
+    metadata:
+      summary: Lazy engine-owned traversal cache storage and reset on snapshot replacement.
+  - scheme: path
+    value: crates/oxgraph-postgres/src/traverse/profile.rs
+    metadata:
+      summary: Count-only d1 and BaseOnly traversal dispatch to the node-unique cache.
+  role: primary
+initiated_by:
+  type: human

@@ -719,6 +719,38 @@ where
         self.targets
     }
 
+    /// Walks outgoing target node ids for `source` via the CSR target slice.
+    ///
+    /// Stops early when `visit` returns `true`. Returns `true` when stopped early.
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(k)` for `k` outgoing edges with no iterator adapters.
+    pub fn for_each_out_target(
+        &self,
+        source: CsrNodeId<NodeIndex>,
+        mut visit: impl FnMut(CsrNodeId<NodeIndex>) -> bool,
+    ) -> bool {
+        let Some(node) = self.try_node_slot(source) else {
+            return false;
+        };
+        let Some(index) = node.raw.to_usize() else {
+            return false;
+        };
+        let Some(start) = self.offsets[index].get().to_usize() else {
+            return false;
+        };
+        let Some(end) = self.offsets[index + 1].get().to_usize() else {
+            return false;
+        };
+        for word in &self.targets[start..end] {
+            if visit(CsrNodeId(word.get())) {
+                return true;
+            }
+        }
+        false
+    }
+
     /// Returns whether `node` is valid in this CSR view.
     ///
     /// # Performance
