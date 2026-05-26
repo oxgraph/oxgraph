@@ -38,8 +38,8 @@ repository = "https://github.com/oxgraph/oxgraph"
 # its own nightly below latest stable, and we're not publishing an MSRV contract yet.
 
 [workspace.dependencies]
-arrow-array = "58.2.0"
-arrow-ipc = "58.2.0"
+arrow-array = "58.3.0"
+arrow-ipc = "58.3.0"
 arrow-schema = "58.2.0"
 arrow-select = "58.2.0"
 yoke = { version = "0.8.2", features = ["derive"] }
