@@ -1,0 +1,33 @@
+id: 35
+name: Umbrella database library API
+description: Umbrella database library API
+targets:
+  shape_ids:
+  - 1
+  - 11
+  - 30
+status: proposed
+version_impact: minor
+intent:
+  kind: amendment
+  summary: Expose oxgraph-db as a first-class feature-gated API from the oxgraph umbrella crate
+  source: human
+  rationale: |
+    Users should be able to build embedded OxGraph databases from the same
+    ergonomic umbrella dependency they use for topology, graph, hypergraph,
+    algorithms, layouts, and properties. The umbrella should stay curated:
+    expose the important `oxgraph-db` library primitives under `oxgraph::db`,
+    keep the server/CLI package separate, and preserve feature-gated costs.
+initiated_by:
+  type: human
+realization:
+- bindings:
+  - scheme: path
+    value: crates/oxgraph/Cargo.toml
+    metadata:
+      summary: Adds a `db` feature over `oxgraph-db` and includes it in `full` so embedded database users get the curated library surface from the umbrella crate.
+  - scheme: path
+    value: crates/oxgraph/src/lib.rs
+    metadata:
+      summary: Adds `oxgraph::db` re-exports for Database, transactions, catalog definitions, query types, projection handles, properties, records, and canonical IDs.
+  role: primary

@@ -1,0 +1,51 @@
+id: 36
+name: OxGraph DB index lookup correctness
+description: OxGraph DB index lookup correctness
+targets:
+  shape_ids:
+  - 30
+  - 31
+  - 33
+  - 37
+status: proposed
+version_impact: minor
+intent:
+  kind: amendment
+  summary: Tighten DB lookup semantics, projection index materialization, crash-durable store publication, and commit-only transaction ID durability
+  source: human
+  rationale: |
+    The embedded database exposes index lookup as a public contract, so lookup
+    values must be typed against catalog schemas and composite/projection
+    indexes must either perform their advertised semantics or fail explicitly.
+    Store publication must also make the published rename durable on normal
+    Unix filesystems. Writer transaction ID burns are session-local until a
+    transaction commits, while committed and empty-committed IDs are durable.
+initiated_by:
+  type: human
+realization:
+- bindings:
+  - scheme: path
+    value: crates/oxgraph-db/src/database.rs
+    metadata:
+      summary: Typed public index lookup API, schema-checked property lookups, ordered composite tuple equality, projection index materialization, and commit-only transaction ID documentation.
+  - scheme: path
+    value: crates/oxgraph-db/src/state.rs
+    metadata:
+      summary: Catalog schema helpers for lookup type validation plus typed property equality, range, and composite subject scans.
+  - scheme: path
+    value: crates/oxgraph-db/src/projection.rs
+    metadata:
+      summary: Projection membership helpers used by projection indexes to expose deterministic canonical subjects.
+  - scheme: path
+    value: crates/oxgraph-db/src/storage.rs
+    metadata:
+      summary: Full-store publication syncs the published store file and containing directory after atomic rename.
+  - scheme: path
+    value: crates/oxgraph/src/lib.rs
+    metadata:
+      summary: Umbrella `oxgraph::db` re-exports include the typed index lookup API.
+  - scheme: path
+    value: crates/oxgraph-db/tests
+    metadata:
+      summary: Regression and property tests cover typed lookup errors, composite tuple equality, projection index membership, transaction ID durability, and recovery behavior.
+  role: primary

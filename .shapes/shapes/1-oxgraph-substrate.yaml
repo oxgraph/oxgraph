@@ -68,7 +68,7 @@ realization:
   - scheme: path
     value: Cargo.toml
     metadata:
-      summary: Workspace manifest declaring kernel, property, builder, algorithm, Python, and umbrella crates, with deny-by-default lint groups.
+      summary: Workspace manifest declaring substrate crates, product-layer workspace crates, Python bindings, and deny-by-default lint groups.
   - scheme: path
     value: vision.md
     metadata:
@@ -87,6 +87,8 @@ amendment_log:
 - 18
 - 19
 - 28
+- 33
+- 35
 children:
 - shape: 2
   role: component

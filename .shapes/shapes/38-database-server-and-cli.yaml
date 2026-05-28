@@ -1,0 +1,57 @@
+id: 38
+name: Database server and CLI
+description: |
+  User-facing standalone process and command-line interface for opening
+  databases, running queries, inspecting status, compacting, and validating
+  recovery behavior.
+profile: 1
+status: proposed
+intent:
+  kind: service
+  summary: oxgraphd HTTP API and CLI for create, query, recovery, compaction, and status
+  source: human
+  goals: |
+    - Provide oxgraphd and CLI workflows for create/open, query, compact,
+      status, and recovery validation.
+    - Use the embedded engine and query core rather than duplicating database
+      semantics at the protocol boundary.
+    - Keep HTTP/CLI transport schemas typed and versioned.
+  non_goals: |
+    No clustering, auth/RBAC, cloud management, or Bolt protocol implementation
+    in the first engine slice unless the Cypher compatibility gate explicitly
+    adds Bolt.
+  rationale: |
+    The first convincing product demo needs an end-to-end standalone database
+    loop, but protocol and UX layers should stay thin over the embedded engine.
+constraints:
+- 11
+- 12
+- 13
+- 14
+- 16
+- 21
+- 25
+amendment_log:
+- 34
+parents:
+- id: 30
+  role: component
+realization:
+- bindings:
+  - scheme: path
+    value: crates/oxgraphd/src/lib.rs
+    metadata:
+      summary: Thin JSON HTTP and CLI facade for create/open/status/query/explain/compact/validate/catalog/projections/indexes, delegating semantics to the embedded oxgraph-db engine.
+  - scheme: path
+    value: crates/oxgraphd/src/bin/oxgraph.rs
+    metadata:
+      summary: Command-line entry point for oxgraph db workflows.
+  - scheme: path
+    value: crates/oxgraphd/src/bin/oxgraphd.rs
+    metadata:
+      summary: Blocking JSON HTTP server entry point over a selected OXGDB path.
+  - scheme: path
+    value: crates/oxgraphd/tests/e2e.rs
+    metadata:
+      summary: End-to-end CLI and HTTP tests for create/status/query/explain/compact/validate.
+  role: primary

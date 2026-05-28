@@ -207,6 +207,45 @@ pub mod property {
     };
 }
 
+/// Embedded OxGraph-native database primitives.
+///
+/// This module is the ergonomic library entry point for applications that build
+/// databases directly from the umbrella crate. It re-exports the embedded engine
+/// and its catalog, query, projection, property, and identity types; server and
+/// CLI concerns remain in the separate `oxgraphd` package.
+///
+/// # Examples
+///
+/// ```no_run
+/// use oxgraph::db::{Database, QueryLanguage};
+///
+/// fn main() -> Result<(), oxgraph::db::DbError> {
+///     let database = Database::create("target/example.oxgdb")?;
+///     let prepared = database.prepare(QueryLanguage::Oxql, "MATCH ELEMENTS")?;
+///     let _rows = database.begin_read().execute(&prepared)?;
+///     Ok(())
+/// }
+/// ```
+///
+/// # Performance
+///
+/// `perf: unspecified`; this module re-exports another crate.
+#[cfg(feature = "db")]
+pub mod db {
+    pub use oxgraph_db::{
+        Catalog, CatalogSummary, CheckpointGeneration, CommitSeq, Database, DatabaseStatus,
+        DbError, ElementId, ElementRecord, GraphProjection, GraphProjectionDefinition,
+        HypergraphProjection, HypergraphProjectionDefinition, IncidenceId, IncidenceRecord,
+        IndexDefinition, IndexEntry, IndexId, IndexLookup, LabelDefinition, LabelId, PreparedQuery,
+        ProjectionDefinition, ProjectionElementId, ProjectionEntry, ProjectionId,
+        ProjectionIncidenceId, ProjectionRelationId, PropertyFamily, PropertyKeyDefinition,
+        PropertyKeyId, PropertySubject, PropertyType, PropertyValue, QueryLanguage, QueryResult,
+        QueryRow, QueryValue, ReadPin, ReadTransaction, RelationId, RelationRecord,
+        RelationTypeDefinition, RelationTypeId, RoleDefinition, RoleId, TransactionId,
+        TraversalDirection, TraversalOptions, TraversalResult, TraversalRow, WriteTransaction,
+    };
+}
+
 /// Append/update graph builders.
 ///
 /// # Performance

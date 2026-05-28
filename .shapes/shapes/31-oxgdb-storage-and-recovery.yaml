@@ -1,0 +1,58 @@
+id: 31
+name: OXGDB storage and recovery
+description: |
+  Durable database storage layer: greenfield OXGDB store publication with a
+  fixed zerocopy header, exact-size payload validation, checksums, create/open,
+  corrupt-store detection, and compaction rewrite.
+profile: 1
+status: proposed
+intent:
+  kind: module
+  summary: Durable OXGDB store format, recovery validation, and compaction rewrite
+  source: human
+  goals: |
+    - Define the on-disk OXGDB store contract using a fixed zerocopy header and
+      a validated product payload.
+    - Store IO-boundary headers with zerocopy-compatible layouts and explicit
+      payload checksums.
+    - Recover deterministically by rejecting malformed, trailing, or
+      checksum-mismatched store bytes.
+    - Publish compaction by validating state and atomically replacing the store.
+  non_goals: |
+    No distributed replication, page-store mutation engine, WAL compatibility,
+    manifest compatibility, or stable public ABI promise for OXGDB bytes.
+  rationale: |
+    The Postgres overlay model is not a standalone storage engine. OXGDB needs
+    a crash model, reader-generation protocol, and canonical-ID-preserving
+    compaction before it can be trusted as a database.
+constraints:
+- 11
+- 12
+- 13
+- 14
+- 15
+- 16
+- 19
+- 21
+- 25
+amendment_log:
+- 34
+- 36
+parents:
+- id: 30
+  role: component
+realization:
+- bindings:
+  - scheme: path
+    value: crates/oxgraph-db/src/storage.rs
+    metadata:
+      summary: OXGDB v2 fixed zerocopy header, exact-size serde payload validation, checksum verification, atomic store publication with directory fsync, open, validate, and compaction support.
+  - scheme: path
+    value: crates/oxgraph-db/tests/e2e.rs
+    metadata:
+      summary: Recovery, compaction, commit-only transaction-id durability, typed lookup, projection index, and corrupt store integration tests.
+  - scheme: path
+    value: crates/oxgraph-db/tests/recovery_proptest.rs
+    metadata:
+      summary: Property tests for committed recovery, graph/hypergraph projections, typed property/index lookup, composite indexes, projection indexes, query preparation, tombstone cascades, invalid incidences, and rollback/empty visibility.
+  role: primary

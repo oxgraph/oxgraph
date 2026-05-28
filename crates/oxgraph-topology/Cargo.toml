@@ -1,8 +1,11 @@
 [package]
 name = "oxgraph-topology"
-version = "0.0.0"
+version.workspace = true
+license.workspace = true
 description = "Storage-agnostic core traits for discrete topology views."
-publish = false
+categories.workspace = true
+keywords.workspace = true
+readme.workspace = true
 
 authors.workspace = true
 edition.workspace = true

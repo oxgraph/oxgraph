@@ -1,8 +1,11 @@
 [package]
 name = "oxgraph-csc"
-version = "0.0.0"
+version.workspace = true
+license.workspace = true
 description = "Borrowed compressed-sparse-column (inbound) graph views from Postgres snapshot sections."
-publish = false
+categories.workspace = true
+keywords.workspace = true
+readme.workspace = true
 
 authors.workspace = true
 edition.workspace = true
@@ -13,15 +16,15 @@ default = []
 build = ["oxgraph-csr/build", "oxgraph-snapshot/alloc"]
 
 [dependencies]
-oxgraph-csr = { version = "0.0.0", path = "../oxgraph-csr" }
-oxgraph-graph = { version = "0.0.0", path = "../oxgraph-graph" }
-oxgraph-snapshot = { version = "0.0.0", path = "../oxgraph-snapshot" }
-oxgraph-topology = { version = "0.0.0", path = "../oxgraph-topology" }
+oxgraph-csr = { version = "0.1.0", path = "../oxgraph-csr" }
+oxgraph-graph = { version = "0.1.0", path = "../oxgraph-graph" }
+oxgraph-snapshot = { version = "0.1.0", path = "../oxgraph-snapshot" }
+oxgraph-topology = { version = "0.1.0", path = "../oxgraph-topology" }
 
 [dev-dependencies]
-oxgraph-csr = { version = "0.0.0", path = "../oxgraph-csr", features = ["build"] }
-oxgraph-postgres = { version = "0.0.0", path = "../oxgraph-postgres", features = ["std"] }
-oxgraph-snapshot = { version = "0.0.0", path = "../oxgraph-snapshot", features = ["alloc"] }
+oxgraph-csr = { version = "0.1.0", path = "../oxgraph-csr", features = ["build"] }
+oxgraph-postgres = { version = "0.1.0", path = "../oxgraph-postgres", features = ["std"] }
+oxgraph-snapshot = { version = "0.1.0", path = "../oxgraph-snapshot", features = ["alloc"] }
 proptest = { workspace = true }
 
 [[test]]

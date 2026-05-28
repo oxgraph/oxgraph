@@ -1,8 +1,11 @@
 [package]
 name = "oxgraph-snapshot"
-version = "0.0.0"
+version.workspace = true
+license.workspace = true
 description = "Topology-agnostic byte-level snapshot container."
-publish = false
+categories.workspace = true
+keywords.workspace = true
+readme.workspace = true
 
 authors.workspace = true
 edition.workspace = true
