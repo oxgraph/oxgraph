@@ -1,0 +1,25 @@
+[package]
+name = "oxgraphd"
+version = "0.0.0"
+description = "HTTP server and CLI package for the OxGraph database."
+publish = false
+
+authors.workspace = true
+edition.workspace = true
+repository.workspace = true
+
+[dependencies]
+oxgraph-db = { version = "0.1.0", path = "../oxgraph-db" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[[bin]]
+name = "oxgraph"
+path = "src/bin/oxgraph.rs"
+
+[[bin]]
+name = "oxgraphd"
+path = "src/bin/oxgraphd.rs"
+
+[lints]
+workspace = true

@@ -1,0 +1,61 @@
+id: 37
+name: Database catalog and indexes
+description: |
+  Product-layer catalog and physical index system for labels, types, property
+  schemas, index definitions, index manifests, projection indexes, and planner
+  cost metadata.
+profile: 1
+status: proposed
+intent:
+  kind: module
+  summary: Catalog dictionaries, property schemas, index definitions, projection indexes, and planner cost metadata
+  source: human
+  goals: |
+    - Store label/type dictionaries and property schemas above topology.
+    - Track topology, incidence-role, label/type membership, equality/range,
+      composite, CSR/CSC projection, and BCSR/hypergraph projection indexes.
+    - Maintain index definitions through WAL/recovery/compaction and expose
+      planner cost metadata.
+  non_goals: |
+    No index semantics in topology crates and no assumption that one layout is
+    the database's semantic model.
+  rationale: |
+    Layouts are cost models. A database planner needs cataloged physical indexes
+    without confusing those indexes for the meaning of the graph.
+constraints:
+- 11
+- 12
+- 13
+- 14
+- 15
+- 16
+- 21
+- 25
+- 26
+amendment_log:
+- 34
+- 36
+- 37
+- 38
+parents:
+- id: 30
+  role: component
+realization:
+- bindings:
+  - scheme: path
+    value: crates/oxgraph-db/src/catalog.rs
+    metadata:
+      summary: Catalog definitions and name maps for roles, labels, relation types, property keys, graph projections, hypergraph projections, label/type/property/composite/projection indexes, and schema validation.
+  - scheme: path
+    value: crates/oxgraph-db/src/state.rs
+    metadata:
+      summary: Catalog-backed label/type/property mutation, typed property enforcement, tombstone cleanup, schema-checked property equality/range scans, query predicate family/type validation, composite tuple scans, and index lookup support.
+  - scheme: path
+    value: crates/oxgraph-db/src/projection.rs
+    metadata:
+      summary: Cataloged CSR/CSC-style graph projections and BCSR-style directed hypergraph projections exposing oxgraph-graph and oxgraph-hyper trait surfaces plus deterministic projection-index subjects and graph traversal inputs.
+  - scheme: path
+    value: crates/oxgraph-db/benches/open_recovery.rs
+    metadata:
+      summary: Criterion coverage for graph projection trait traversal, public graph traversal API, hypergraph traversal, typed property equality lookup, typed index lookup, query planning, query execution, commit, begin_read, begin_write, and open recovery.
+  role: primary

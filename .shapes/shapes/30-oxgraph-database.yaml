@@ -1,0 +1,85 @@
+id: 30
+name: OxGraph Database
+description: |
+  Standalone OxGraph-native database product built above the topology substrate.
+  It provides durable storage, transactions, cataloged properties/indexes, query
+  execution, and user-facing server/CLI surfaces without moving labels, query
+  semantics, or storage policy into foundation crates.
+profile: 1
+status: proposed
+intent:
+  kind: service
+  summary: Standalone OxGraph-native database product above the topology substrate
+  source: human
+  goals: |
+    - Ship an embedded database engine crate with create/open, durable recovery,
+      many-reader single-writer transactions, canonical IDs, and compaction.
+    - Expose an incidence-first logical model where property-graph behavior is a
+      projection and hypergraphs remain one relation with many incidences.
+    - Add query core, OxQL, Cypher compatibility planning, HTTP/CLI surfaces, and
+      cataloged index metadata as product-layer concerns.
+    - Reuse existing substrate, snapshot, property, CSR/CSC, and BCSR crates
+      without contaminating their domain-neutral contracts.
+  non_goals: |
+    No labels, relationship types, property schemas, query language semantics,
+    WAL records, server policy, or database transaction semantics enter
+    oxgraph-topology, oxgraph-graph, oxgraph-hyper, or layout crates.
+    Backward compatibility with experimental Postgres surfaces is not a goal.
+  rationale: |
+    OxGraph's durable advantage is validated zero-copy topology snapshots and
+    storage-agnostic traversal. A database should productize that advantage in a
+    higher layer rather than copying Neo4j's storage engine or turning the
+    substrate into a domain system.
+constraints:
+- 11
+- 12
+- 13
+- 14
+- 15
+- 16
+- 19
+- 20
+- 21
+- 25
+- 26
+children:
+- shape: 31
+  role: component
+- shape: 32
+  role: component
+- shape: 33
+  role: component
+- shape: 34
+  role: component
+- shape: 35
+  role: component
+- shape: 36
+  role: component
+- shape: 37
+  role: component
+- shape: 38
+  role: component
+realization:
+- bindings:
+  - scheme: path
+    value: crates/oxgraph-db
+    metadata:
+      summary: Greenfield embedded OxGraph-native database crate with OXGDB store format, canonical incidence-first state, typed catalog/property/index lookups, graph/hypergraph projection indexes, OxQL, Cypher profile, transactions, compaction, and validation.
+  - scheme: path
+    value: crates/oxgraphd
+    metadata:
+      summary: Thin HTTP server and CLI package over oxgraph-db for create/open/status/query/explain/compact/validate/catalog/projection/index workflows.
+  - scheme: path
+    value: crates/oxgraph
+    metadata:
+      summary: Umbrella crate exposes the feature-gated `oxgraph::db` library API for embedded database builders while keeping oxgraphd transport concerns separate.
+  - scheme: path
+    value: Cargo.toml
+    metadata:
+      summary: Workspace membership updated to include oxgraph-db and oxgraphd in default Rust checks.
+  role: primary
+amendment_log:
+- 33
+- 34
+- 35
+- 36

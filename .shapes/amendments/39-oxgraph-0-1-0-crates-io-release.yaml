@@ -1,0 +1,35 @@
+id: 39
+name: OxGraph 0.1.0 crates.io release
+description: OxGraph 0.1.0 crates.io release
+targets:
+  shape_ids:
+  - 11
+status: proposed
+version_impact: minor
+intent:
+  kind: amendment
+  summary: Publish the DB-inclusive umbrella and required internal library crates as the first real 0.1.0 crates.io release.
+  source: human
+initiated_by:
+  type: human
+
+rationale: |
+  The umbrella crate now needs a real crates.io release so downstream projects can
+  depend on `oxgraph = "0.1.0"` with the `db` feature instead of absolute local paths.
+  Because the umbrella re-exports optional internal crates, those library crates must
+  be published first with matching 0.1.0 registry versions.
+realization:
+- bindings:
+  - scheme: path
+    value: Cargo.toml
+    metadata:
+      summary: Workspace release metadata and shared dependency versions for 0.1.0.
+  - scheme: path
+    value: crates/oxgraph/Cargo.toml
+    metadata:
+      summary: Published umbrella package metadata, feature graph, and 0.1.0 registry fallbacks for optional internal crates.
+  - scheme: path
+    value: crates/oxgraph/README.md
+    metadata:
+      summary: Published README describing the 0.1.0 DB-inclusive umbrella release surface.
+  role: primary

@@ -1,0 +1,54 @@
+id: 33
+name: Database transactions
+description: |
+  Database transaction boundary for many concurrent readers and one writer. It
+  defines reader pins, visible commit sequences, write-batch lifecycle, commit
+  visibility, and atomicity across topology and property operations.
+profile: 1
+status: proposed
+intent:
+  kind: interface
+  summary: Many-reader single-writer transaction model with reader pins and atomic write batches
+  source: human
+  goals: |
+    - Expose read transactions pinned to a visible commit sequence and writer
+      transaction high-water mark.
+    - Expose one write transaction at a time with monotonic commit sequences.
+    - Ensure topology creates/deletes, incidence roles, catalog updates, and
+      property writes commit atomically or disappear together.
+  non_goals: |
+    No concurrent-writer conflict scheduler, distributed transactions, or SQL
+    transaction compatibility in the first database engine slice.
+  rationale: |
+    Snapshot isolation is only meaningful when the visible generation and commit
+    sequence are explicit. The greenfield embedded engine stages writes in an
+    owned state copy and publishes one atomic store replacement at commit.
+constraints:
+- 11
+- 12
+- 13
+- 14
+- 16
+- 21
+- 25
+amendment_log:
+- 34
+- 36
+parents:
+- id: 30
+  role: component
+realization:
+- bindings:
+  - scheme: path
+    value: crates/oxgraph-db/src/database.rs
+    metadata:
+      summary: Database create/open/compact/validate, read pins, read transactions, single-writer staging, durable atomic commit, session-local rollback burns, catalog mutation, topology mutation, property mutation, projection handles, typed index lookup, and query entrypoints.
+  - scheme: path
+    value: crates/oxgraph-db/src/storage.rs
+    metadata:
+      summary: Atomic full-store publication preserving visible commit sequence and committed writer transaction high-water mark.
+  - scheme: path
+    value: crates/oxgraph-db/tests/e2e.rs
+    metadata:
+      summary: Tests for commit/reopen, incidence persistence, commit-only transaction-id durability, compaction, typed lookup, projection indexes, and corrupt-store validation.
+  role: primary

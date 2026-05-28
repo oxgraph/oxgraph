@@ -1,11 +1,11 @@
 id: 11
 name: umbrella crate
 description: |
-  The single ergonomic dependency point that re-exports the kernel set behind feature
-  flags so most users never type the sub-crate names directly. It is a 0.0.0
+  The single ergonomic dependency point that re-exports the curated workspace surface
+  behind feature flags so most users never type the sub-crate names directly. It is a 0.1.0
   feature-gated re-export crate: consumers can pick topology/graph/csr/snapshot/algo,
-  property, builder, and hyper layers without paying for unrelated crates. Exists
-  because oxgraph is a monorepo: the
+  property, builder, database, and hyper layers without paying for unrelated
+  crates. Exists because oxgraph is a monorepo: the
   umbrella keeps the published surface tidy while letting downstream consumers depend
   on individual crates when they want minimal compile times.
 profile: 1
@@ -15,14 +15,14 @@ intent:
   summary: Curated re-exports across the workspace, gated by feature sets
   source: human
   goals: |
-    - Curated re-exports of the kernel crates (topology + graph + csr + snapshot + algo)
-      plus property and builder layers under one import path, gated by features.
+    - Curated re-exports of the substrate crates (topology + graph + csr + snapshot + algo)
+      plus property, builder, and database layers under one import path, gated by features.
     - Tidy publish surface so the world depends on `oxgraph` by default and reaches for
       individual crates only when they need minimal compile time or no_std isolation.
-    - Stay 0.0.0 until v1 actually pins the re-export shape; do not invent helpers in
-      the umbrella that the kernel crates lack.
+    - Publish 0.1.x as the pre-1.0 crates.io surface for the DB-inclusive umbrella;
+      do not invent helpers in the umbrella that the kernel crates lack.
   non_goals: |
-    No helpers that don't exist in the kernel crates. No "happy-path" wrappers that
+    No helpers that don't exist in the re-exported crates. No "happy-path" wrappers that
     hide capability requirements. No stable promises until v1 actually freezes the
     re-export shape.
   rationale: |
@@ -35,20 +35,23 @@ realization:
   - scheme: path
     value: crates/oxgraph
     metadata:
-      summary: The umbrella crate. Feature-gated re-export point for topology, graph, hyper, layouts, snapshot, algorithms, property, and builders.
+      summary: The umbrella crate. Feature-gated re-export point for topology, graph, hyper, layouts, snapshot, algorithms, property, builders, and embedded database primitives.
   - scheme: path
     value: crates/oxgraph/Cargo.toml
     metadata:
-      summary: Crate metadata, optional dependencies, and feature graph for curated re-exports.
+      summary: Crate metadata, optional dependencies, and feature graph for curated re-exports, including the `db` feature over oxgraph-db.
   - scheme: path
     value: crates/oxgraph/src/lib.rs
     metadata:
-      summary: Crate root — no_std by default with feature-gated public re-export modules.
+      summary: Crate root — no_std by default with feature-gated public re-export modules, including `oxgraph::db` for embedded database APIs and graph traversal types.
   role: primary
 amendment_log:
 - 8
 - 12
 - 28
+- 35
+- 38
+- 39
 parents:
 - id: 1
   role: component

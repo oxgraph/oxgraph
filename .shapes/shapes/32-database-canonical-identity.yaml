@@ -1,0 +1,58 @@
+id: 32
+name: Database canonical identity
+description: |
+  Stable database identity model for canonical element, relation, incidence, and
+  role IDs. Durable logs and catalog records use canonical IDs; compact snapshots
+  may use local IDs only when identity maps preserve the canonical mapping.
+profile: 1
+status: proposed
+intent:
+  kind: interface
+  summary: Stable canonical IDs for elements, relations, incidences, roles, snapshots, deltas, and compaction
+  source: human
+  goals: |
+    - Provide explicit newtypes for canonical topology IDs and snapshot/commit
+      generation identifiers.
+    - Define allocation, tombstone, stale-handle, and no-reuse rules for durable
+      database identity.
+    - Require compaction to emit identity maps and rekey property layers whenever
+      snapshot-local layout IDs differ from canonical IDs.
+  non_goals: |
+    No default ID newtypes leak into foundation topology crates.
+  rationale: |
+    Existing CSR/BCSR IDs are layout-local. A database needs durable identity
+    that survives restart, WAL replay, checkpoint rebuilds, and local-ID
+    compaction.
+constraints:
+- 11
+- 12
+- 13
+- 14
+- 16
+- 21
+- 25
+- 26
+amendment_log:
+- 34
+parents:
+- id: 30
+  role: component
+realization:
+- bindings:
+  - scheme: path
+    value: crates/oxgraph-db/src/id.rs
+    metadata:
+      summary: Canonical ElementId, RelationId, IncidenceId, RoleId, LabelId, RelationTypeId, PropertyKeyId, ProjectionId, IndexId, CommitSeq, TransactionId, and CheckpointGeneration newtypes.
+  - scheme: path
+    value: crates/oxgraph-db/src/state.rs
+    metadata:
+      summary: Canonical incidence-first state with element/relation/incidence records, catalog-owned labels/types/properties, ID allocation, tombstones, property subjects, and validation.
+  - scheme: path
+    value: crates/oxgraph-db/src/projection.rs
+    metadata:
+      summary: Projection-local element/relation/incidence ID newtypes with canonical identity mapping for graph and hypergraph materialized views.
+  - scheme: path
+    value: crates/oxgraph-db/src/proofs.rs
+    metadata:
+      summary: Macro-backed Kani proofs for checked_next monotonicity where applicable plus Eq/Ord and Hash/Eq consistency across canonical and projection-local database ID newtypes.
+  role: primary

@@ -1,0 +1,56 @@
+id: 34
+name: Database query core
+description: |
+  Internal query core for OxGraph Database: logical IR, semantic analysis,
+  physical planning, execution operators, value/result model, and storage traits
+  consumed by native OxQL and compatibility frontends.
+profile: 1
+status: proposed
+intent:
+  kind: module
+  summary: Private query IR, semantic analysis, planning, execution, values, and storage traits
+  source: human
+  goals: |
+    - Define a storage-neutral query core over topology, properties, indexes,
+      and transactions.
+    - Keep planner/executor internals private until contracts are proven by
+      tests and benchmarks.
+    - Support prepare, execute, explain, parameter binding, streaming result
+      rows, pattern expansion, mutation operators, and path semantics.
+  non_goals: |
+    No query language semantics in foundation crates and no public compatibility
+    claim before conformance suites exist.
+  rationale: |
+    Text syntaxes should lower into one semantic core. This prevents OxQL,
+    Cypher, Rust APIs, and future adapters from becoming parallel query engines.
+constraints:
+- 11
+- 12
+- 13
+- 14
+- 16
+- 21
+- 25
+- 26
+amendment_log:
+- 34
+- 37
+- 38
+parents:
+- id: 30
+  role: component
+realization:
+- bindings:
+  - scheme: path
+    value: crates/oxgraph-db/src/query.rs
+    metadata:
+      summary: PreparedQuery, QueryLanguage, QueryResult, QueryRow, QueryValue, explain, OxQL/Cypher semantic preparation, typed element property predicate validation, scans, label/type/property lookup plans, graph projection WALK traversal, NEIGHBORS shorthand, and Cypher directed triple execution.
+  - scheme: path
+    value: crates/oxgraph-db/src/database.rs
+    metadata:
+      summary: Database::prepare and ReadTransaction execute/explain/traverse_graph entrypoints over pinned state snapshots, properties, indexes, and projection materialization.
+  - scheme: path
+    value: crates/oxgraph-db/tests/recovery_proptest.rs
+    metadata:
+      summary: Property tests for query preparation, indexed lookups, generated recovery, projection equivalence, graph traversal BFS equivalence, and executor agreement with generated reference counts.
+  role: primary
