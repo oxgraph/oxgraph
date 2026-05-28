@@ -32,4 +32,16 @@ realization:
     value: crates/oxgraph/README.md
     metadata:
       summary: Published README describing the 0.1.0 DB-inclusive umbrella release surface.
+  - scheme: path
+    value: crates/oxgraph-algo/Cargo.toml
+    metadata:
+      summary: Dev-only cyclic workspace dependencies remain local paths so the crate can be bootstrapped onto crates.io.
+  - scheme: path
+    value: crates/oxgraph-csc/Cargo.toml
+    metadata:
+      summary: Dev-only Postgres roundtrip dependency remains a local path so csc can be published before postgres.
+  - scheme: path
+    value: deny.toml
+    metadata:
+      summary: Cargo-deny continues denying external wildcard dependencies while allowing local path dev-dependencies needed for workspace crate bootstrapping.
   role: primary
