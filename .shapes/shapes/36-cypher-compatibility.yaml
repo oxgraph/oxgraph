@@ -1,0 +1,51 @@
+id: 36
+name: Cypher compatibility
+description: |
+  Compatibility frontend for a pinned Cypher profile over the property-graph
+  projection of OxGraph Database. Compatibility is a conformance claim backed by
+  a matrix, not an informal parser promise.
+profile: 1
+status: proposed
+intent:
+  kind: interface
+  summary: Pinned Cypher compatibility profile and conformance suite over the property-graph projection
+  source: human
+  goals: |
+    - Pin the supported Cypher profile/version, value semantics, functions,
+      transaction behavior, and deviations before claiming compatibility.
+    - Lower supported Cypher into the shared query core through an explicit
+      property-graph projection.
+    - Exclude Bolt/Neo4j driver compatibility from the first supported profile;
+      this shape covers language conformance over explicit property-graph
+      projections only.
+  non_goals: |
+    No lossy projection is hidden: unsupported topology-native constructs must
+    report typed unsupported errors rather than silently changing meaning.
+  rationale: |
+    Cypher is valuable for Neo4j ergonomics and migration, but it must not
+    flatten the database's native incidence model or become a second engine.
+constraints:
+- 11
+- 12
+- 13
+- 14
+- 16
+- 21
+- 25
+- 26
+amendment_log:
+- 34
+parents:
+- id: 30
+  role: component
+realization:
+- bindings:
+  - scheme: path
+    value: crates/oxgraph-db/src/query.rs
+    metadata:
+      summary: Pinned Cypher profile for MATCH (n), MATCH (n:Label), and MATCH (n)-[r]->(m) over the first explicit graph projection, with unsupported constructs returning typed errors and no Bolt compatibility claim.
+  - scheme: path
+    value: crates/oxgraph-db/tests/e2e.rs
+    metadata:
+      summary: End-to-end Cypher node-label and directed triple queries over the cataloged graph projection.
+  role: primary

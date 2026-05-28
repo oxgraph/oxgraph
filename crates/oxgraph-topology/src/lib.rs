@@ -73,11 +73,6 @@ pub trait TopologyBase {
 
 /// Substrate-neutral alias for a topology view's element ID type.
 ///
-/// Mirrors the substrate-specific `NodeId<G>` / `VertexId<H>` aliases exposed
-/// by graph and hypergraph wrapper crates and gives substrate-agnostic code
-/// (algorithms, snapshot tooling) a short way to name the element identity of
-/// a topology view in generic signatures and return types.
-///
 /// # Performance
 ///
 /// `perf: unspecified`; performance is inherited from the underlying
@@ -85,9 +80,6 @@ pub trait TopologyBase {
 pub type ElementId<T> = <T as TopologyBase>::ElementId;
 
 /// Substrate-neutral alias for a topology view's relation ID type.
-///
-/// Mirrors the substrate-specific `EdgeId<G>` / `HyperedgeId<H>` aliases exposed
-/// by graph and hypergraph wrapper crates.
 ///
 /// # Performance
 ///

@@ -1,0 +1,49 @@
+id: 35
+name: OxQL frontend
+description: |
+  Native OxGraph query language that exposes topology-first concepts directly
+  and lowers into the shared database query core.
+profile: 1
+status: proposed
+intent:
+  kind: interface
+  summary: OxGraph-native query language lowering into the database query core
+  source: human
+  goals: |
+    - Query elements, relations, incidences, roles, and properties without
+      reducing hypergraphs to binary edges.
+    - Provide a textual frontend for the same IR used by Rust query APIs.
+    - Keep parsing errors and semantic errors typed and deterministic.
+  non_goals: |
+    OxQL is not a Cypher clone and does not define foundation-crate semantics.
+  rationale: |
+    OxGraph needs a native language that matches its incidence-first model.
+    Property-graph compatibility can then be expressed as a projection, not as
+    the database's core identity.
+constraints:
+- 11
+- 12
+- 13
+- 14
+- 16
+- 21
+- 25
+- 26
+amendment_log:
+- 34
+- 37
+- 38
+parents:
+- id: 30
+  role: component
+realization:
+- bindings:
+  - scheme: path
+    value: crates/oxgraph-db/src/query.rs
+    metadata:
+      summary: Native OxQL profile for MATCH ELEMENTS/RELATIONS/INCIDENCES, label scans, relation-type scans, catalog-typed element property equality predicates, GRAPH WALK traversal, GRAPH NEIGHBORS shorthand, CATALOG, typed errors, prepare, execute, and explain.
+  - scheme: path
+    value: crates/oxgraph-db/tests/e2e.rs
+    metadata:
+      summary: End-to-end OxQL queries over elements, labels, typed element property predicates, relation types, graph projection WALK traversal, NEIGHBORS shorthand, and property predicate error cases.
+  role: primary

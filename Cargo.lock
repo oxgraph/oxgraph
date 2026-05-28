@@ -1305,11 +1305,12 @@ dependencies = [
 
 [[package]]
 name = "oxgraph"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "oxgraph-algo",
  "oxgraph-csc",
  "oxgraph-csr",
+ "oxgraph-db",
  "oxgraph-graph",
  "oxgraph-hyper",
  "oxgraph-hyper-bcsr",
@@ -1321,7 +1322,7 @@ dependencies = [
 
 [[package]]
 name = "oxgraph-algo"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "arrow-array",
  "arrow-schema",
@@ -1339,7 +1340,7 @@ dependencies = [
 
 [[package]]
 name = "oxgraph-csc"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "oxgraph-csr",
  "oxgraph-graph",
@@ -1351,7 +1352,7 @@ dependencies = [
 
 [[package]]
 name = "oxgraph-csr"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "arrow-array",
  "arrow-schema",
@@ -1366,8 +1367,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxgraph-db"
+version = "0.1.0"
+dependencies = [
+ "criterion 0.8.2",
+ "oxgraph-algo",
+ "oxgraph-csc",
+ "oxgraph-csr",
+ "oxgraph-graph",
+ "oxgraph-hyper",
+ "oxgraph-hyper-bcsr",
+ "oxgraph-property",
+ "oxgraph-snapshot",
+ "oxgraph-topology",
+ "proptest",
+ "serde",
+ "serde_json",
+ "zerocopy",
+]
+
+[[package]]
 name = "oxgraph-graph"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "oxgraph-topology",
  "proptest",
@@ -1375,7 +1396,7 @@ dependencies = [
 
 [[package]]
 name = "oxgraph-hyper"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "oxgraph-topology",
  "proptest",
@@ -1383,7 +1404,7 @@ dependencies = [
 
 [[package]]
 name = "oxgraph-hyper-bcsr"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "arrow-array",
  "arrow-schema",
@@ -1399,7 +1420,7 @@ dependencies = [
 
 [[package]]
 name = "oxgraph-layout-util"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "proptest",
  "zerocopy",
@@ -1417,7 +1438,7 @@ dependencies = [
 
 [[package]]
 name = "oxgraph-postgres"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "criterion 0.8.2",
  "oxgraph-algo",
@@ -1433,7 +1454,7 @@ dependencies = [
 
 [[package]]
 name = "oxgraph-property"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "arrow-array",
  "arrow-ipc",
@@ -1448,7 +1469,7 @@ dependencies = [
 
 [[package]]
 name = "oxgraph-snapshot"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "criterion 0.8.2",
  "proptest",
@@ -1457,9 +1478,18 @@ dependencies = [
 
 [[package]]
 name = "oxgraph-topology"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "proptest",
+]
+
+[[package]]
+name = "oxgraphd"
+version = "0.0.0"
+dependencies = [
+ "oxgraph-db",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

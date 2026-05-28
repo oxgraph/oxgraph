@@ -1,0 +1,65 @@
+id: 38
+name: OxGraph DB graph traversal API
+description: |
+  Add first-class graph projection traversal to oxgraph-db and the umbrella DB
+  re-export surface.
+targets:
+  shape_ids:
+  - 11
+  - 34
+  - 35
+  - 37
+status: proposed
+version_impact: minor
+intent:
+  kind: amendment
+  summary: Expose graph projection BFS traversal through the embedded DB API and OxQL WALK
+  source: human
+  rationale: |
+    The database product owns cataloged physical projections, so bounded graph
+    reachability should live in the DB layer while still executing over the
+    OxGraph graph trait surface. Embedded users need a typed traversal API for
+    graph projections, and OxQL needs a small native WALK form instead of
+    forcing consumers to hand-materialize projections and traverse them outside
+    the transaction snapshot.
+  impact: |
+    Adds TraversalDirection, TraversalOptions, TraversalRow, TraversalResult,
+    graph_projection_by_name, and traverse_graph to oxgraph-db and oxgraph::db.
+    GRAPH <projection> NEIGHBORS remains an outgoing depth-1 shorthand, while
+    GRAPH <projection> WALK FROM <element> DEPTH <n> supports optional
+    DIRECTION and LIMIT clauses. Traversal returns unique elements in BFS
+    first-discovery order with shortest discovered depth; Rust APIs expose
+    depths, and OxQL rows keep returning QueryValue::Element.
+initiated_by:
+  type: human
+realization:
+- bindings:
+  - scheme: path
+    value: crates/oxgraph-db/src/traversal.rs
+    metadata:
+      summary: Public traversal result/options types and the crate-private BFS implementation over GraphProjection ElementSuccessors and ElementPredecessors traits.
+  - scheme: path
+    value: crates/oxgraph-db/src/database.rs
+    metadata:
+      summary: ReadTransaction graph_projection_by_name and traverse_graph APIs over cataloged graph projections.
+  - scheme: path
+    value: crates/oxgraph-db/src/query.rs
+    metadata:
+      summary: OxQL GRAPH WALK parsing, validation, execution, and NEIGHBORS lowering to depth-1 outgoing traversal.
+  - scheme: path
+    value: crates/oxgraph-db/tests/e2e.rs
+    metadata:
+      summary: End-to-end traversal API and OxQL WALK coverage for directions, depth, limits, duplicate suppression, projection type errors, and seed validation.
+  - scheme: path
+    value: crates/oxgraph-db/tests/recovery_proptest.rs
+    metadata:
+      summary: Property tests comparing traversal results against a generated reference BFS.
+  - scheme: path
+    value: crates/oxgraph-db/benches/open_recovery.rs
+    metadata:
+      summary: Criterion smoke coverage for the public traverse_graph API over a 1k-element graph projection.
+  - scheme: path
+    value: crates/oxgraph/src/lib.rs
+    metadata:
+      summary: Umbrella oxgraph::db re-exports for traversal types.
+  role: primary

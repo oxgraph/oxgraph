@@ -1,0 +1,31 @@
+id: 33
+name: OxGraph Database workspace slice
+description: OxGraph Database workspace slice
+targets:
+  shape_ids:
+  - 1
+  - 30
+status: proposed
+version_impact: minor
+intent:
+  kind: amendment
+  summary: Record approved oxgraph-db workspace crate as a separate product root above the substrate
+  source: human
+  rationale: |
+    The database crate is an approved product-layer workspace slice above the
+    substrate, not a child component of the canonical substrate shape. Recording
+    the workspace membership change keeps constraint 21's pause-and-ask history
+    visible while preserving shape 30 as a separate root for database intent.
+realization:
+- bindings:
+  - scheme: path
+    value: Cargo.toml
+    metadata:
+      summary: Workspace members and default-members include the product-layer oxgraph-db crate.
+  - scheme: path
+    value: crates/oxgraph-db
+    metadata:
+      summary: Standalone OxGraph-native database crate built above the topology substrate.
+  role: primary
+initiated_by:
+  type: human

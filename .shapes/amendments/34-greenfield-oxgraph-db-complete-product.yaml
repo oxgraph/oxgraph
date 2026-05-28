@@ -1,0 +1,44 @@
+id: 34
+name: Greenfield OxGraph DB complete product
+description: Greenfield OxGraph DB complete product
+targets:
+  shape_ids:
+  - 30
+  - 31
+  - 32
+  - 33
+  - 34
+  - 35
+  - 36
+  - 37
+  - 38
+status: proposed
+intent:
+  kind: amendment
+  summary: 'Replace the prototype oxgraph-db slice with a complete greenfield database product: cataloged graph/hypergraph projections, properties, indexes, OxQL, Cypher language conformance, HTTP server, CLI, and end-to-end verification.'
+  source: human
+  rationale: |
+    The database is still greenfield, so preserving the first prototype API,
+    WAL, manifest, or OXGDB byte format would harden the wrong boundary. The
+    product layer should instead realize the topology architecture directly:
+    canonical incidence-first truth, cataloged graph and hypergraph projections
+    for hot paths, named properties and indexes above topology, and thin
+    user-facing server/CLI/query language surfaces over the embedded engine.
+  version_impact: major
+initiated_by:
+  type: human
+realization:
+- bindings:
+  - scheme: path
+    value: crates/oxgraph-db
+    metadata:
+      summary: Greenfield embedded database engine: durable canonical topology, catalog, properties, projections, indexes, query planning, OxQL/Cypher language conformance, and verification.
+  - scheme: path
+    value: crates/oxgraphd
+    metadata:
+      summary: Thin HTTP server and CLI package over oxgraph-db for end-to-end product workflows.
+  - scheme: path
+    value: Cargo.toml
+    metadata:
+      summary: Workspace membership and dependencies for the greenfield database and product package.
+  role: primary

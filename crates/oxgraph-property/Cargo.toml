@@ -1,8 +1,11 @@
 [package]
 name = "oxgraph-property"
-version = "0.0.0"
+version.workspace = true
+license.workspace = true
 description = "Arrow-backed named property layers for OxGraph topology views."
-publish = false
+categories.workspace = true
+keywords.workspace = true
+readme.workspace = true
 
 authors.workspace = true
 edition.workspace = true
@@ -13,8 +16,8 @@ arrow-array = { workspace = true }
 arrow-ipc = { workspace = true }
 arrow-schema = { workspace = true }
 arrow-select = { workspace = true }
-oxgraph-snapshot = { version = "0.0.0", path = "../oxgraph-snapshot", features = ["alloc"] }
-oxgraph-topology = { version = "0.0.0", path = "../oxgraph-topology" }
+oxgraph-snapshot = { version = "0.1.0", path = "../oxgraph-snapshot", features = ["alloc"] }
+oxgraph-topology = { version = "0.1.0", path = "../oxgraph-topology" }
 zerocopy = { workspace = true }
 
 [dev-dependencies]
