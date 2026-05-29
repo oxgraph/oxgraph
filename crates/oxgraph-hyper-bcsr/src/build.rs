@@ -22,12 +22,11 @@ use oxgraph_hyper::{
     ContainsElement, ContainsIncidence, ContainsRelation, DirectedHyperedgeIncidences,
     DirectedHyperedgeParticipants, DirectedVertexHyperedges, ElementIncidenceCount,
     ElementIncidences, ElementIndex as ElementIndexTrait, ElementPredecessors, ElementSuccessors,
-    ElementWeight, HyperedgeParticipantCount, HyperedgeParticipants, HypergraphCounts,
-    IncidenceBase, IncidenceCounts, IncidenceElement, IncidenceIndex as IncidenceIndexTrait,
-    IncidenceRelation, IncidenceRole, IncidenceWeight, IncidentHyperedgeCount, IncidentHyperedges,
-    LocalElementIdentity, LocalIncidenceIdentity, LocalRelationIdentity, RelationIncidenceCount,
-    RelationIncidences, RelationIndex as RelationIndexTrait, RelationWeight, TopologyBase,
-    TopologyCounts,
+    ElementWeight, HyperedgeParticipants, HypergraphCounts, IncidenceBase, IncidenceCounts,
+    IncidenceElement, IncidenceIndex as IncidenceIndexTrait, IncidenceRelation, IncidenceRole,
+    IncidenceWeight, IncidentHyperedges, LocalElementIdentity, LocalIncidenceIdentity,
+    LocalRelationIdentity, RelationIncidenceCount, RelationIncidences,
+    RelationIndex as RelationIndexTrait, RelationWeight, TopologyBase, TopologyCounts,
 };
 pub use oxgraph_layout_util::BuildIndex;
 use oxgraph_layout_util::{
@@ -1259,29 +1258,9 @@ macro_rules! impl_topology_for {
             }
         }
 
-        impl<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*> HyperedgeParticipantCount
-            for $name<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*>
-        where
-            VertexIndex: BuildIndex,
-            RelationIndex: BuildIndex,
-            IncidenceIndex: BuildIndex,
-        {
-            fn hyperedge_participant_count(&self, hyperedge: HyperedgeId<RelationIndex>) -> usize {
-                self.relation_incidence_count(hyperedge)
-            }
-        }
-
-        impl<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*> IncidentHyperedgeCount
-            for $name<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*>
-        where
-            VertexIndex: BuildIndex,
-            RelationIndex: BuildIndex,
-            IncidenceIndex: BuildIndex,
-        {
-            fn incident_hyperedge_count(&self, vertex: HyperVertexId<VertexIndex>) -> usize {
-                self.element_incidence_count(vertex)
-            }
-        }
+        // `HyperedgeParticipantCount` / `IncidentHyperedgeCount` come for free
+        // from the blanket impls in `oxgraph-hyper` over the
+        // `RelationIncidenceCount` / `ElementIncidenceCount` impls above.
 
         impl<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*> DirectedHyperedgeParticipants
             for $name<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*>

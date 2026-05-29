@@ -215,6 +215,8 @@ impl core::error::Error for SnapshotError {}
 /// `perf: unspecified`; errors are returned only from typed-view paths.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SectionViewError {
+    /// The requested element type is zero-sized, so it cannot tile a payload.
+    ZeroSizedType,
     /// Payload byte length is not an exact multiple of `size_of::<T>()`.
     LengthNotMultipleOfSize {
         /// Section payload length in bytes.
@@ -234,6 +236,9 @@ pub enum SectionViewError {
 impl fmt::Display for SectionViewError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::ZeroSizedType => {
+                formatter.write_str("cannot borrow a section payload as a zero-sized type")
+            }
             Self::LengthNotMultipleOfSize { length, elem_size } => write!(
                 formatter,
                 "section length {length} is not a multiple of element size {elem_size}"
@@ -247,6 +252,64 @@ impl fmt::Display for SectionViewError {
 }
 
 impl core::error::Error for SectionViewError {}
+
+/// Error returned when binding a width-typed section by kind and version.
+///
+/// Returned by [`Snapshot::typed_section`](crate::Snapshot::typed_section): a
+/// single error covering the lookup, version check, and typed-view steps that
+/// every layout crate previously open-coded with its own variants.
+///
+/// # Performance
+///
+/// `perf: unspecified`; errors are returned only from section-binding paths.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SectionBindError {
+    /// No section with the requested kind was present.
+    Missing {
+        /// Requested section kind.
+        kind: u32,
+    },
+    /// The section was present but its version did not match.
+    VersionMismatch {
+        /// Requested section kind.
+        kind: u32,
+        /// Version the caller required.
+        expected: u32,
+        /// Version recorded in the section entry.
+        actual: u32,
+    },
+    /// The payload could not be borrowed as the requested little-endian word.
+    View {
+        /// Requested section kind.
+        kind: u32,
+        /// Underlying typed-view failure.
+        error: SectionViewError,
+    },
+}
+
+impl fmt::Display for SectionBindError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Missing { kind } => write!(formatter, "snapshot section {kind} is missing"),
+            Self::VersionMismatch {
+                kind,
+                expected,
+                actual,
+            } => write!(
+                formatter,
+                "snapshot section {kind} version {actual} does not match expected {expected}"
+            ),
+            Self::View { kind, error } => {
+                write!(
+                    formatter,
+                    "snapshot section {kind} typed view failed: {error}"
+                )
+            }
+        }
+    }
+}
+
+impl core::error::Error for SectionBindError {}
 
 /// Error returned by snapshot writers.
 ///

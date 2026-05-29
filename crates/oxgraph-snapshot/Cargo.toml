@@ -17,6 +17,7 @@ alloc = []
 std = ["alloc"]
 
 [dependencies]
+oxgraph-layout-util = { version = "0.1.0", path = "../oxgraph-layout-util", default-features = false }
 zerocopy = { workspace = true }
 
 [dev-dependencies]

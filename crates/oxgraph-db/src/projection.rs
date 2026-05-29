@@ -9,9 +9,9 @@ use oxgraph_graph::{
 };
 use oxgraph_hyper::{
     DirectedHyperedgeIncidences, DirectedHyperedgeParticipants, DirectedVertexHyperedges,
-    ElementIncidenceCount, HyperedgeParticipantCount, HypergraphCounts, IncidenceBase,
-    IncidenceCounts, IncidenceElement, IncidenceIndex, IncidenceRelation, IncidenceRole,
-    IncidentHyperedgeCount, IncidentHyperedges, RelationIncidenceCount, RelationIncidences,
+    ElementIncidenceCount, HypergraphCounts, IncidenceBase, IncidenceCounts, IncidenceElement,
+    IncidenceIndex, IncidenceRelation, IncidenceRole, IncidentHyperedges, RelationIncidenceCount,
+    RelationIncidences,
 };
 use serde::{Deserialize, Serialize};
 
@@ -869,17 +869,9 @@ impl IncidentHyperedges for HypergraphProjection {
     }
 }
 
-impl HyperedgeParticipantCount for HypergraphProjection {
-    fn hyperedge_participant_count(&self, hyperedge: Self::RelationId) -> usize {
-        self.relation_incidences[local_relation_index(hyperedge)].len()
-    }
-}
-
-impl IncidentHyperedgeCount for HypergraphProjection {
-    fn incident_hyperedge_count(&self, vertex: Self::ElementId) -> usize {
-        self.element_incidences[local_index(vertex)].len()
-    }
-}
+// `HyperedgeParticipantCount` / `IncidentHyperedgeCount` are provided by the
+// blanket impls in `oxgraph-hyper` over the `RelationIncidenceCount` /
+// `ElementIncidenceCount` impls above.
 
 impl DirectedHyperedgeParticipants for HypergraphProjection {
     type SourceParticipants<'view>

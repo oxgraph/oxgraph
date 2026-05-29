@@ -34,10 +34,13 @@ hyper-property-arrow = [
   "property-arrow",
   "oxgraph-hyper-bcsr/build-property-arrow",
 ]
-postgres = ["dep:oxgraph-postgres", "dep:oxgraph-csc"]
+# `postgres` enables the `csc` feature (not just the dep) so the borrowed
+# inbound CSC view is reachable at the single canonical path `oxgraph::csc`.
+postgres = ["dep:oxgraph-postgres", "csc"]
 csc = ["dep:oxgraph-csc"]
-db = ["dep:oxgraph-db", "graph", "hyper", "algo-std"]
-postgres-extension = ["postgres"]
+# `db` activates only the embedded engine; consumers select graph/hyper/algo
+# facade modules explicitly if they want them.
+db = ["dep:oxgraph-db"]
 full = [
   "algo-std",
   "csr",

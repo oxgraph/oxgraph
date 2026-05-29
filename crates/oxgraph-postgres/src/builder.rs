@@ -85,10 +85,9 @@ impl EngineBuilder {
             let topology = GraphTopology::open(&snapshot)?;
             Ok::<EngineState<'_>, PostgresGraphError>(EngineState { topology })
         })?;
-        let mut overlay = self.overlay;
-        if !overlay.added_edges.is_empty() {
-            overlay.rebuild_indexes();
-        }
+        // `OverlayState` keeps its adjacency indexes synced through its mutation
+        // methods, so a builder-supplied overlay is already consistent.
+        let overlay = self.overlay;
         let node_count = inner.backing_cart().metadata.node_count.get() as usize;
         let mut traverse_scratch = TraverseScratch::default();
         traverse_scratch.resize_for_nodes(node_count);

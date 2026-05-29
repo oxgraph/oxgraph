@@ -5,11 +5,10 @@
 use oxgraph_hyper::{
     ContainsElement, ContainsIncidence, ContainsRelation, DirectedHyperedgeIncidences,
     DirectedHyperedgeParticipants, DirectedVertexHyperedges, ElementIncidenceCount,
-    ElementIncidences, ElementIndex, ElementPredecessors, ElementSuccessors,
-    HyperedgeParticipantCount, HyperedgeParticipants, HypergraphCounts, IncidenceBase,
-    IncidenceCounts, IncidenceElement, IncidenceIndex, IncidenceRelation, IncidenceRole,
-    IncidentHyperedgeCount, IncidentHyperedges, RelationIncidenceCount, RelationIncidences,
-    RelationIndex, TopologyBase, TopologyCounts,
+    ElementIncidences, ElementIndex, ElementPredecessors, ElementSuccessors, HyperedgeParticipants,
+    HypergraphCounts, IncidenceBase, IncidenceCounts, IncidenceElement, IncidenceIndex,
+    IncidenceRelation, IncidenceRole, IncidentHyperedges, RelationIncidenceCount,
+    RelationIncidences, RelationIndex, TopologyBase, TopologyCounts,
 };
 
 use crate::{
@@ -356,33 +355,9 @@ where
     }
 }
 
-impl<V, R, I, O, VW, RW> HyperedgeParticipantCount for View<'_, V, R, I, O, VW, RW>
-where
-    V: BcsrIndex,
-    R: BcsrIndex,
-    I: BcsrIndex,
-    O: BcsrWord<Index = I>,
-    VW: BcsrWord<Index = V>,
-    RW: BcsrWord<Index = R>,
-{
-    fn hyperedge_participant_count(&self, hyperedge: BcsrHyperedgeId<R>) -> usize {
-        self.relation_incidence_count(hyperedge)
-    }
-}
-
-impl<V, R, I, O, VW, RW> IncidentHyperedgeCount for View<'_, V, R, I, O, VW, RW>
-where
-    V: BcsrIndex,
-    R: BcsrIndex,
-    I: BcsrIndex,
-    O: BcsrWord<Index = I>,
-    VW: BcsrWord<Index = V>,
-    RW: BcsrWord<Index = R>,
-{
-    fn incident_hyperedge_count(&self, vertex: BcsrVertexId<V>) -> usize {
-        self.element_incidence_count(vertex)
-    }
-}
+// `HyperedgeParticipantCount` and `IncidentHyperedgeCount` are provided for free
+// by the blanket impls in `oxgraph-hyper` over `RelationIncidenceCount` /
+// `ElementIncidenceCount`, which this view implements above.
 
 impl<V, R, I, O, VW, RW> HyperedgeParticipants for View<'_, V, R, I, O, VW, RW>
 where

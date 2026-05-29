@@ -292,10 +292,9 @@ pub mod hyper_build {
 /// `perf: unspecified`; this module re-exports another crate.
 #[cfg(feature = "postgres")]
 pub mod postgres {
-    pub use oxgraph_csc::{
-        CscNodeId, CscSnapshotError, CscSnapshotGraph, SNAPSHOT_KIND_PG_INBOUND_OFFSETS_U32,
-        SNAPSHOT_KIND_PG_INBOUND_TARGETS_U32,
-    };
+    // The borrowed inbound CSC view and its section kinds are re-exported once,
+    // at [`crate::csc`] (the `postgres` feature enables `csc`). This module does
+    // not duplicate them.
     pub use oxgraph_postgres::{
         BuildError, BuildEstimate, Catalog, CatalogError, Config, ConfigError,
         DualTopologySnapshot, EdgeId, EdgeRow, Engine, EngineBuilder, EngineStatus, FilterColumn,

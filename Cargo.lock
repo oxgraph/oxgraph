@@ -1472,6 +1472,7 @@ name = "oxgraph-snapshot"
 version = "0.1.0"
 dependencies = [
  "criterion 0.8.2",
+ "oxgraph-layout-util",
  "proptest",
  "zerocopy",
 ]

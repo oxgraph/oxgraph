@@ -52,7 +52,8 @@ pub use crate::{
     container::{
         FORMAT_MAGIC, FORMAT_MAJOR, FORMAT_MINOR, HEADER_SIZE, HeaderOnlySnapshot,
         MAX_ALIGNMENT_LOG2, MAX_SECTION_COUNT, MAX_SUPPORTED_MINOR, PendingSection,
-        SECTION_ENTRY_SIZE, Section, SectionIter, Snapshot, SnapshotPlan, ValidationLevel,
+        SECTION_ENTRY_SIZE, Section, SectionIter, SectionKind, Snapshot, SnapshotPlan,
+        ValidationLevel, kinds,
     },
-    container_error::{PlanError, SectionViewError, SnapshotError},
+    container_error::{PlanError, SectionBindError, SectionViewError, SnapshotError},
 };

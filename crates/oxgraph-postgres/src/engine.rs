@@ -151,8 +151,8 @@ impl Engine {
             node_count: metadata.node_count.get(),
             edge_count: metadata.edge_count.get(),
             read_only: metadata.is_read_only(),
-            overlay_edge_count: self.overlay.added_edges.len(),
-            tombstoned_edges: self.overlay.tombstoned_edges.len(),
+            overlay_edge_count: self.overlay.overlay_edge_count(),
+            tombstoned_edges: self.overlay.tombstoned_edge_count(),
         }
     }
 
@@ -333,7 +333,7 @@ impl Engine {
         SyncHealth {
             overlay_edges: status.overlay_edge_count,
             tombstoned_edges: status.tombstoned_edges,
-            tombstoned_nodes: self.overlay().tombstoned_nodes.len(),
+            tombstoned_nodes: self.overlay().tombstoned_node_count(),
         }
     }
 

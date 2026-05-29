@@ -158,7 +158,10 @@ impl DualTopologySnapshot {
             .flat_map(|(source, target)| [*source, *target])
             .max()
             .unwrap_or(0);
-        Self::from_dense_u32_edges_with_node_count(max_index + 1, edges, built_at_unix)
+        let node_count = max_index
+            .checked_add(1)
+            .ok_or(BuildError::NodeCountOverflow)?;
+        Self::from_dense_u32_edges_with_node_count(node_count, edges, built_at_unix)
     }
 
     /// Builds OXGTOPO bytes with an explicit node count (tests with isolated vertices).

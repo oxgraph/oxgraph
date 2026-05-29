@@ -298,21 +298,33 @@ pub trait IncidentHyperedges: VertexIncidences + ParticipantHyperedge {
 
 /// Exact hyperedge-participant count capability.
 ///
-/// Pairs with [`HyperedgeParticipants`] for backends that can report a
-/// hyperedge's participant count without traversal.
-pub trait HyperedgeParticipantCount: IncidenceBase {
+/// Hypergraph-facing name for [`RelationIncidenceCount`]: a hyperedge's
+/// participant count is its relation's incidence count. The default body and
+/// blanket impl mean any [`RelationIncidenceCount`] backend gets this vocabulary
+/// name for free, matching the [`ParticipantCounts`]/[`HypergraphCounts`]
+/// pattern; backends implement only the topology count trait once.
+pub trait HyperedgeParticipantCount: RelationIncidenceCount {
     /// Returns the number of participants attached to `hyperedge`.
-    fn hyperedge_participant_count(&self, hyperedge: Self::RelationId) -> usize;
+    fn hyperedge_participant_count(&self, hyperedge: Self::RelationId) -> usize {
+        self.relation_incidence_count(hyperedge)
+    }
 }
+
+impl<T> HyperedgeParticipantCount for T where T: RelationIncidenceCount {}
 
 /// Exact incident-hyperedge count capability.
 ///
-/// Pairs with [`IncidentHyperedges`] for backends that can report a vertex's
-/// incident hyperedge count without traversal.
-pub trait IncidentHyperedgeCount: IncidenceBase {
+/// Hypergraph-facing name for [`ElementIncidenceCount`]: a vertex's incident
+/// hyperedge count is its element's incidence count. Provided by default body
+/// and blanket impl, mirroring [`HyperedgeParticipantCount`].
+pub trait IncidentHyperedgeCount: ElementIncidenceCount {
     /// Returns the number of hyperedges incident to `vertex`.
-    fn incident_hyperedge_count(&self, vertex: Self::ElementId) -> usize;
+    fn incident_hyperedge_count(&self, vertex: Self::ElementId) -> usize {
+        self.element_incidence_count(vertex)
+    }
 }
+
+impl<T> IncidentHyperedgeCount for T where T: ElementIncidenceCount {}
 
 /// Capability for traversing directed hyperedge participant sets.
 ///

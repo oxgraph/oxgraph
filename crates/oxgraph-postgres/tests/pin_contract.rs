@@ -137,7 +137,7 @@ fn sync_overlay_tombstone_hides_node() -> Result<(), oxgraph_postgres::PostgresG
     }];
     let applied = SyncRow::apply_in_order(&rows, &mut overlay)?;
     assert_eq!(applied, 1);
-    assert!(overlay.tombstoned_nodes.contains(&0));
+    assert!(!overlay.node_visible(0));
     Ok(())
 }
 

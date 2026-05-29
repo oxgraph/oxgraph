@@ -76,7 +76,7 @@ fn truncate_overlays_clears_overlay_state() -> Result<(), PostgresGraphError> {
         action: SyncAction::TruncateOverlays,
     }];
     SyncRow::apply_in_order(&rows, &mut overlay)?;
-    assert!(overlay.added_edges.is_empty());
+    assert!(overlay.added_edges().is_empty());
     Ok(())
 }
 

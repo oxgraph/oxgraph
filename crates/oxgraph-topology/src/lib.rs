@@ -253,12 +253,16 @@ pub trait IncidenceBase: TopologyBase {
     /// attached by separate payload traits or storage layers keyed by
     /// [`Self::IncidenceId`], [`Self::RelationId`], or [`Self::ElementId`].
     ///
+    /// The `Copy + Eq + Debug` bound lets role-aware generic algorithms compare,
+    /// copy, and debug-format roles without each consumer restating the bound;
+    /// the role's *meaning* stays implementation-defined.
+    ///
     /// # Performance
     ///
     /// `perf: unspecified`. Implementations should prefer structural role
     /// values or compact role handles; rich metadata should be reached through
     /// separate payload access traits.
-    type Role;
+    type Role: Copy + Eq + core::fmt::Debug;
 }
 
 /// Optional total weight capability for topology incidences.

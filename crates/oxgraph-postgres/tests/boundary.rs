@@ -141,9 +141,9 @@ fn remove_overlay_edge_clears_matching_overlay() -> Result<(), PostgresGraphErro
         },
     }];
     SyncRow::apply_in_order(&rows, &mut overlay)?;
-    assert_eq!(overlay.added_edges.len(), 1);
+    assert_eq!(overlay.overlay_edge_count(), 1);
     assert_eq!(
-        overlay.added_edges[0],
+        overlay.added_edges()[0],
         oxgraph_postgres::OverlayEdge {
             source: 1,
             target: 2

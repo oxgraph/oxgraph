@@ -58,10 +58,10 @@ impl SyncAction {
                 overlay.remove_edge(source, target);
             }
             Self::DeleteEdge { edge_id } => {
-                overlay.tombstoned_edges.insert(edge_id);
+                overlay.tombstone_edge(edge_id);
             }
             Self::DeleteNode { node_id } => {
-                overlay.tombstoned_nodes.insert(node_id);
+                overlay.tombstone_node(node_id);
             }
             Self::TruncateOverlays => overlay.clear(),
         }
@@ -116,6 +116,21 @@ pub enum SyncActionCodec {
 }
 
 impl SyncActionCodec {
+    /// Returns whether this action carries registered node-key arguments.
+    ///
+    /// Insert and remove-overlay actions reference source/target node keys;
+    /// the others carry dense ids or nothing. Both [`Self::decode_wire`] and the
+    /// dense-map key harvest consult this so the keyed-action set lives in one
+    /// place instead of being a magic literal pair.
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(1)`.
+    #[must_use]
+    pub const fn carries_node_keys(self) -> bool {
+        matches!(self, Self::InsertEdge | Self::RemoveOverlayEdge)
+    }
+
     /// Decodes a persisted sync row into a wire action.
     ///
     /// # Errors
@@ -130,31 +145,30 @@ impl SyncActionCodec {
         arg0: Option<i64>,
         arg1: Option<i64>,
     ) -> Result<SyncActionWire, SyncError> {
-        match action_type {
-            1 => {
+        match Self::try_from(action_type)? {
+            Self::InsertEdge => {
                 let source = decode_node_key(arg0, action_type)?;
                 let target = decode_node_key(arg1, action_type)?;
                 Ok(SyncActionWire::InsertEdge { source, target })
             }
-            2 => {
+            Self::DeleteEdge => {
                 let edge_id =
                     u32::try_from(arg0.ok_or(SyncError::InvalidActionArgs { action_type })?)
                         .map_err(|_| SyncError::InvalidActionArgs { action_type })?;
                 Ok(SyncActionWire::DeleteEdge { edge_id })
             }
-            3 => {
+            Self::DeleteNode => {
                 let node_id =
                     u32::try_from(arg0.ok_or(SyncError::InvalidActionArgs { action_type })?)
                         .map_err(|_| SyncError::InvalidActionArgs { action_type })?;
                 Ok(SyncActionWire::DeleteNode { node_id })
             }
-            4 => Ok(SyncActionWire::TruncateOverlays),
-            5 => {
+            Self::TruncateOverlays => Ok(SyncActionWire::TruncateOverlays),
+            Self::RemoveOverlayEdge => {
                 let source = decode_node_key(arg0, action_type)?;
                 let target = decode_node_key(arg1, action_type)?;
                 Ok(SyncActionWire::RemoveOverlayEdge { source, target })
             }
-            _ => Err(SyncError::InvalidActionType { action_type }),
         }
     }
 
@@ -177,6 +191,30 @@ impl SyncActionCodec {
         node_map: &BTreeMap<NodeKey, u32>,
     ) -> Result<SyncAction, SyncError> {
         resolve_sync_action(Self::decode_wire(action_type, arg0, arg1)?, node_map)
+    }
+}
+
+impl TryFrom<i16> for SyncActionCodec {
+    type Error = SyncError;
+
+    /// Maps a persisted action-type id to its codec variant.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SyncError::InvalidActionType`] for an unknown id.
+    ///
+    /// # Performance
+    ///
+    /// This function is `O(1)`.
+    fn try_from(value: i16) -> Result<Self, Self::Error> {
+        match value {
+            1 => Ok(Self::InsertEdge),
+            2 => Ok(Self::DeleteEdge),
+            3 => Ok(Self::DeleteNode),
+            4 => Ok(Self::TruncateOverlays),
+            5 => Ok(Self::RemoveOverlayEdge),
+            action_type => Err(SyncError::InvalidActionType { action_type }),
+        }
     }
 }
 
@@ -260,7 +298,7 @@ pub fn dense_node_map_for_sync_resolution(
         keys.insert(edge.target);
     }
     for (_, action_type, arg0, arg1) in raw_rows {
-        if matches!(*action_type, 1 | 5) {
+        if SyncActionCodec::try_from(*action_type).is_ok_and(SyncActionCodec::carries_node_keys) {
             if let Some(key) = node_key_from_i64(*arg0) {
                 keys.insert(key);
             }
@@ -314,27 +352,29 @@ pub struct SyncRow {
 }
 
 impl SyncRow {
-    /// Applies rows to `overlay` in strictly increasing sequence order.
+    /// Applies caller-ordered rows to `overlay`, rejecting any that are not in
+    /// strictly increasing sequence order.
+    ///
+    /// Rows must arrive already sorted by `sequence`; this method validates that
+    /// contract rather than silently normalizing it, so genuinely out-of-order
+    /// input (e.g. `[5, 3, 1]`) is rejected, not just duplicates. The extension
+    /// emits rows in sequence order, so this is a cheap defensive check.
     ///
     /// # Errors
     ///
-    /// Returns [`PostgresGraphError::Sync`] when rows are out of order.
+    /// Returns [`PostgresGraphError::Sync`] when a row's sequence is not strictly
+    /// greater than its predecessor.
     ///
     /// # Performance
     ///
-    /// This method is `O(r log r + a)` where `r` is row count and `a` is applied actions.
+    /// This method is `O(r + a)` where `r` is row count and `a` is applied actions.
     pub fn apply_in_order(
         rows: &[Self],
         overlay: &mut OverlayState,
     ) -> Result<usize, PostgresGraphError> {
-        if rows.is_empty() {
-            return Ok(0);
-        }
-        let mut ordered = rows.to_vec();
-        ordered.sort_by_key(|row| row.sequence);
         let mut applied = 0_usize;
         let mut last_sequence = None;
-        for row in ordered {
+        for row in rows {
             if let Some(previous) = last_sequence
                 && row.sequence <= previous
             {

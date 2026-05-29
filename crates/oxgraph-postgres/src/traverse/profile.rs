@@ -49,7 +49,7 @@ impl TraverseProfile {
         overlay: &OverlayState,
     ) -> Self {
         let overlay_active =
-            freshness == QueryFreshness::OverlayAware && !overlay.added_edges.is_empty();
+            freshness == QueryFreshness::OverlayAware && overlay.overlay_edge_count() > 0;
         let use_unique = freshness == QueryFreshness::BaseOnly && !overlay.has_edge_tombstones();
         if use_unique {
             match direction {
