@@ -148,9 +148,13 @@ def test_hypergraph_topology_iteration_methods():
     assert graph.target_vertices(first) == [c, d]
     assert graph.source_vertices(second) == [c]
     assert graph.target_vertices(second) == [a]
+    # Incidence IDs are numbered head-block-then-tail-block across all
+    # hyperedges (sources of every hyperedge first, then targets): head block is
+    # first's sources 0,1 and second's source 2; tail block is first's targets
+    # 3,4 and second's target 5.
     assert graph.source_incidences(first) == [0, 1]
-    assert graph.target_incidences(first) == [2, 3]
-    assert graph.source_incidences(second) == [4]
+    assert graph.target_incidences(first) == [3, 4]
+    assert graph.source_incidences(second) == [2]
     assert graph.target_incidences(second) == [5]
     assert graph.out_hyperedges(a) == [first]
     assert graph.out_hyperedges(c) == [second]
