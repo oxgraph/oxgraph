@@ -227,7 +227,6 @@ impl ForwardCsr<'_> {
         (node as usize) < self.node_count()
             && (!overlay.has_node_tombstones() || overlay.node_visible(node))
     }
-
 }
 
 impl InboundCsc<'_> {
@@ -465,8 +464,7 @@ pub(crate) struct OverlayOutSuccessors<'view> {
 impl OverlayOutSuccessors<'_> {
     /// Returns whether `node` is in bounds and node-visible.
     fn admit(&self, node: u32) -> bool {
-        node < self.node_count
-            && (!self.check_nodes || self.overlay_state.node_visible(node))
+        node < self.node_count && (!self.check_nodes || self.overlay_state.node_visible(node))
     }
 
     /// Pulls the next admitted base target, advancing past filtered slots.
@@ -618,8 +616,7 @@ pub(crate) struct OverlayInPredecessors<'view> {
 impl OverlayInPredecessors<'_> {
     /// Returns whether `node` is in bounds and node-visible.
     fn admit(&self, node: u32) -> bool {
-        node < self.node_count
-            && (!self.check_nodes || self.overlay_state.node_visible(node))
+        node < self.node_count && (!self.check_nodes || self.overlay_state.node_visible(node))
     }
 
     /// Pulls the next admitted base source, advancing past filtered slots.

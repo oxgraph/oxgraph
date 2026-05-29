@@ -1383,7 +1383,6 @@ dependencies = [
  "proptest",
  "serde",
  "serde_json",
- "zerocopy",
 ]
 
 [[package]]

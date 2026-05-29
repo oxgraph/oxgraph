@@ -16,6 +16,7 @@ pub(crate) mod error;
 pub(crate) mod id;
 pub(crate) mod projection;
 pub(crate) mod query;
+pub(crate) mod serde_map;
 pub(crate) mod state;
 pub(crate) mod storage;
 pub(crate) mod traversal;

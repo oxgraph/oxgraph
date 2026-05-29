@@ -25,7 +25,6 @@ oxgraph-snapshot = { version = "0.1.0", path = "../oxgraph-snapshot", features =
 oxgraph-topology = { version = "0.1.0", path = "../oxgraph-topology" }
 serde = { workspace = true }
 serde_json = { workspace = true }
-zerocopy = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }

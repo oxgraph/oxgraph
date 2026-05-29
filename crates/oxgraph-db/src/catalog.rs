@@ -224,64 +224,35 @@ pub struct ProjectionEntry {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Catalog {
     /// Roles by stable ID.
-    #[serde(with = "serde_btree_map_vec")]
+    #[serde(with = "crate::serde_map")]
     roles: BTreeMap<RoleId, RoleDefinition>,
     /// Role IDs by name.
     role_names: BTreeMap<String, RoleId>,
     /// Labels by stable ID.
-    #[serde(with = "serde_btree_map_vec")]
+    #[serde(with = "crate::serde_map")]
     labels: BTreeMap<LabelId, LabelDefinition>,
     /// Label IDs by name.
     label_names: BTreeMap<String, LabelId>,
     /// Relation types by stable ID.
-    #[serde(with = "serde_btree_map_vec")]
+    #[serde(with = "crate::serde_map")]
     relation_types: BTreeMap<RelationTypeId, RelationTypeDefinition>,
     /// Relation type IDs by name.
     relation_type_names: BTreeMap<String, RelationTypeId>,
     /// Property keys by stable ID.
-    #[serde(with = "serde_btree_map_vec")]
+    #[serde(with = "crate::serde_map")]
     property_keys: BTreeMap<PropertyKeyId, PropertyKeyDefinition>,
     /// Property key IDs by name.
     property_key_names: BTreeMap<String, PropertyKeyId>,
     /// Projections by stable ID.
-    #[serde(with = "serde_btree_map_vec")]
+    #[serde(with = "crate::serde_map")]
     projections: BTreeMap<ProjectionId, ProjectionEntry>,
     /// Projection IDs by name.
     projection_names: BTreeMap<String, ProjectionId>,
     /// Indexes by stable ID.
-    #[serde(with = "serde_btree_map_vec")]
+    #[serde(with = "crate::serde_map")]
     indexes: BTreeMap<IndexId, IndexEntry>,
     /// Index IDs by name.
     index_names: BTreeMap<String, IndexId>,
-}
-
-/// Serde helper for `BTreeMap` values keyed by non-string IDs.
-mod serde_btree_map_vec {
-    /// Serializes a map as an ordered entry array.
-    pub(super) fn serialize<S, K, V>(
-        map: &std::collections::BTreeMap<K, V>,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-        K: serde::Serialize,
-        V: serde::Serialize,
-    {
-        serde::Serialize::serialize(&map.iter().collect::<Vec<_>>(), serializer)
-    }
-
-    /// Deserializes a map from an ordered entry array.
-    pub(super) fn deserialize<'de, D, K, V>(
-        deserializer: D,
-    ) -> Result<std::collections::BTreeMap<K, V>, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-        K: Ord + serde::de::DeserializeOwned,
-        V: serde::de::DeserializeOwned,
-    {
-        <Vec<(K, V)> as serde::Deserialize>::deserialize(deserializer)
-            .map(|entries| entries.into_iter().collect())
-    }
 }
 
 impl Catalog {

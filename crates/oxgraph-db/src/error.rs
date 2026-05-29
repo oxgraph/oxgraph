@@ -117,6 +117,11 @@ pub enum DbError {
         /// Underlying codec error.
         source: serde_json::Error,
     },
+    /// Wraps a substrate bounded-BFS traversal failure.
+    Traversal {
+        /// Underlying bounded-BFS error.
+        source: oxgraph_algo::BfsError,
+    },
 }
 
 impl DbError {
@@ -160,6 +165,15 @@ impl DbError {
         Self::InvalidStore {
             message: message.into(),
         }
+    }
+
+    /// Wraps a substrate bounded-BFS traversal failure.
+    ///
+    /// # Performance
+    ///
+    /// This function is `O(1)`.
+    pub(crate) const fn traversal(source: oxgraph_algo::BfsError) -> Self {
+        Self::Traversal { source }
     }
 }
 
@@ -206,6 +220,7 @@ impl fmt::Display for DbError {
             Self::InvalidStore { message } => write!(formatter, "invalid store: {message}"),
             Self::Io { operation, source } => write!(formatter, "{operation} failed: {source}"),
             Self::Codec { source } => write!(formatter, "codec error: {source}"),
+            Self::Traversal { source } => write!(formatter, "traversal error: {source}"),
         }
     }
 }
@@ -215,6 +230,7 @@ impl std::error::Error for DbError {
         match self {
             Self::Io { source, .. } => Some(source),
             Self::Codec { source } => Some(source),
+            Self::Traversal { source } => Some(source),
             Self::AlreadyExists
             | Self::NotFound
             | Self::IdOverflow
