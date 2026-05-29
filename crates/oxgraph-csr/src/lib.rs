@@ -1083,11 +1083,17 @@ where
     TargetWord: CsrWord<Index = NodeIndex>,
 {
     match issue {
-        OffsetIntegrityIssue::ValueOutOfRange { index, .. }
-        | OffsetIntegrityIssue::UsizeOverflow { index } => CsrError::TargetOutOfRange {
+        OffsetIntegrityIssue::ValueOutOfRange { index, .. } => CsrError::TargetOutOfRange {
             index,
             target: targets[index].get(),
             node_count,
+        },
+        // A target word that does not fit `usize` (a 32-bit-host width failure)
+        // is distinct from a target at/above `node_count`; report it as such
+        // rather than conflating it with an out-of-range target.
+        OffsetIntegrityIssue::UsizeOverflow { index } => CsrError::TargetUsizeOverflow {
+            index,
+            value: targets[index].get(),
         },
         _ => CsrError::TargetOutOfRange {
             index: 0,
@@ -1146,6 +1152,14 @@ pub enum CsrError<NodeIndex, EdgeIndex> {
         /// Number of nodes in the graph.
         node_count: NodeIndex,
     },
+    /// A target node ID value could not be represented as `usize` on this
+    /// target (a width failure, distinct from an out-of-range target).
+    TargetUsizeOverflow {
+        /// Target slice index containing the value.
+        index: usize,
+        /// Target value that did not fit in `usize`.
+        value: NodeIndex,
+    },
     /// A node index value could not be represented as `usize` on this target.
     NodeUsizeOverflow {
         /// Node value that could not be represented as `usize`.
@@ -1200,6 +1214,10 @@ where
             } => write!(
                 formatter,
                 "CSR target at index {index} is out of range: target {target}, node count {node_count}"
+            ),
+            Self::TargetUsizeOverflow { index, value } => write!(
+                formatter,
+                "CSR target at index {index} value {value} does not fit usize"
             ),
             Self::NodeUsizeOverflow { value } => {
                 write!(formatter, "CSR node index value {value} does not fit usize")
