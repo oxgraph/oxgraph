@@ -1599,9 +1599,7 @@ where
     // by `local_to_canonical` must be a valid index into the source layer.
     let layer_len = layer.len();
     for canonical in local_to_canonical.iter().copied() {
-        let in_range = canonical
-            .to_usize()
-            .is_some_and(|index| index < layer_len);
+        let in_range = canonical.to_usize().is_some_and(|index| index < layer_len);
         if !in_range {
             return Err(PropertyError::SparseIndexOutOfBounds {
                 index: canonical.to_u64(),

@@ -1326,7 +1326,13 @@ fn bounded_multi_seed_assigns_seed_depth_zero() -> Result<(), BfsError> {
         result_limit: usize::MAX,
         include_seeds: true,
     };
-    breadth_first_search_bounded(&graph, &[Node(0), Node(3)], bounds, &mut scratch, &mut collector)?;
+    breadth_first_search_bounded(
+        &graph,
+        &[Node(0), Node(3)],
+        bounds,
+        &mut scratch,
+        &mut collector,
+    )?;
     // Both seeds at depth 0; node 3 is a seed, not depth 2.
     assert_eq!(collector.seen, vec![(0, 0), (3, 0), (1, 1), (2, 1)]);
     Ok(())
