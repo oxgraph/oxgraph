@@ -4,7 +4,7 @@
 
 #![cfg(kani)]
 
-use zerocopy::FromBytes;
+use zerocopy::{FromBytes, IntoBytes};
 
 use crate::{artifact::PostgresMetadata, role::GraphRole, sync::SyncAction};
 

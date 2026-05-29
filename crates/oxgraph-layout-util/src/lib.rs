@@ -29,13 +29,13 @@
 // fixtures.
 #![no_std]
 
-#[cfg(feature = "alloc")]
+#[cfg(any(feature = "alloc", kani))]
 extern crate alloc;
 
 #[cfg(kani)]
 extern crate kani;
 
-#[cfg(feature = "alloc")]
+#[cfg(any(feature = "alloc", kani))]
 use alloc::vec::Vec;
 use core::{error::Error, fmt, hash::Hash, iter::FusedIterator, marker::PhantomData};
 
@@ -735,7 +735,7 @@ pub fn usize_to_index_validated<I: LayoutIndex>(value: usize) -> Option<I> {
 /// # Performance
 ///
 /// This function is `O(values.len())`.
-#[cfg(feature = "alloc")]
+#[cfg(any(feature = "alloc", kani))]
 #[must_use]
 pub fn slice_to_le<W: SnapshotWidth>(values: &[W]) -> Vec<W::LittleEndianWord> {
     values.iter().copied().map(W::to_le_word).collect()
@@ -758,7 +758,7 @@ pub fn slice_to_le<W: SnapshotWidth>(values: &[W]) -> Vec<W::LittleEndianWord> {
 /// This function is `O(n)` where `n` is the total item count across all
 /// buckets. Allocation matches a single-pass extend-and-grow; no second pass
 /// is performed.
-#[cfg(feature = "alloc")]
+#[cfg(any(feature = "alloc", kani))]
 pub fn build_offset_index<O, T>(buckets: Vec<Vec<T>>) -> Result<(Vec<O>, Vec<T>), OffsetOverflow>
 where
     O: LayoutIndex,
