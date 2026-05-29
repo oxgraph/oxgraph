@@ -255,7 +255,28 @@ fn check_offset_section_predicate_u32_n3() {
             assert!(slice[index - 1] <= slice[index]);
         }
         assert_eq!(slice[slice.len() - 1] as usize, value_len);
+        // Every interior offset is within the values array. CSR/BCSR borrowed
+        // views slice `values[offsets[i]..offsets[i+1]]`, which requires every
+        // offset to be `<= value_len`; pin that bound directly rather than
+        // leaving it as an emergent consequence of monotonic + final-equals.
+        for &offset in slice {
+            assert!(offset as usize <= value_len);
+        }
     }
+}
+
+/// `check_offset_section` reports [`OffsetIntegrityIssue::CountOverflow`] (and
+/// never panics) when `expected_count + 1` overflows `usize`, regardless of the
+/// offsets or backing length.
+#[kani::proof]
+fn check_offset_section_count_overflow() {
+    let offsets: [u32; 1] = kani::any();
+    let value_len: usize = kani::any();
+    let result = check_offset_section(&offsets, usize::MAX, value_len);
+    assert!(matches!(
+        result,
+        Err(OffsetIntegrityIssue::CountOverflow { count }) if count == usize::MAX
+    ));
 }
 
 /// `OffsetIntegrityIssue::FirstNonZero` is the rejection reason for offsets
