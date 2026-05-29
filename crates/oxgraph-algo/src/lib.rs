@@ -56,9 +56,11 @@ pub mod bfs;
 pub mod pagerank;
 
 pub use bfs::{
-    BfsEpochScratch, BfsError, BreadthFirstSearchEpochScratch, BreadthFirstSearchScratch,
-    ReverseBreadthFirstSearchEpochScratch, ReverseBreadthFirstSearchScratch,
-    breadth_first_search_with_epoch_scratch, breadth_first_search_with_scratch,
+    BfsBounds, BfsEpochScratch, BfsError, BfsVisitor, BreadthFirstSearchEpochScratch,
+    BreadthFirstSearchScratch, ReverseBreadthFirstSearchEpochScratch,
+    ReverseBreadthFirstSearchScratch, breadth_first_search_bounded,
+    breadth_first_search_bounded_both, breadth_first_search_with_epoch_scratch,
+    breadth_first_search_with_scratch, reverse_breadth_first_search_bounded,
     reverse_breadth_first_search_with_epoch_scratch, reverse_breadth_first_search_with_scratch,
 };
 #[cfg(feature = "alloc")]

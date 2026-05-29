@@ -8,9 +8,10 @@
 //! - the `oxgraph-hyper-bcsr::BcsrHypergraph` hypergraph layout (forward and reverse).
 
 use oxgraph_algo::{
-    BfsEpochScratch, BfsError, breadth_first_search_with_epoch_scratch,
-    breadth_first_search_with_scratch, reverse_breadth_first_search_with_epoch_scratch,
-    reverse_breadth_first_search_with_scratch,
+    BfsBounds, BfsEpochScratch, BfsError, breadth_first_search_bounded,
+    breadth_first_search_bounded_both, breadth_first_search_with_epoch_scratch,
+    breadth_first_search_with_scratch, reverse_breadth_first_search_bounded,
+    reverse_breadth_first_search_with_epoch_scratch, reverse_breadth_first_search_with_scratch,
 };
 #[cfg(feature = "alloc")]
 use oxgraph_algo::{
@@ -1223,4 +1224,143 @@ where
         }
     }
     reached
+}
+
+// ---------------------------------------------------------------------------
+// Depth-bounded multi-seed BFS (bfs/bounded.rs)
+// ---------------------------------------------------------------------------
+
+/// Collects `(node_index, depth)` pairs in first-discovery order.
+#[derive(Default)]
+struct Collector {
+    /// Discovered `(index, depth)` pairs.
+    seen: Vec<(usize, u32)>,
+}
+
+impl oxgraph_algo::BfsVisitor<FixtureGraph> for Collector {
+    fn visit(&mut self, element: Node, depth: u32) -> core::ops::ControlFlow<()> {
+        self.seen.push((element.0, depth));
+        core::ops::ControlFlow::Continue(())
+    }
+}
+
+/// Returns scratch sized for the fixture (4 nodes).
+fn bounded_scratch() -> (Vec<u32>, Vec<Node>) {
+    (vec![0_u32; 4], vec![Node(0); 4])
+}
+
+#[test]
+fn bounded_forward_emits_depths() -> Result<(), BfsError> {
+    let graph = fixture();
+    let (mut marks, mut queue) = bounded_scratch();
+    let mut scratch = BfsEpochScratch::new(&mut marks, &mut queue);
+    let mut collector = Collector::default();
+    let bounds = BfsBounds {
+        max_depth: None,
+        result_limit: usize::MAX,
+        include_seeds: true,
+    };
+    breadth_first_search_bounded(&graph, &[Node(0)], bounds, &mut scratch, &mut collector)?;
+    assert_eq!(collector.seen, vec![(0, 0), (1, 1), (2, 1), (3, 2)]);
+    Ok(())
+}
+
+#[test]
+fn bounded_max_depth_discovers_boundary_without_expanding() -> Result<(), BfsError> {
+    let graph = fixture();
+    let (mut marks, mut queue) = bounded_scratch();
+    let mut scratch = BfsEpochScratch::new(&mut marks, &mut queue);
+    let mut collector = Collector::default();
+    let bounds = BfsBounds {
+        max_depth: Some(1),
+        result_limit: usize::MAX,
+        include_seeds: true,
+    };
+    breadth_first_search_bounded(&graph, &[Node(0)], bounds, &mut scratch, &mut collector)?;
+    // Depth-1 nodes are emitted but not expanded, so node 3 (depth 2) is never reached.
+    assert_eq!(collector.seen, vec![(0, 0), (1, 1), (2, 1)]);
+    Ok(())
+}
+
+#[test]
+fn bounded_result_limit_stops_early() -> Result<(), BfsError> {
+    let graph = fixture();
+    let (mut marks, mut queue) = bounded_scratch();
+    let mut scratch = BfsEpochScratch::new(&mut marks, &mut queue);
+    let mut collector = Collector::default();
+    let bounds = BfsBounds {
+        max_depth: None,
+        result_limit: 2,
+        include_seeds: true,
+    };
+    breadth_first_search_bounded(&graph, &[Node(0)], bounds, &mut scratch, &mut collector)?;
+    assert_eq!(collector.seen.len(), 2);
+    assert_eq!(collector.seen[0], (0, 0));
+    Ok(())
+}
+
+#[test]
+fn bounded_excludes_seeds_when_requested() -> Result<(), BfsError> {
+    let graph = fixture();
+    let (mut marks, mut queue) = bounded_scratch();
+    let mut scratch = BfsEpochScratch::new(&mut marks, &mut queue);
+    let mut collector = Collector::default();
+    let bounds = BfsBounds {
+        max_depth: None,
+        result_limit: usize::MAX,
+        include_seeds: false,
+    };
+    breadth_first_search_bounded(&graph, &[Node(0)], bounds, &mut scratch, &mut collector)?;
+    assert_eq!(collector.seen, vec![(1, 1), (2, 1), (3, 2)]);
+    Ok(())
+}
+
+#[test]
+fn bounded_multi_seed_assigns_seed_depth_zero() -> Result<(), BfsError> {
+    let graph = fixture();
+    let (mut marks, mut queue) = bounded_scratch();
+    let mut scratch = BfsEpochScratch::new(&mut marks, &mut queue);
+    let mut collector = Collector::default();
+    let bounds = BfsBounds {
+        max_depth: None,
+        result_limit: usize::MAX,
+        include_seeds: true,
+    };
+    breadth_first_search_bounded(&graph, &[Node(0), Node(3)], bounds, &mut scratch, &mut collector)?;
+    // Both seeds at depth 0; node 3 is a seed, not depth 2.
+    assert_eq!(collector.seen, vec![(0, 0), (3, 0), (1, 1), (2, 1)]);
+    Ok(())
+}
+
+#[test]
+fn bounded_reverse_walks_predecessors() -> Result<(), BfsError> {
+    let graph = fixture();
+    let (mut marks, mut queue) = bounded_scratch();
+    let mut scratch = BfsEpochScratch::new(&mut marks, &mut queue);
+    let mut collector = Collector::default();
+    let bounds = BfsBounds {
+        max_depth: None,
+        result_limit: usize::MAX,
+        include_seeds: true,
+    };
+    reverse_breadth_first_search_bounded(&graph, &[Node(3)], bounds, &mut scratch, &mut collector)?;
+    assert_eq!(collector.seen, vec![(3, 0), (1, 1), (2, 1), (0, 2)]);
+    Ok(())
+}
+
+#[test]
+fn bounded_both_directions_share_visited_set() -> Result<(), BfsError> {
+    let graph = fixture();
+    let (mut marks, mut queue) = bounded_scratch();
+    let mut scratch = BfsEpochScratch::new(&mut marks, &mut queue);
+    let mut collector = Collector::default();
+    let bounds = BfsBounds {
+        max_depth: None,
+        result_limit: usize::MAX,
+        include_seeds: true,
+    };
+    breadth_first_search_bounded_both(&graph, &[Node(3)], bounds, &mut scratch, &mut collector)?;
+    // From 3: successors none, predecessors {1,2} at depth 1; then 0 at depth 2.
+    assert_eq!(collector.seen, vec![(3, 0), (1, 1), (2, 1), (0, 2)]);
+    Ok(())
 }
