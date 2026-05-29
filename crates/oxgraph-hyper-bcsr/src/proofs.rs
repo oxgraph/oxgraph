@@ -141,7 +141,7 @@ fn validated_traversal_in_bounds_h2_v2() {
 
     // Hyperedge-side: walk participants for every hyperedge.
     for h in 0..2u32 {
-        let hid = BcsrHyperedgeId(h);
+        let hid = BcsrHyperedgeId::new(h);
         let mut count = 0u32;
         for _ in view.hyperedge_participants(hid) {
             count = count.wrapping_add(1);
@@ -161,7 +161,7 @@ fn validated_traversal_in_bounds_h2_v2() {
 
     // Vertex-side: walk incident hyperedges and successor/predecessor vertices.
     for v in 0..2u32 {
-        let vid = BcsrVertexId(v);
+        let vid = BcsrVertexId::new(v);
         let mut count = 0u32;
         for _ in view.incident_hyperedges(vid) {
             count = count.wrapping_add(1);
@@ -228,7 +228,7 @@ fn strict_implies_count_symmetry_h2_v2() {
     // Total participants counted across all hyperedges (heads + tails).
     let mut hyperedge_side_total = 0u32;
     for h in 0..2u32 {
-        for _ in view.hyperedge_participants(BcsrHyperedgeId(h)) {
+        for _ in view.hyperedge_participants(BcsrHyperedgeId::new(h)) {
             hyperedge_side_total = hyperedge_side_total.wrapping_add(1);
         }
     }
@@ -236,7 +236,7 @@ fn strict_implies_count_symmetry_h2_v2() {
     // Total incidences counted across all vertices (incoming + outgoing).
     let mut vertex_side_total = 0u32;
     for v in 0..2u32 {
-        for _ in view.incident_hyperedges(BcsrVertexId(v)) {
+        for _ in view.incident_hyperedges(BcsrVertexId::new(v)) {
             vertex_side_total = vertex_side_total.wrapping_add(1);
         }
     }

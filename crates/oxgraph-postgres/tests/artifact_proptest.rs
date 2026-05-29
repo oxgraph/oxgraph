@@ -22,7 +22,7 @@ proptest! {
                 continue;
             }
             builder
-                .add_edge(GraphNodeId(source), GraphNodeId(target))
+                .add_edge(GraphNodeId::new(source), GraphNodeId::new(target))
                 .map_err(|error| TestCaseError::fail(error.to_string()))?;
         }
         let frozen = builder.freeze().map_err(|error| TestCaseError::fail(error.to_string()))?;
@@ -31,7 +31,7 @@ proptest! {
             inbound_builder.add_node().map_err(|error| TestCaseError::fail(error.to_string()))?;
         }
         for source in 0..node_count {
-            let source_id = GraphNodeId(
+            let source_id = GraphNodeId::new(
                 u32::try_from(source).map_err(|error| TestCaseError::fail(error.to_string()))?,
             );
             for target in frozen.outgoing_neighbors(source_id) {

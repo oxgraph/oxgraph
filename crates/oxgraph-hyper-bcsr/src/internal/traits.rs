@@ -111,7 +111,7 @@ where
     }
 
     fn element_index(&self, element: BcsrVertexId<V>) -> usize {
-        index_to_usize_validated(element.0)
+        index_to_usize_validated(element.get())
     }
 }
 
@@ -129,7 +129,7 @@ where
     }
 
     fn relation_index(&self, relation: BcsrHyperedgeId<R>) -> usize {
-        index_to_usize_validated(relation.0)
+        index_to_usize_validated(relation.get())
     }
 }
 
@@ -147,7 +147,7 @@ where
     }
 
     fn incidence_index(&self, incidence: BcsrParticipantId<I>) -> usize {
-        index_to_usize_validated(incidence.0)
+        index_to_usize_validated(incidence.get())
     }
 }
 
@@ -161,7 +161,7 @@ where
     RW: BcsrWord<Index = R>,
 {
     fn contains_element(&self, element: BcsrVertexId<V>) -> bool {
-        index_to_usize_validated(element.0) < self.counts().vertex_count
+        index_to_usize_validated(element.get()) < self.counts().vertex_count
     }
 }
 
@@ -175,7 +175,7 @@ where
     RW: BcsrWord<Index = R>,
 {
     fn contains_relation(&self, relation: BcsrHyperedgeId<R>) -> bool {
-        index_to_usize_validated(relation.0) < self.counts().hyperedge_count
+        index_to_usize_validated(relation.get()) < self.counts().hyperedge_count
     }
 }
 
@@ -189,7 +189,7 @@ where
     RW: BcsrWord<Index = R>,
 {
     fn contains_incidence(&self, incidence: BcsrParticipantId<I>) -> bool {
-        index_to_usize_validated(incidence.0) < self.counts().total_incidences
+        index_to_usize_validated(incidence.get()) < self.counts().total_incidences
     }
 }
 
@@ -203,14 +203,14 @@ where
     RW: BcsrWord<Index = R>,
 {
     fn incidence_element(&self, incidence: BcsrParticipantId<I>) -> BcsrVertexId<V> {
-        let incidence_index = index_to_usize_validated(incidence.0);
+        let incidence_index = index_to_usize_validated(incidence.get());
         let counts = self.counts();
         let sections = self.sections();
         if incidence_index < counts.p_outgoing {
-            BcsrVertexId(sections.head_participants[incidence_index].get())
+            BcsrVertexId::new(sections.head_participants[incidence_index].get())
         } else {
             let position = incidence_index - counts.p_outgoing;
-            BcsrVertexId(sections.tail_participants[position].get())
+            BcsrVertexId::new(sections.tail_participants[position].get())
         }
     }
 }
@@ -225,14 +225,14 @@ where
     RW: BcsrWord<Index = R>,
 {
     fn incidence_relation(&self, incidence: BcsrParticipantId<I>) -> BcsrHyperedgeId<R> {
-        let incidence_index = index_to_usize_validated(incidence.0);
+        let incidence_index = index_to_usize_validated(incidence.get());
         let counts = self.counts();
         let sections = self.sections();
         if incidence_index < counts.p_outgoing {
-            BcsrHyperedgeId(locate_owning_bucket(sections.head_offsets, incidence_index))
+            BcsrHyperedgeId::new(locate_owning_bucket(sections.head_offsets, incidence_index))
         } else {
             let position = incidence_index - counts.p_outgoing;
-            BcsrHyperedgeId(locate_owning_bucket(sections.tail_offsets, position))
+            BcsrHyperedgeId::new(locate_owning_bucket(sections.tail_offsets, position))
         }
     }
 }
@@ -247,7 +247,7 @@ where
     RW: BcsrWord<Index = R>,
 {
     fn incidence_role(&self, incidence: BcsrParticipantId<I>) -> BcsrRole {
-        if index_to_usize_validated(incidence.0) < self.counts().p_outgoing {
+        if index_to_usize_validated(incidence.get()) < self.counts().p_outgoing {
             BcsrRole::Head
         } else {
             BcsrRole::Tail
@@ -272,7 +272,7 @@ where
     fn relation_incidences(&self, relation: BcsrHyperedgeId<R>) -> Self::Incidences<'_> {
         let sections = self.sections();
         let p_outgoing = self.counts().p_outgoing;
-        let h_index = index_to_usize_validated(relation.0);
+        let h_index = index_to_usize_validated(relation.get());
         let head_start = index_to_usize_validated(sections.head_offsets[h_index].get());
         let head_end = index_to_usize_validated(sections.head_offsets[h_index + 1].get());
         let tail_start = index_to_usize_validated(sections.tail_offsets[h_index].get());
@@ -299,7 +299,7 @@ where
     fn element_incidences(&self, element: BcsrVertexId<V>) -> Self::Incidences<'_> {
         let sections = self.sections();
         let counts = self.counts();
-        let v_index = index_to_usize_validated(element.0);
+        let v_index = index_to_usize_validated(element.get());
         let outgoing = vertex_bucket(
             sections.vertex_outgoing_offsets,
             sections.vertex_outgoing_hyperedges,
@@ -325,7 +325,7 @@ where
 {
     fn relation_incidence_count(&self, relation: BcsrHyperedgeId<R>) -> usize {
         let sections = self.sections();
-        let h_index = index_to_usize_validated(relation.0);
+        let h_index = index_to_usize_validated(relation.get());
         let head_size = index_to_usize_validated(sections.head_offsets[h_index + 1].get())
             - index_to_usize_validated(sections.head_offsets[h_index].get());
         let tail_size = index_to_usize_validated(sections.tail_offsets[h_index + 1].get())
@@ -345,7 +345,7 @@ where
 {
     fn element_incidence_count(&self, element: BcsrVertexId<V>) -> usize {
         let sections = self.sections();
-        let v_index = index_to_usize_validated(element.0);
+        let v_index = index_to_usize_validated(element.get());
         let out_size =
             index_to_usize_validated(sections.vertex_outgoing_offsets[v_index + 1].get())
                 - index_to_usize_validated(sections.vertex_outgoing_offsets[v_index].get());
@@ -375,7 +375,7 @@ where
 
     fn hyperedge_participants(&self, hyperedge: BcsrHyperedgeId<R>) -> Self::Participants<'_> {
         let sections = self.sections();
-        let h_index = index_to_usize_validated(hyperedge.0);
+        let h_index = index_to_usize_validated(hyperedge.get());
         let head = vertex_bucket(sections.head_offsets, sections.head_participants, h_index);
         let tail = vertex_bucket(sections.tail_offsets, sections.tail_participants, h_index);
         BcsrVertexSlice::new(head).chain(BcsrVertexSlice::new(tail))
@@ -398,7 +398,7 @@ where
 
     fn incident_hyperedges(&self, vertex: BcsrVertexId<V>) -> Self::IncidentHyperedges<'_> {
         let sections = self.sections();
-        let v_index = index_to_usize_validated(vertex.0);
+        let v_index = index_to_usize_validated(vertex.get());
         let outgoing = vertex_bucket(
             sections.vertex_outgoing_offsets,
             sections.vertex_outgoing_hyperedges,
@@ -434,14 +434,14 @@ where
 
     fn source_participants(&self, hyperedge: BcsrHyperedgeId<R>) -> Self::SourceParticipants<'_> {
         let sections = self.sections();
-        let h_index = index_to_usize_validated(hyperedge.0);
+        let h_index = index_to_usize_validated(hyperedge.get());
         let head = vertex_bucket(sections.head_offsets, sections.head_participants, h_index);
         BcsrVertexSlice::new(head)
     }
 
     fn target_participants(&self, hyperedge: BcsrHyperedgeId<R>) -> Self::TargetParticipants<'_> {
         let sections = self.sections();
-        let h_index = index_to_usize_validated(hyperedge.0);
+        let h_index = index_to_usize_validated(hyperedge.get());
         let tail = vertex_bucket(sections.tail_offsets, sections.tail_participants, h_index);
         BcsrVertexSlice::new(tail)
     }
@@ -468,7 +468,7 @@ where
 
     fn source_incidences(&self, hyperedge: BcsrHyperedgeId<R>) -> Self::SourceIncidences<'_> {
         let sections = self.sections();
-        let h_index = index_to_usize_validated(hyperedge.0);
+        let h_index = index_to_usize_validated(hyperedge.get());
         let head_start = index_to_usize_validated(sections.head_offsets[h_index].get());
         let head_end = index_to_usize_validated(sections.head_offsets[h_index + 1].get());
         BcsrParticipantSlice::new(head_start, head_end, 0)
@@ -476,7 +476,7 @@ where
 
     fn target_incidences(&self, hyperedge: BcsrHyperedgeId<R>) -> Self::TargetIncidences<'_> {
         let sections = self.sections();
-        let h_index = index_to_usize_validated(hyperedge.0);
+        let h_index = index_to_usize_validated(hyperedge.get());
         let tail_start = index_to_usize_validated(sections.tail_offsets[h_index].get());
         let tail_end = index_to_usize_validated(sections.tail_offsets[h_index + 1].get());
         BcsrParticipantSlice::new(tail_start, tail_end, self.counts().p_outgoing)
@@ -504,7 +504,7 @@ where
 
     fn outgoing_hyperedges(&self, vertex: BcsrVertexId<V>) -> Self::OutgoingHyperedges<'_> {
         let sections = self.sections();
-        let v_index = index_to_usize_validated(vertex.0);
+        let v_index = index_to_usize_validated(vertex.get());
         let outgoing = vertex_bucket(
             sections.vertex_outgoing_offsets,
             sections.vertex_outgoing_hyperedges,
@@ -515,7 +515,7 @@ where
 
     fn incoming_hyperedges(&self, vertex: BcsrVertexId<V>) -> Self::IncomingHyperedges<'_> {
         let sections = self.sections();
-        let v_index = index_to_usize_validated(vertex.0);
+        let v_index = index_to_usize_validated(vertex.get());
         let incoming = vertex_bucket(
             sections.vertex_incoming_offsets,
             sections.vertex_incoming_hyperedges,
@@ -541,7 +541,7 @@ where
 
     fn element_successors(&self, vertex: BcsrVertexId<V>) -> Self::Successors<'_> {
         let sections = self.sections();
-        let v_index = index_to_usize_validated(vertex.0);
+        let v_index = index_to_usize_validated(vertex.get());
         let outgoing = vertex_bucket(
             sections.vertex_outgoing_offsets,
             sections.vertex_outgoing_hyperedges,
@@ -567,7 +567,7 @@ where
 
     fn element_predecessors(&self, vertex: BcsrVertexId<V>) -> Self::Predecessors<'_> {
         let sections = self.sections();
-        let v_index = index_to_usize_validated(vertex.0);
+        let v_index = index_to_usize_validated(vertex.get());
         let incoming = vertex_bucket(
             sections.vertex_incoming_offsets,
             sections.vertex_incoming_hyperedges,

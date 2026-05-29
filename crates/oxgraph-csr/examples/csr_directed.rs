@@ -13,11 +13,11 @@ fn main() -> Result<(), oxgraph_csr::CsrError<u32, u32>> {
     println!("nodes={}", graph.node_count());
     println!("edges={}", graph.edge_count());
 
-    for edge in graph.outgoing_edges(CsrNodeId(0)) {
+    for edge in graph.outgoing_edges(CsrNodeId::new(0)) {
         println!("edge={:?} target={:?}", edge, graph.target(edge));
     }
 
-    println!("out_degree(0)={}", graph.out_degree(CsrNodeId(0)));
+    println!("out_degree(0)={}", graph.out_degree(CsrNodeId::new(0)));
 
     Ok(())
 }

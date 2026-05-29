@@ -120,7 +120,7 @@ impl DualTopologySnapshot {
         }
         for source in 0..keys.len() {
             let source_id =
-                GraphNodeId(u32::try_from(source).map_err(|_| BuildError::NodeCountOverflow)?);
+                GraphNodeId::new(u32::try_from(source).map_err(|_| BuildError::NodeCountOverflow)?);
             for target in frozen.outgoing_neighbors(source_id) {
                 inbound_builder.add_edge(target, source_id)?;
             }
@@ -194,7 +194,7 @@ impl DualTopologySnapshot {
             forward_builder.add_node()?;
         }
         for &(source, target) in edges {
-            forward_builder.add_edge(GraphNodeId(source), GraphNodeId(target))?;
+            forward_builder.add_edge(GraphNodeId::new(source), GraphNodeId::new(target))?;
         }
         let forward_frozen = forward_builder.freeze()?;
         let edge_count = u32::try_from(forward_frozen.edge_ids().len())
@@ -205,7 +205,7 @@ impl DualTopologySnapshot {
             inbound_builder.add_node()?;
         }
         for &(source, target) in edges {
-            inbound_builder.add_edge(GraphNodeId(target), GraphNodeId(source))?;
+            inbound_builder.add_edge(GraphNodeId::new(target), GraphNodeId::new(source))?;
         }
         let inbound_frozen = inbound_builder.freeze()?;
         if inbound_frozen.edge_ids().len() != forward_frozen.edge_ids().len() {

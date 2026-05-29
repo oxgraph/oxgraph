@@ -47,7 +47,7 @@ proptest! {
         }
         for (source, target) in edges {
             if source < node_count && target < node_count {
-                prop_graph(builder.add_edge(GraphNodeId(source), GraphNodeId(target)))?;
+                prop_graph(builder.add_edge(GraphNodeId::new(source), GraphNodeId::new(target)))?;
             }
         }
         let relation_values = vec![7_i32; builder.edge_count()];
@@ -65,17 +65,17 @@ proptest! {
         ))?;
         let frozen = prop_graph(builder.freeze())?;
         for node in 0..node_count {
-            let id = GraphNodeId(node);
+            let id = GraphNodeId::new(node);
             prop_assert!(frozen.contains_element(id));
             prop_assert_eq!(frozen.local_element_id(id), Some(id));
         }
         let edge_count = u32::try_from(frozen.edge_count())
             .map_err(|error| TestCaseError::fail(error.to_string()))?;
         for edge in 0..edge_count {
-            prop_assert!(frozen.contains_relation(GraphEdgeId(edge)));
+            prop_assert!(frozen.contains_relation(GraphEdgeId::new(edge)));
             prop_assert_eq!(
-                frozen.local_relation_id(GraphEdgeId(edge)),
-                Some(GraphEdgeId(edge))
+                frozen.local_relation_id(GraphEdgeId::new(edge)),
+                Some(GraphEdgeId::new(edge))
             );
         }
         let relation_layers = [layer];

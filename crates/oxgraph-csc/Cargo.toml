@@ -2,7 +2,7 @@
 name = "oxgraph-csc"
 version.workspace = true
 license.workspace = true
-description = "Borrowed compressed-sparse-column (inbound) graph views from Postgres snapshot sections."
+description = "Borrowed compressed-sparse-column (inbound) graph views over snapshot sections."
 categories.workspace = true
 keywords.workspace = true
 readme.workspace = true
@@ -18,12 +18,12 @@ build = ["oxgraph-csr/build", "oxgraph-snapshot/alloc"]
 [dependencies]
 oxgraph-csr = { version = "0.1.0", path = "../oxgraph-csr" }
 oxgraph-graph = { version = "0.1.0", path = "../oxgraph-graph" }
+oxgraph-layout-util = { version = "0.1.0", path = "../oxgraph-layout-util" }
 oxgraph-snapshot = { version = "0.1.0", path = "../oxgraph-snapshot" }
 oxgraph-topology = { version = "0.1.0", path = "../oxgraph-topology" }
 
 [dev-dependencies]
 oxgraph-csr = { version = "0.1.0", path = "../oxgraph-csr", features = ["build"] }
-oxgraph-postgres = { path = "../oxgraph-postgres", features = ["std"] }
 oxgraph-snapshot = { version = "0.1.0", path = "../oxgraph-snapshot", features = ["alloc"] }
 proptest = { workspace = true }
 

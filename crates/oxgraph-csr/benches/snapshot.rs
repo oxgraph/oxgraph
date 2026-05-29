@@ -33,11 +33,21 @@ fn ring_snapshot_bytes(node_count: u32) -> Vec<u8> {
     let targets_bytes: Vec<u8> = targets.iter().flat_map(|word| word.to_le_bytes()).collect();
 
     let mut builder = SnapshotBuilder::new();
-    match builder.add_section(SNAPSHOT_KIND_CSR_OFFSETS_U32, 0, 2, offsets_bytes) {
+    match builder.add_section(
+        SNAPSHOT_KIND_CSR_OFFSETS_U32,
+        oxgraph_csr::SNAPSHOT_CSR_SECTION_VERSION,
+        2,
+        offsets_bytes,
+    ) {
         Ok(_) => {}
         Err(error) => panic!("bench offsets: {error:?}"),
     }
-    match builder.add_section(SNAPSHOT_KIND_CSR_TARGETS_U32, 0, 2, targets_bytes) {
+    match builder.add_section(
+        SNAPSHOT_KIND_CSR_TARGETS_U32,
+        oxgraph_csr::SNAPSHOT_CSR_SECTION_VERSION,
+        2,
+        targets_bytes,
+    ) {
         Ok(_) => {}
         Err(error) => panic!("bench targets: {error:?}"),
     }
@@ -89,7 +99,7 @@ fn bench_bfs(group: &mut BenchmarkGroup<'_, WallTime>) {
                     Err(error) => panic!("bench from_snapshot: {error:?}"),
                 };
                 bencher.iter(|| {
-                    let walk = match breadth_first_search(&graph, CsrNodeId(0)) {
+                    let walk = match breadth_first_search(&graph, CsrNodeId::new(0)) {
                         Ok(value) => value,
                         Err(error) => panic!("bench bfs: {error:?}"),
                     };

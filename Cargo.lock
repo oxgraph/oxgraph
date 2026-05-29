@@ -1344,7 +1344,7 @@ version = "0.1.0"
 dependencies = [
  "oxgraph-csr",
  "oxgraph-graph",
- "oxgraph-postgres",
+ "oxgraph-layout-util",
  "oxgraph-snapshot",
  "oxgraph-topology",
  "proptest",

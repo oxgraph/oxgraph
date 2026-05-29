@@ -42,9 +42,11 @@ fn main() -> Result<(), ExampleError> {
 
     let graph = CsrNativeGraph::<u32, u32>::validate(4, OFFSETS, TARGETS)?;
     let mut visited = [0; 4];
-    let mut queue = [CsrNodeId(0); 4];
+    let mut queue = [CsrNodeId::new(0); 4];
 
-    for node in breadth_first_search_with_scratch(&graph, CsrNodeId(0), &mut visited, &mut queue)? {
+    for node in
+        breadth_first_search_with_scratch(&graph, CsrNodeId::new(0), &mut visited, &mut queue)?
+    {
         println!("bfs_node={node:?}");
     }
 

@@ -144,7 +144,7 @@ impl<IncidenceIndex: BcsrIndex> Iterator for BcsrParticipantSlice<IncidenceIndex
         }
         let id = self.base.checked_add(self.cursor)?;
         self.cursor += 1;
-        Some(BcsrParticipantId(usize_to_index_validated(id)))
+        Some(BcsrParticipantId::new(usize_to_index_validated(id)))
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
@@ -166,7 +166,7 @@ impl<IncidenceIndex: BcsrIndex> DoubleEndedIterator for BcsrParticipantSlice<Inc
         }
         self.end -= 1;
         let id = self.base.checked_add(self.end)?;
-        Some(BcsrParticipantId(usize_to_index_validated(id)))
+        Some(BcsrParticipantId::new(usize_to_index_validated(id)))
     }
 }
 
@@ -246,7 +246,7 @@ where
                 hyperedge,
                 self.vertex,
             ) {
-                return Some(BcsrParticipantId(usize_to_index_validated(position)));
+                return Some(BcsrParticipantId::new(usize_to_index_validated(position)));
             }
         }
         None
@@ -263,7 +263,7 @@ where
                 self.vertex,
             ) {
                 let id = self.p_head.checked_add(position)?;
-                return Some(BcsrParticipantId(usize_to_index_validated(id)));
+                return Some(BcsrParticipantId::new(usize_to_index_validated(id)));
             }
         }
         None
@@ -387,7 +387,7 @@ where
     fn next(&mut self) -> Option<Self::Item> {
         loop {
             if let Some(word) = self.current_bucket.next() {
-                return Some(BcsrVertexId(word.get()));
+                return Some(BcsrVertexId::new(word.get()));
             }
             if !self.advance_outer() {
                 return None;

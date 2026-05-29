@@ -51,7 +51,7 @@ impl RelationWeight for BenchRelationWeights<'_> {
     type Weight = f64;
 
     fn relation_weight(&self, relation: oxgraph_csr::CsrEdgeId<u32>) -> Self::Weight {
-        self.values[relation.0 as usize]
+        self.values[relation.get() as usize]
     }
 }
 
@@ -70,7 +70,7 @@ impl RelationWeight for BenchHyperRelationWeights<'_> {
     type Weight = f64;
 
     fn relation_weight(&self, relation: BcsrHyperedgeId<u32>) -> Self::Weight {
-        self.values[relation.0 as usize]
+        self.values[relation.get() as usize]
     }
 }
 
@@ -94,7 +94,7 @@ impl IncidenceWeight for BenchHyperIncidenceWeights<'_> {
     type Weight = f64;
 
     fn incidence_weight(&self, incidence: BcsrParticipantId<u32>) -> Self::Weight {
-        self.values[incidence.0 as usize]
+        self.values[incidence.get() as usize]
     }
 }
 
@@ -122,10 +122,10 @@ fn pagerank_throughput(c: &mut Criterion) {
         .unwrap_or_else(|error| panic!("benchmark CSR graph should validate: {error}"));
     let graph = CsrNativeGraph::<u32, u32>::validate(10_000_u32, &offsets, &targets)
         .unwrap_or_else(|error| panic!("benchmark CSR graph should validate: {error}"));
-    let elements: Vec<CsrNodeId<u32>> = (0..10_000_u32).map(CsrNodeId).collect();
+    let elements: Vec<CsrNodeId<u32>> = (0..10_000_u32).map(CsrNodeId::new).collect();
     let visible_half: Vec<CsrNodeId<u32>> = (0..10_000_u32)
         .filter(|node| node % 2 == 0)
-        .map(CsrNodeId)
+        .map(CsrNodeId::new)
         .collect();
     let relation_weights = vec![1.0; targets.len()];
     let weights = BenchRelationWeights {
@@ -382,15 +382,15 @@ fn hypergraph_pagerank_throughput(c: &mut Criterion) {
     let sections = build_hypergraph(10_000)
         .unwrap_or_else(|error| panic!("benchmark BCSR hypergraph should validate: {error}"));
     let hypergraph = open_bench_hypergraph(&sections);
-    let elements: Vec<BcsrVertexId<u32>> = (0..10_000_u32).map(BcsrVertexId).collect();
-    let relations: Vec<BcsrHyperedgeId<u32>> = (0..20_000_u32).map(BcsrHyperedgeId).collect();
+    let elements: Vec<BcsrVertexId<u32>> = (0..10_000_u32).map(BcsrVertexId::new).collect();
+    let relations: Vec<BcsrHyperedgeId<u32>> = (0..20_000_u32).map(BcsrHyperedgeId::new).collect();
     let visible_half: Vec<BcsrVertexId<u32>> = (0..10_000_u32)
         .filter(|vertex| vertex % 2 == 0)
-        .map(BcsrVertexId)
+        .map(BcsrVertexId::new)
         .collect();
     let visible_relations_half: Vec<BcsrHyperedgeId<u32>> = (0..20_000_u32)
         .filter(|relation| relation % 2 == 0)
-        .map(BcsrHyperedgeId)
+        .map(BcsrHyperedgeId::new)
         .collect();
     let relation_weight_values = vec![1.0_f64; 20_000];
     let incidence_weight_values = vec![1.0_f64; 40_000];

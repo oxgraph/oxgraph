@@ -3,7 +3,8 @@
 //! This module wires width-specific bipartite-CSR section kinds to the
 //! borrowed slice inputs accepted by [`BcsrHypergraph::open`].
 
-use oxgraph_snapshot::{Section, Snapshot};
+use oxgraph_layout_util::SnapshotWidth;
+use oxgraph_snapshot::{SectionBindError, Snapshot};
 
 use crate::{
     error::{BcsrSection, BcsrSnapshotError},
@@ -11,15 +12,15 @@ use crate::{
         validation::BcsrValidation,
         view::{BcsrHypergraph, BcsrSections},
     },
-    word::{BcsrSnapshotIndex, BcsrSnapshotWord},
+    word::BcsrSnapshotIndex,
 };
 
 /// Snapshot section bundle for the requested BCSR index widths.
 type SnapshotSections<'view, VertexIndex, RelationIndex, IncidenceIndex> = BcsrSections<
     'view,
-    <IncidenceIndex as BcsrSnapshotIndex>::LittleEndianWord,
-    <VertexIndex as BcsrSnapshotIndex>::LittleEndianWord,
-    <RelationIndex as BcsrSnapshotIndex>::LittleEndianWord,
+    <IncidenceIndex as SnapshotWidth>::LittleEndianWord,
+    <VertexIndex as SnapshotWidth>::LittleEndianWord,
+    <RelationIndex as SnapshotWidth>::LittleEndianWord,
 >;
 
 impl<'view, VertexIndex, RelationIndex, IncidenceIndex>
@@ -28,9 +29,9 @@ impl<'view, VertexIndex, RelationIndex, IncidenceIndex>
         VertexIndex,
         RelationIndex,
         IncidenceIndex,
-        <IncidenceIndex as BcsrSnapshotIndex>::LittleEndianWord,
-        <VertexIndex as BcsrSnapshotIndex>::LittleEndianWord,
-        <RelationIndex as BcsrSnapshotIndex>::LittleEndianWord,
+        <IncidenceIndex as SnapshotWidth>::LittleEndianWord,
+        <VertexIndex as SnapshotWidth>::LittleEndianWord,
+        <RelationIndex as SnapshotWidth>::LittleEndianWord,
     >
 where
     VertexIndex: BcsrSnapshotIndex,
@@ -83,45 +84,53 @@ where
     RelationIndex: BcsrSnapshotIndex,
     IncidenceIndex: BcsrSnapshotIndex,
 {
-    let head_offsets = load_section(
+    let head_offsets = load_section::<IncidenceIndex>(
         snapshot,
         BcsrSection::HeadOffsets,
         IncidenceIndex::HEAD_OFFSETS_KIND,
+        IncidenceIndex::SECTION_VERSION,
     )?;
-    let head_participants = load_section(
+    let head_participants = load_section::<VertexIndex>(
         snapshot,
         BcsrSection::HeadParticipants,
         VertexIndex::HEAD_PARTICIPANTS_KIND,
+        VertexIndex::SECTION_VERSION,
     )?;
-    let tail_offsets = load_section(
+    let tail_offsets = load_section::<IncidenceIndex>(
         snapshot,
         BcsrSection::TailOffsets,
         IncidenceIndex::TAIL_OFFSETS_KIND,
+        IncidenceIndex::SECTION_VERSION,
     )?;
-    let tail_participants = load_section(
+    let tail_participants = load_section::<VertexIndex>(
         snapshot,
         BcsrSection::TailParticipants,
         VertexIndex::TAIL_PARTICIPANTS_KIND,
+        VertexIndex::SECTION_VERSION,
     )?;
-    let vertex_outgoing_offsets = load_section(
+    let vertex_outgoing_offsets = load_section::<IncidenceIndex>(
         snapshot,
         BcsrSection::VertexOutgoingOffsets,
         IncidenceIndex::VERTEX_OUTGOING_OFFSETS_KIND,
+        IncidenceIndex::SECTION_VERSION,
     )?;
-    let vertex_outgoing_hyperedges = load_section(
+    let vertex_outgoing_hyperedges = load_section::<RelationIndex>(
         snapshot,
         BcsrSection::VertexOutgoingHyperedges,
         RelationIndex::VERTEX_OUTGOING_HYPEREDGES_KIND,
+        RelationIndex::SECTION_VERSION,
     )?;
-    let vertex_incoming_offsets = load_section(
+    let vertex_incoming_offsets = load_section::<IncidenceIndex>(
         snapshot,
         BcsrSection::VertexIncomingOffsets,
         IncidenceIndex::VERTEX_INCOMING_OFFSETS_KIND,
+        IncidenceIndex::SECTION_VERSION,
     )?;
-    let vertex_incoming_hyperedges = load_section(
+    let vertex_incoming_hyperedges = load_section::<RelationIndex>(
         snapshot,
         BcsrSection::VertexIncomingHyperedges,
         RelationIndex::VERTEX_INCOMING_HYPEREDGES_KIND,
+        RelationIndex::SECTION_VERSION,
     )?;
     Ok(BcsrSections {
         head_offsets,
@@ -135,28 +144,38 @@ where
     })
 }
 
-/// Looks up `kind` in `snapshot` and borrows its payload as a typed word slice.
-fn load_section<'view, Word>(
+/// Binds `kind` in `snapshot` as a little-endian word slice for width `W`.
+///
+/// Wraps [`Snapshot::typed_section`] and maps the shared
+/// [`SectionBindError`] into the BCSR-specific [`BcsrSnapshotError`] variants.
+fn load_section<'view, W>(
     snapshot: &Snapshot<'view>,
     section: BcsrSection,
     kind: u32,
-) -> Result<&'view [Word], BcsrSnapshotError>
+    version: u32,
+) -> Result<&'view [W::LittleEndianWord], BcsrSnapshotError>
 where
-    Word: BcsrSnapshotWord,
+    W: SnapshotWidth,
 {
-    let payload = lookup_section(snapshot, section, kind)?;
-    payload
-        .try_as_slice()
-        .map_err(|error| BcsrSnapshotError::SectionView { section, error })
+    snapshot
+        .typed_section::<W>(kind, version)
+        .map_err(|error| map_section_bind(section, error))
 }
 
-/// Returns the [`Section`] with `kind`, mapping a missing section to a typed error.
-fn lookup_section<'view>(
-    snapshot: &Snapshot<'view>,
-    section: BcsrSection,
-    kind: u32,
-) -> Result<Section<'view>, BcsrSnapshotError> {
-    snapshot
-        .section(kind)
-        .ok_or(BcsrSnapshotError::MissingSection { section, kind })
+/// Maps a [`SectionBindError`] into the BCSR-specific snapshot error.
+const fn map_section_bind(section: BcsrSection, error: SectionBindError) -> BcsrSnapshotError {
+    match error {
+        SectionBindError::Missing { kind } => BcsrSnapshotError::MissingSection { section, kind },
+        SectionBindError::VersionMismatch {
+            kind,
+            expected,
+            actual,
+        } => BcsrSnapshotError::VersionMismatch {
+            section,
+            kind,
+            expected,
+            actual,
+        },
+        SectionBindError::View { error, .. } => BcsrSnapshotError::SectionView { section, error },
+    }
 }

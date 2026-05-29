@@ -16,9 +16,14 @@ use oxgraph_graph::{
     LocalElementIdentity, LocalRelationIdentity, OutgoingEdgeCount, OutgoingGraph, RelationIndex,
     RelationWeight, TopologyBase, TopologyCounts,
 };
-pub use oxgraph_layout_util::BuildIndex;
+/// Builder index-width contract (alias of [`crate::CsrIndex`]).
+///
+/// Kept as a named re-export so the umbrella crate's `graph_build` module can
+/// continue to re-export `BuildIndex`; new code should prefer
+/// [`crate::CsrIndex`].
+pub use oxgraph_layout_util::LayoutIndex as BuildIndex;
 use oxgraph_layout_util::{
-    IdOutOfBounds, OffsetOverflow, id_to_slot, index_from_usize, slot_or_max,
+    IdOutOfBounds, id_to_slot, index_from_usize, map_offset_overflow, slot_or_max,
 };
 #[cfg(feature = "build-property-arrow")]
 use oxgraph_property::{
@@ -40,21 +45,26 @@ type FrozenWeightedGraphResult<NodeIndex, EdgeIndex, EW, RW> = Result<
 
 /// Local/canonical node ID assigned by graph builders.
 ///
+/// This is the same alias as the borrowed-view [`CsrNodeId`](crate::CsrNodeId),
+/// so a built graph and its frozen/snapshot view share one node-handle type and
+/// no build-vs-view ID mismatch can occur.
+///
 /// # Performance
 ///
 /// Copying, comparing, ordering, hashing, and debug-formatting are `O(1)` when
 /// the underlying index type provides those operations in `O(1)`.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct GraphNodeId<NodeIndex>(pub NodeIndex);
+pub type GraphNodeId<NodeIndex> = crate::CsrNodeId<NodeIndex>;
 
 /// Local/canonical edge ID assigned by graph builders.
 ///
+/// This is the same alias as the borrowed-view [`CsrEdgeId`](crate::CsrEdgeId),
+/// so a built graph and its frozen/snapshot view share one edge-handle type.
+///
 /// # Performance
 ///
 /// Copying, comparing, ordering, hashing, and debug-formatting are `O(1)` when
 /// the underlying index type provides those operations in `O(1)`.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct GraphEdgeId<EdgeIndex>(pub EdgeIndex);
+pub type GraphEdgeId<EdgeIndex> = crate::CsrEdgeId<EdgeIndex>;
 
 /// Errors raised by graph building and export operations.
 ///
@@ -221,7 +231,7 @@ where
             .node_count
             .checked_add(1)
             .ok_or(GraphBuildError::IdOverflow { value: usize::MAX })?;
-        Ok(GraphNodeId(id))
+        Ok(GraphNodeId::new(id))
     }
 
     /// Adds a directed edge and returns its canonical edge ID.
@@ -246,9 +256,9 @@ where
             EdgeIndex::from_usize(self.sources.len()).ok_or(GraphBuildError::IdOverflow {
                 value: self.sources.len(),
             })?;
-        self.sources.push(source.0);
-        self.targets.push(target.0);
-        Ok(GraphEdgeId(edge))
+        self.sources.push(source.get());
+        self.targets.push(target.get());
+        Ok(GraphEdgeId::new(edge))
     }
 
     /// Returns the number of nodes assigned so far.
@@ -369,7 +379,7 @@ where
             .checked_add(1)
             .ok_or(GraphBuildError::IdOverflow { value: usize::MAX })?;
         self.element_weights.push(weight);
-        Ok(GraphNodeId(id))
+        Ok(GraphNodeId::new(id))
     }
 
     /// Adds a directed edge with an explicit relation weight.
@@ -395,10 +405,10 @@ where
             EdgeIndex::from_usize(self.sources.len()).ok_or(GraphBuildError::IdOverflow {
                 value: self.sources.len(),
             })?;
-        self.sources.push(source.0);
-        self.targets.push(target.0);
+        self.sources.push(source.get());
+        self.targets.push(target.get());
         self.relation_weights.push(weight);
-        Ok(GraphEdgeId(edge))
+        Ok(GraphEdgeId::new(edge))
     }
 
     /// Updates an existing element weight.
@@ -584,6 +594,34 @@ where
     pub fn edge_ids(&self) -> &[EdgeIndex] {
         &self.topology.edge_ids
     }
+
+    /// Builds the reverse adjacency (transpose) of this graph.
+    ///
+    /// Every directed edge `s -> t` becomes `t -> s` in the returned graph, so
+    /// the transpose's outgoing edges of a node are the original's incoming
+    /// edges. Node count is preserved and edge identity is reassigned in the
+    /// reversed CSR order (the transpose is a fresh frozen topology). This is
+    /// the reverse index CSC, the embedded database, and the Postgres engine
+    /// build on for incoming traversal.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GraphBuildError::IdOverflow`] if a reversed CSR offset or edge
+    /// ID does not fit the selected `EdgeIndex` width.
+    ///
+    /// # Performance
+    ///
+    /// This function is `O(n + m)`: it reuses the same counting-sort bucket
+    /// pass as [`GraphBuilder::freeze`] over the swapped endpoint vectors.
+    pub fn transpose(&self) -> Result<Self, GraphBuildError<NodeIndex, EdgeIndex>> {
+        Ok(Self {
+            topology: freeze_topology(
+                self.topology.node_count,
+                &self.topology.edge_targets,
+                &self.topology.sources,
+            )?,
+        })
+    }
 }
 
 impl<NodeIndex, EdgeIndex, EW, RW> FrozenWeightedGraph<NodeIndex, EdgeIndex, EW, RW>
@@ -665,7 +703,7 @@ macro_rules! impl_topology_for {
             }
 
             fn element_index(&self, element: GraphNodeId<NodeIndex>) -> usize {
-                element.0.to_usize().unwrap_or(usize::MAX)
+                element.get().to_usize().unwrap_or(usize::MAX)
             }
         }
 
@@ -679,7 +717,7 @@ macro_rules! impl_topology_for {
             }
 
             fn relation_index(&self, relation: GraphEdgeId<EdgeIndex>) -> usize {
-                relation.0.to_usize().unwrap_or(usize::MAX)
+                relation.get().to_usize().unwrap_or(usize::MAX)
             }
         }
 
@@ -690,7 +728,7 @@ macro_rules! impl_topology_for {
         {
             fn contains_element(&self, element: GraphNodeId<NodeIndex>) -> bool {
                 element
-                    .0
+                    .get()
                     .to_usize()
                     .is_some_and(|slot| slot < self.$topology.node_count)
             }
@@ -703,7 +741,7 @@ macro_rules! impl_topology_for {
         {
             fn contains_relation(&self, relation: GraphEdgeId<EdgeIndex>) -> bool {
                 relation
-                    .0
+                    .get()
                     .to_usize()
                     .is_some_and(|slot| slot < self.$topology.sources.len())
             }
@@ -715,7 +753,7 @@ macro_rules! impl_topology_for {
             EdgeIndex: BuildIndex,
         {
             fn source(&self, edge: GraphEdgeId<EdgeIndex>) -> GraphNodeId<NodeIndex> {
-                GraphNodeId(self.$topology.sources[edge_slot(edge)])
+                GraphNodeId::new(self.$topology.sources[edge_slot(edge)])
             }
         }
 
@@ -725,7 +763,7 @@ macro_rules! impl_topology_for {
             EdgeIndex: BuildIndex,
         {
             fn target(&self, edge: GraphEdgeId<EdgeIndex>) -> GraphNodeId<NodeIndex> {
-                GraphNodeId(self.$topology.edge_targets[edge_slot(edge)])
+                GraphNodeId::new(self.$topology.edge_targets[edge_slot(edge)])
             }
         }
 
@@ -875,7 +913,7 @@ impl<EdgeIndex: Copy> Iterator for FrozenOutEdges<'_, EdgeIndex> {
     type Item = GraphEdgeId<EdgeIndex>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.inner.next().copied().map(GraphEdgeId)
+        self.inner.next().copied().map(GraphEdgeId::new)
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
@@ -905,10 +943,9 @@ where
     type Item = GraphNodeId<NodeIndex>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.edge_ids
-            .next()
-            .copied()
-            .map(|edge| GraphNodeId(self.targets_by_edge[edge.to_usize().unwrap_or(usize::MAX)]))
+        self.edge_ids.next().copied().map(|edge| {
+            GraphNodeId::new(self.targets_by_edge[edge.to_usize().unwrap_or(usize::MAX)])
+        })
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
@@ -977,23 +1014,13 @@ where
     })
 }
 
-/// Maps an [`OffsetOverflow`] from `oxgraph_layout_util` into a typed
-/// [`GraphBuildError`].
-const fn map_offset_overflow<NodeIndex, EdgeIndex>(
-    error: OffsetOverflow,
-) -> GraphBuildError<NodeIndex, EdgeIndex> {
-    match error {
-        OffsetOverflow::IndexOverflow { value } => GraphBuildError::IdOverflow { value },
-        _ => GraphBuildError::IdOverflow { value: usize::MAX },
-    }
-}
-
 /// Returns zero for an edge index width.
 fn edge_zero<NodeIndex, EdgeIndex>() -> Result<EdgeIndex, GraphBuildError<NodeIndex, EdgeIndex>>
 where
     EdgeIndex: BuildIndex,
 {
-    index_from_usize::<EdgeIndex>(0).map_err(map_offset_overflow)
+    index_from_usize::<EdgeIndex>(0)
+        .map_err(|error| map_offset_overflow(error, |value| GraphBuildError::IdOverflow { value }))
 }
 
 /// Returns zero for a node index width.
@@ -1001,7 +1028,8 @@ fn node_zero<NodeIndex, EdgeIndex>() -> Result<NodeIndex, GraphBuildError<NodeIn
 where
     NodeIndex: BuildIndex,
 {
-    index_from_usize::<NodeIndex>(0).map_err(map_offset_overflow)
+    index_from_usize::<NodeIndex>(0)
+        .map_err(|error| map_offset_overflow(error, |value| GraphBuildError::IdOverflow { value }))
 }
 
 /// Validates a node ID and returns its dense slot.
@@ -1012,7 +1040,7 @@ fn ensure_node<NodeIndex, EdgeIndex>(
 where
     NodeIndex: BuildIndex,
 {
-    id_to_slot::<NodeIndex>(node.0, node_count)
+    id_to_slot::<NodeIndex>(node.get(), node_count)
         .map_err(|_: IdOutOfBounds| GraphBuildError::InvalidNode { node })
 }
 
@@ -1024,18 +1052,18 @@ fn ensure_edge<NodeIndex, EdgeIndex>(
 where
     EdgeIndex: BuildIndex,
 {
-    id_to_slot::<EdgeIndex>(edge.0, edge_count)
+    id_to_slot::<EdgeIndex>(edge.get(), edge_count)
         .map_err(|_: IdOutOfBounds| GraphBuildError::InvalidEdge { edge })
 }
 
 /// Returns a node slot without panicking.
 fn node_slot<NodeIndex: BuildIndex>(node: GraphNodeId<NodeIndex>) -> usize {
-    slot_or_max::<NodeIndex>(node.0)
+    slot_or_max::<NodeIndex>(node.get())
 }
 
 /// Returns an edge slot without panicking.
 fn edge_slot<EdgeIndex: BuildIndex>(edge: GraphEdgeId<EdgeIndex>) -> usize {
-    slot_or_max::<EdgeIndex>(edge.0)
+    slot_or_max::<EdgeIndex>(edge.get())
 }
 
 /// Returns the outgoing edge range for `node`.
@@ -1059,6 +1087,10 @@ where
 
 /// Converts a CSR payload slice into explicit little-endian words.
 ///
+/// Thin wrapper over [`oxgraph_layout_util::slice_to_le`], kept so the umbrella
+/// re-export surface stays stable; exporters route through
+/// [`SnapshotBuilder::add_section_widths`] directly.
+///
 /// # Performance
 ///
 /// This function is `O(values.len())`.
@@ -1066,14 +1098,12 @@ pub fn csr_slice_to_le<I>(values: &[I]) -> Vec<I::LittleEndianWord>
 where
     I: CsrSnapshotIndex,
 {
-    values
-        .iter()
-        .copied()
-        .map(CsrSnapshotIndex::to_le_word)
-        .collect()
+    oxgraph_layout_util::slice_to_le(values)
 }
 
 /// Converts an identity-map payload slice into explicit little-endian words.
+///
+/// Thin wrapper over [`oxgraph_layout_util::slice_to_le`].
 ///
 /// # Performance
 ///
@@ -1082,7 +1112,7 @@ pub fn identity_slice_to_le<I>(values: &[I]) -> Vec<I::LittleEndianWord>
 where
     I: CsrSnapshotIndex,
 {
-    csr_slice_to_le(values)
+    oxgraph_layout_util::slice_to_le(values)
 }
 
 /// Exports a frozen graph topology and identity metadata as a CSR snapshot.
@@ -1247,11 +1277,17 @@ where
     NodeIndex: BuildIndex + CsrSnapshotIndex,
     EdgeIndex: BuildIndex + CsrSnapshotIndex,
 {
-    let offsets = csr_slice_to_le(&topology.offsets);
-    let targets = csr_slice_to_le(&topology.targets);
     let mut builder = SnapshotBuilder::new();
-    builder.add_section_little_endian(EdgeIndex::OFFSETS_KIND, 1, &offsets)?;
-    builder.add_section_little_endian(NodeIndex::TARGETS_KIND, 1, &targets)?;
+    builder.add_section_widths(
+        EdgeIndex::OFFSETS_KIND,
+        EdgeIndex::SECTION_VERSION,
+        &topology.offsets,
+    )?;
+    builder.add_section_widths(
+        NodeIndex::TARGETS_KIND,
+        NodeIndex::SECTION_VERSION,
+        &topology.targets,
+    )?;
     builder.finish().map_err(GraphBuildError::from)
 }
 
@@ -1265,9 +1301,6 @@ where
     NodeIndex: BuildIndex + CsrSnapshotIndex,
     EdgeIndex: BuildIndex + CsrSnapshotIndex + PropertySnapshotMetaWord,
 {
-    let offsets = csr_slice_to_le(&topology.offsets);
-    let targets = csr_slice_to_le(&topology.targets);
-    let edge_ids = property_identity_slice_to_le::<EdgeIndex>(&topology.edge_ids);
     let identity_modes = [
         IdentityModeRecord::<EdgeIndex>::local_equals_canonical(
             IdFamily::Element,
@@ -1276,17 +1309,25 @@ where
         IdentityModeRecord::<EdgeIndex>::explicit_map(IdFamily::Relation, topology.edge_ids.len())?,
     ];
     let mut builder = SnapshotBuilder::new();
-    builder.add_section_little_endian(EdgeIndex::OFFSETS_KIND, 1, &offsets)?;
-    builder.add_section_little_endian(NodeIndex::TARGETS_KIND, 1, &targets)?;
+    builder.add_section_widths(
+        EdgeIndex::OFFSETS_KIND,
+        EdgeIndex::SECTION_VERSION,
+        &topology.offsets,
+    )?;
+    builder.add_section_widths(
+        NodeIndex::TARGETS_KIND,
+        NodeIndex::SECTION_VERSION,
+        &topology.targets,
+    )?;
     builder.add_section_little_endian(
         EdgeIndex::IDENTITY_MODES_KIND,
         SNAPSHOT_PROPERTY_VERSION,
         &identity_modes,
     )?;
-    builder.add_section_little_endian(
+    builder.add_section_widths(
         EdgeIndex::RELATION_IDENTITY_MAP_KIND,
         SNAPSHOT_PROPERTY_VERSION,
-        &edge_ids,
+        &topology.edge_ids,
     )?;
     builder.add_section(
         EdgeIndex::PROPERTY_DESCRIPTORS_KIND,
@@ -1301,21 +1342,6 @@ where
         property.data,
     )?;
     builder.finish().map_err(GraphBuildError::from)
-}
-
-/// Converts an identity-map payload slice into explicit little-endian words.
-#[cfg(feature = "build-property-arrow")]
-fn property_identity_slice_to_le<I>(
-    values: &[I],
-) -> Vec<<I as oxgraph_property::PropertyIndex>::LittleEndianWord>
-where
-    I: PropertySnapshotMetaWord,
-{
-    values
-        .iter()
-        .copied()
-        .map(oxgraph_property::PropertyIndex::to_le_word)
-        .collect()
 }
 
 #[cfg(test)]
@@ -1389,10 +1415,35 @@ mod tests {
         let graph = CsrSnapshotGraph::<u32, u32>::from_snapshot(&snapshot)?;
         assert_eq!(
             graph
-                .element_successors(crate::CsrNodeId(0))
+                .element_successors(crate::CsrNodeId::new(0))
                 .collect::<Vec<_>>(),
-            vec![crate::CsrNodeId(1)]
+            vec![crate::CsrNodeId::new(1)]
         );
+        Ok(())
+    }
+
+    /// Transpose reverses every directed edge and preserves degree shape.
+    #[test]
+    fn transpose_reverses_edges() -> Result<(), GraphBuildError<u32, u32>> {
+        let mut builder = GraphBuilder::<u32, u32>::new();
+        let a = builder.add_node()?;
+        let b = builder.add_node()?;
+        let c = builder.add_node()?;
+        builder.add_edge(a, b)?;
+        builder.add_edge(a, c)?;
+        builder.add_edge(b, c)?;
+        let frozen = builder.freeze()?;
+        let reverse = frozen.transpose()?;
+        // Original a -> {b, c}; reversed: a has no predecessors, so a has no
+        // outgoing edges in the transpose.
+        assert_eq!(reverse.out_degree(a), 0);
+        // c was a sink with two incoming edges; in the transpose c points back
+        // at a and b.
+        let mut from_c = reverse.element_successors(c).collect::<Vec<_>>();
+        from_c.sort_unstable();
+        assert_eq!(from_c, vec![a, b]);
+        // b had one incoming edge from a.
+        assert_eq!(reverse.element_successors(b).collect::<Vec<_>>(), vec![a]);
         Ok(())
     }
 }

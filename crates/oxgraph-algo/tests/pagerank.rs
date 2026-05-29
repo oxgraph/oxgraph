@@ -103,7 +103,7 @@ impl RelationWeight for CsrRelationWeights<'_> {
     type Weight = f64;
 
     fn relation_weight(&self, relation: CsrEdgeId<u32>) -> Self::Weight {
-        self.values[relation.0 as usize]
+        self.values[relation.get() as usize]
     }
 }
 
@@ -123,7 +123,7 @@ impl RelationWeight for CsrIntegerWeights<'_> {
     type Weight = u32;
 
     fn relation_weight(&self, relation: CsrEdgeId<u32>) -> Self::Weight {
-        self.values[relation.0 as usize]
+        self.values[relation.get() as usize]
     }
 }
 
@@ -143,7 +143,7 @@ impl RelationWeight for BcsrRelationWeights<'_> {
     type Weight = f64;
 
     fn relation_weight(&self, relation: BcsrHyperedgeId<u32>) -> Self::Weight {
-        self.values[relation.0 as usize]
+        self.values[relation.get() as usize]
     }
 }
 
@@ -168,7 +168,7 @@ impl IncidenceWeight for BcsrIncidenceWeights<'_> {
     type Weight = f64;
 
     fn incidence_weight(&self, incidence: BcsrParticipantId<u32>) -> Self::Weight {
-        self.values[incidence.0 as usize]
+        self.values[incidence.get() as usize]
     }
 }
 
@@ -243,7 +243,12 @@ impl PageRankScalar for TestScalar {
 #[test]
 fn pagerank_runs_over_csr_layout() -> Result<(), PageRankFixtureError> {
     let graph = csr_fixture()?;
-    let elements = [CsrNodeId(0), CsrNodeId(1), CsrNodeId(2), CsrNodeId(3)];
+    let elements = [
+        CsrNodeId::new(0),
+        CsrNodeId::new(1),
+        CsrNodeId::new(2),
+        CsrNodeId::new(3),
+    ];
     let mut ranks = [0.0; 4];
 
     let report = pagerank_graph(&graph, &Uniform, elements, CONFIG, None, &mut ranks)?;
@@ -262,7 +267,12 @@ fn pagerank_runs_over_csr_layout() -> Result<(), PageRankFixtureError> {
 #[test]
 fn weighted_pagerank_runs_over_csr_layout() -> Result<(), PageRankFixtureError> {
     let graph = csr_fixture()?;
-    let elements = [CsrNodeId(0), CsrNodeId(1), CsrNodeId(2), CsrNodeId(3)];
+    let elements = [
+        CsrNodeId::new(0),
+        CsrNodeId::new(1),
+        CsrNodeId::new(2),
+        CsrNodeId::new(3),
+    ];
     let weights = CsrRelationWeights {
         values: &[1.0, 1.0, 4.0, 1.0],
     };
@@ -291,7 +301,12 @@ fn weighted_pagerank_runs_over_csr_layout() -> Result<(), PageRankFixtureError> 
 #[test]
 fn pagerank_runs_with_f32_rank_scalar() -> Result<(), Box<dyn Error>> {
     let graph = csr_fixture()?;
-    let elements = [CsrNodeId(0), CsrNodeId(1), CsrNodeId(2), CsrNodeId(3)];
+    let elements = [
+        CsrNodeId::new(0),
+        CsrNodeId::new(1),
+        CsrNodeId::new(2),
+        CsrNodeId::new(3),
+    ];
     let config = PageRankConfig::new(0.85_f32, 1.0e-6_f32, 500);
     let mut ranks = [0.0_f32; 4];
 
@@ -308,7 +323,12 @@ fn pagerank_runs_with_f32_rank_scalar() -> Result<(), Box<dyn Error>> {
 #[test]
 fn pagerank_compiles_with_custom_rank_scalar() -> Result<(), Box<dyn Error>> {
     let graph = csr_fixture()?;
-    let elements = [CsrNodeId(0), CsrNodeId(1), CsrNodeId(2), CsrNodeId(3)];
+    let elements = [
+        CsrNodeId::new(0),
+        CsrNodeId::new(1),
+        CsrNodeId::new(2),
+        CsrNodeId::new(3),
+    ];
     let config = PageRankConfig::new(TestScalar(0.85), TestScalar(1.0e-10), 500);
     let mut ranks = [TestScalar::ZERO; 4];
 
@@ -324,7 +344,12 @@ fn pagerank_compiles_with_custom_rank_scalar() -> Result<(), Box<dyn Error>> {
 #[test]
 fn weighted_pagerank_accepts_integer_weights_into_f32_ranks() -> Result<(), Box<dyn Error>> {
     let graph = csr_fixture()?;
-    let elements = [CsrNodeId(0), CsrNodeId(1), CsrNodeId(2), CsrNodeId(3)];
+    let elements = [
+        CsrNodeId::new(0),
+        CsrNodeId::new(1),
+        CsrNodeId::new(2),
+        CsrNodeId::new(3),
+    ];
     let weights = CsrIntegerWeights {
         values: &[1, 1, 4, 1],
     };
@@ -365,7 +390,12 @@ fn weighted_pagerank_accepts_integer_weights_into_f32_ranks() -> Result<(), Box<
 #[test]
 fn graph_scratch_and_workspace_match_allocating() -> Result<(), Box<dyn Error>> {
     let graph = csr_fixture()?;
-    let elements = [CsrNodeId(0), CsrNodeId(1), CsrNodeId(2), CsrNodeId(3)];
+    let elements = [
+        CsrNodeId::new(0),
+        CsrNodeId::new(1),
+        CsrNodeId::new(2),
+        CsrNodeId::new(3),
+    ];
     let mut allocating = [0.0; 4];
     pagerank_graph(&graph, &Uniform, elements, CONFIG, None, &mut allocating)?;
 
@@ -410,7 +440,12 @@ fn graph_scratch_and_workspace_match_allocating() -> Result<(), Box<dyn Error>> 
 #[test]
 fn borrowed_scratch_rejects_undersized_storage() -> Result<(), Box<dyn Error>> {
     let graph = csr_fixture()?;
-    let elements = [CsrNodeId(0), CsrNodeId(1), CsrNodeId(2), CsrNodeId(3)];
+    let elements = [
+        CsrNodeId::new(0),
+        CsrNodeId::new(1),
+        CsrNodeId::new(2),
+        CsrNodeId::new(3),
+    ];
     let mut ranks = [0.0; 4];
     let mut teleport = [0.0; 4];
     let mut next = [0.0; 2];
@@ -433,8 +468,12 @@ fn borrowed_scratch_rejects_undersized_storage() -> Result<(), Box<dyn Error>> {
 #[test]
 fn pagerank_runs_over_hyper_bcsr_layout() -> Result<(), PageRankFixtureError> {
     let hypergraph = bcsr_fixture()?;
-    let elements = [BcsrVertexId(0), BcsrVertexId(1), BcsrVertexId(2)];
-    let relations = [BcsrHyperedgeId(0), BcsrHyperedgeId(1)];
+    let elements = [
+        BcsrVertexId::new(0),
+        BcsrVertexId::new(1),
+        BcsrVertexId::new(2),
+    ];
+    let relations = [BcsrHyperedgeId::new(0), BcsrHyperedgeId::new(1)];
     let mut element_ranks = [0.0; 3];
     let mut relation_ranks = [0.0; 2];
 
@@ -464,8 +503,12 @@ fn pagerank_runs_over_hyper_bcsr_layout() -> Result<(), PageRankFixtureError> {
 #[test]
 fn weighted_pagerank_runs_over_hyper_bcsr_layout() -> Result<(), PageRankFixtureError> {
     let hypergraph = bcsr_fixture()?;
-    let elements = [BcsrVertexId(0), BcsrVertexId(1), BcsrVertexId(2)];
-    let relations = [BcsrHyperedgeId(0), BcsrHyperedgeId(1)];
+    let elements = [
+        BcsrVertexId::new(0),
+        BcsrVertexId::new(1),
+        BcsrVertexId::new(2),
+    ];
+    let relations = [BcsrHyperedgeId::new(0), BcsrHyperedgeId::new(1)];
     let relation_weights = BcsrRelationWeights {
         values: &[4.0, 1.0],
     };
@@ -501,8 +544,12 @@ fn weighted_pagerank_runs_over_hyper_bcsr_layout() -> Result<(), PageRankFixture
 #[test]
 fn hypergraph_workspace_matches_allocating() -> Result<(), Box<dyn Error>> {
     let hypergraph = bcsr_fixture()?;
-    let elements = [BcsrVertexId(0), BcsrVertexId(1), BcsrVertexId(2)];
-    let relations = [BcsrHyperedgeId(0), BcsrHyperedgeId(1)];
+    let elements = [
+        BcsrVertexId::new(0),
+        BcsrVertexId::new(1),
+        BcsrVertexId::new(2),
+    ];
+    let relations = [BcsrHyperedgeId::new(0), BcsrHyperedgeId::new(1)];
     let mut allocating_elements = [0.0; 3];
     let mut allocating_relations = [0.0; 2];
     pagerank_hypergraph(
@@ -545,7 +592,12 @@ fn hypergraph_workspace_matches_allocating() -> Result<(), Box<dyn Error>> {
 #[test]
 fn invalid_graph_config_is_rejected() -> Result<(), PageRankFixtureError> {
     let graph = csr_fixture()?;
-    let elements = [CsrNodeId(0), CsrNodeId(1), CsrNodeId(2), CsrNodeId(3)];
+    let elements = [
+        CsrNodeId::new(0),
+        CsrNodeId::new(1),
+        CsrNodeId::new(2),
+        CsrNodeId::new(3),
+    ];
     let mut ranks = [0.0; 4];
 
     assert!(matches!(
@@ -587,7 +639,12 @@ fn invalid_graph_config_is_rejected() -> Result<(), PageRankFixtureError> {
 #[test]
 fn graph_personalization_and_lengths_are_validated() -> Result<(), PageRankFixtureError> {
     let graph = csr_fixture()?;
-    let elements = [CsrNodeId(0), CsrNodeId(1), CsrNodeId(2), CsrNodeId(3)];
+    let elements = [
+        CsrNodeId::new(0),
+        CsrNodeId::new(1),
+        CsrNodeId::new(2),
+        CsrNodeId::new(3),
+    ];
     let mut ranks = [0.0; 4];
     let report = pagerank_graph(
         &graph,
@@ -625,7 +682,7 @@ fn graph_personalization_and_lengths_are_validated() -> Result<(), PageRankFixtu
 #[test]
 fn graph_visible_subset_ignores_omitted_targets() -> Result<(), PageRankFixtureError> {
     let graph = csr_fixture()?;
-    let elements = [CsrNodeId(0), CsrNodeId(1)];
+    let elements = [CsrNodeId::new(0), CsrNodeId::new(1)];
     let mut ranks = [0.0; 4];
 
     let report = pagerank_graph(&graph, &Uniform, elements, CONFIG, None, &mut ranks)?;
@@ -658,7 +715,7 @@ fn graph_visible_subset_ignores_omitted_targets() -> Result<(), PageRankFixtureE
 #[test]
 fn graph_duplicate_visible_elements_are_rejected() -> Result<(), PageRankFixtureError> {
     let graph = csr_fixture()?;
-    let elements = [CsrNodeId(0), CsrNodeId(1), CsrNodeId(1)];
+    let elements = [CsrNodeId::new(0), CsrNodeId::new(1), CsrNodeId::new(1)];
     let mut ranks = [0.0; 4];
 
     let error = pagerank_graph(&graph, &Uniform, elements, CONFIG, None, &mut ranks);
@@ -673,7 +730,12 @@ fn graph_duplicate_visible_elements_are_rejected() -> Result<(), PageRankFixture
 #[test]
 fn graph_invalid_weights_are_rejected() -> Result<(), PageRankFixtureError> {
     let graph = csr_fixture()?;
-    let elements = [CsrNodeId(0), CsrNodeId(1), CsrNodeId(2), CsrNodeId(3)];
+    let elements = [
+        CsrNodeId::new(0),
+        CsrNodeId::new(1),
+        CsrNodeId::new(2),
+        CsrNodeId::new(3),
+    ];
     let mut ranks = [0.0; 4];
     for invalid in [-1.0, f64::NAN, f64::INFINITY] {
         let weights = CsrRelationWeights {
@@ -697,7 +759,12 @@ fn graph_invalid_weights_are_rejected() -> Result<(), PageRankFixtureError> {
 #[test]
 fn zero_weight_rows_are_dangling_rows() -> Result<(), PageRankFixtureError> {
     let graph = csr_fixture()?;
-    let elements = [CsrNodeId(0), CsrNodeId(1), CsrNodeId(2), CsrNodeId(3)];
+    let elements = [
+        CsrNodeId::new(0),
+        CsrNodeId::new(1),
+        CsrNodeId::new(2),
+        CsrNodeId::new(3),
+    ];
     let weights = CsrRelationWeights {
         values: &[0.0, 0.0, 0.0, 0.0],
     };
@@ -721,7 +788,12 @@ fn zero_weight_rows_are_dangling_rows() -> Result<(), PageRankFixtureError> {
 #[test]
 fn non_convergence_reports_last_nonzero_delta() -> Result<(), PageRankFixtureError> {
     let graph = csr_fixture()?;
-    let elements = [CsrNodeId(0), CsrNodeId(1), CsrNodeId(2), CsrNodeId(3)];
+    let elements = [
+        CsrNodeId::new(0),
+        CsrNodeId::new(1),
+        CsrNodeId::new(2),
+        CsrNodeId::new(3),
+    ];
     let mut ranks = [0.0; 4];
     let error = pagerank_graph(
         &graph,
@@ -741,7 +813,12 @@ fn non_convergence_reports_last_nonzero_delta() -> Result<(), PageRankFixtureErr
 #[test]
 fn deterministic_output_repeats() -> Result<(), PageRankFixtureError> {
     let graph = csr_fixture()?;
-    let elements = [CsrNodeId(0), CsrNodeId(1), CsrNodeId(2), CsrNodeId(3)];
+    let elements = [
+        CsrNodeId::new(0),
+        CsrNodeId::new(1),
+        CsrNodeId::new(2),
+        CsrNodeId::new(3),
+    ];
     let mut first = [0.0; 4];
     let mut second = [0.0; 4];
     pagerank_graph(&graph, &Uniform, elements, CONFIG, None, &mut first)?;
@@ -755,8 +832,8 @@ fn deterministic_output_repeats() -> Result<(), PageRankFixtureError> {
 #[test]
 fn hypergraph_visible_subset_ignores_omitted_states() -> Result<(), PageRankFixtureError> {
     let hypergraph = bcsr_fixture()?;
-    let elements = [BcsrVertexId(0), BcsrVertexId(1)];
-    let relations = [BcsrHyperedgeId(0)];
+    let elements = [BcsrVertexId::new(0), BcsrVertexId::new(1)];
+    let relations = [BcsrHyperedgeId::new(0)];
     let mut element_ranks = [0.0; 3];
     let mut relation_ranks = [0.0; 2];
 
@@ -787,8 +864,12 @@ fn hypergraph_duplicate_visible_states_are_rejected() -> Result<(), PageRankFixt
     let duplicate_element = pagerank_hypergraph(
         &hypergraph,
         &Uniform,
-        [BcsrVertexId(0), BcsrVertexId(1), BcsrVertexId(1)],
-        [BcsrHyperedgeId(0), BcsrHyperedgeId(1)],
+        [
+            BcsrVertexId::new(0),
+            BcsrVertexId::new(1),
+            BcsrVertexId::new(1),
+        ],
+        [BcsrHyperedgeId::new(0), BcsrHyperedgeId::new(1)],
         CONFIG,
         None,
         &mut element_ranks,
@@ -802,8 +883,12 @@ fn hypergraph_duplicate_visible_states_are_rejected() -> Result<(), PageRankFixt
     let duplicate_relation = pagerank_hypergraph(
         &hypergraph,
         &Uniform,
-        [BcsrVertexId(0), BcsrVertexId(1), BcsrVertexId(2)],
-        [BcsrHyperedgeId(0), BcsrHyperedgeId(0)],
+        [
+            BcsrVertexId::new(0),
+            BcsrVertexId::new(1),
+            BcsrVertexId::new(2),
+        ],
+        [BcsrHyperedgeId::new(0), BcsrHyperedgeId::new(0)],
         CONFIG,
         None,
         &mut element_ranks,
@@ -820,8 +905,12 @@ fn hypergraph_duplicate_visible_states_are_rejected() -> Result<(), PageRankFixt
 fn hypergraph_invalid_weights_and_personalization_are_rejected() -> Result<(), PageRankFixtureError>
 {
     let hypergraph = bcsr_fixture()?;
-    let elements = [BcsrVertexId(0), BcsrVertexId(1), BcsrVertexId(2)];
-    let relations = [BcsrHyperedgeId(0), BcsrHyperedgeId(1)];
+    let elements = [
+        BcsrVertexId::new(0),
+        BcsrVertexId::new(1),
+        BcsrVertexId::new(2),
+    ];
+    let relations = [BcsrHyperedgeId::new(0), BcsrHyperedgeId::new(1)];
     let relation_weights = BcsrRelationWeights {
         values: &[1.0, -1.0],
     };
@@ -881,8 +970,12 @@ fn hypergraph_invalid_weights_and_personalization_are_rejected() -> Result<(), P
 #[test]
 fn hypergraph_non_convergence_reports_last_nonzero_delta() -> Result<(), PageRankFixtureError> {
     let hypergraph = bcsr_fixture()?;
-    let elements = [BcsrVertexId(0), BcsrVertexId(1), BcsrVertexId(2)];
-    let relations = [BcsrHyperedgeId(0), BcsrHyperedgeId(1)];
+    let elements = [
+        BcsrVertexId::new(0),
+        BcsrVertexId::new(1),
+        BcsrVertexId::new(2),
+    ];
+    let relations = [BcsrHyperedgeId::new(0), BcsrHyperedgeId::new(1)];
     let mut element_ranks = [0.0; 3];
     let mut relation_ranks = [0.0; 2];
     let error = pagerank_hypergraph(
@@ -930,7 +1023,7 @@ proptest! {
             .iter()
             .enumerate()
             .filter_map(|(node, is_visible)| {
-                is_visible.then_some(CsrNodeId(u32::try_from(node).ok()?))
+                is_visible.then_some(CsrNodeId::new(u32::try_from(node).ok()?))
             })
             .collect();
         let config = PageRankConfig::new(0.85, 1.0e-9, 1_000);
@@ -1038,14 +1131,14 @@ proptest! {
             .iter()
             .enumerate()
             .filter_map(|(index, is_visible)| {
-                is_visible.then_some(BcsrVertexId(u32::try_from(index).ok()?))
+                is_visible.then_some(BcsrVertexId::new(u32::try_from(index).ok()?))
             })
             .collect();
         let relations: Vec<BcsrHyperedgeId<u32>> = visible_relations
             .iter()
             .enumerate()
             .filter_map(|(index, is_visible)| {
-                is_visible.then_some(BcsrHyperedgeId(u32::try_from(index).ok()?))
+                is_visible.then_some(BcsrHyperedgeId::new(u32::try_from(index).ok()?))
             })
             .collect();
 

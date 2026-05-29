@@ -383,6 +383,17 @@ pub enum BcsrSnapshotError {
         /// The kind constant the lookup used.
         kind: u32,
     },
+    /// A required section was present but its version did not match.
+    VersionMismatch {
+        /// Which section had the wrong version.
+        section: BcsrSection,
+        /// The kind constant the lookup used.
+        kind: u32,
+        /// Version the reader required.
+        expected: u32,
+        /// Version recorded in the snapshot.
+        actual: u32,
+    },
     /// A required section payload could not be borrowed as `[U32<LE>]`.
     SectionView {
         /// Which section failed the typed-slice cast.
@@ -413,6 +424,15 @@ impl fmt::Display for BcsrSnapshotError {
             Self::MissingSection { section, kind } => write!(
                 formatter,
                 "snapshot has no {section} section (kind 0x{kind:04x})"
+            ),
+            Self::VersionMismatch {
+                section,
+                kind,
+                expected,
+                actual,
+            } => write!(
+                formatter,
+                "{section} section (kind 0x{kind:04x}) version {actual} does not match expected {expected}"
             ),
             Self::SectionView { section, error } => write!(
                 formatter,

@@ -205,8 +205,8 @@ impl PyGraphBuilder {
             .inner
             .add_node(weight.unwrap_or(DEFAULT_ELEMENT_WEIGHT))
             .map_err(py_graph_error)?;
-        self.labels.insert_checked(label, node.0);
-        Ok(node.0)
+        self.labels.insert_checked(label, node.get());
+        Ok(node.get())
     }
 
     /// Adds a directed edge with an optional relation weight.
@@ -215,25 +215,25 @@ impl PyGraphBuilder {
         let edge = self
             .inner
             .add_edge(
-                GraphNodeId(source),
-                GraphNodeId(target),
+                GraphNodeId::new(source),
+                GraphNodeId::new(target),
                 weight.unwrap_or(DEFAULT_RELATION_WEIGHT),
             )
             .map_err(py_graph_error)?;
-        Ok(edge.0)
+        Ok(edge.get())
     }
 
     /// Sets an existing node's element weight.
     fn set_element_weight(&mut self, node: u32, weight: f64) -> PyResult<()> {
         self.inner
-            .set_element_weight(GraphNodeId(node), weight)
+            .set_element_weight(GraphNodeId::new(node), weight)
             .map_err(py_graph_error)
     }
 
     /// Sets an existing edge's relation weight.
     fn set_relation_weight(&mut self, edge: u32, weight: f64) -> PyResult<()> {
         self.inner
-            .set_relation_weight(GraphEdgeId(edge), weight)
+            .set_relation_weight(GraphEdgeId::new(edge), weight)
             .map_err(py_graph_error)
     }
 
@@ -292,8 +292,8 @@ impl PyFrozenGraph {
         dense_ids(self.inner.edge_count())
             .into_iter()
             .map(|edge| {
-                let (source, target) = self.inner.endpoints(GraphEdgeId(edge));
-                (edge, source.0, target.0)
+                let (source, target) = self.inner.endpoints(GraphEdgeId::new(edge));
+                (edge, source.get(), target.get())
             })
             .collect()
     }
@@ -301,39 +301,39 @@ impl PyFrozenGraph {
     /// Returns the element weight for a node.
     fn element_weight(&self, node: u32) -> PyResult<f64> {
         ensure_graph_node(&self.inner, node)?;
-        Ok(self.inner.element_weight(GraphNodeId(node)))
+        Ok(self.inner.element_weight(GraphNodeId::new(node)))
     }
 
     /// Returns the relation weight for an edge.
     fn relation_weight(&self, edge: u32) -> PyResult<f64> {
         ensure_graph_edge(&self.inner, edge)?;
-        Ok(self.inner.relation_weight(GraphEdgeId(edge)))
+        Ok(self.inner.relation_weight(GraphEdgeId::new(edge)))
     }
 
     /// Returns the canonical node ID for a local node ID.
     fn canonical_node_id(&self, node: u32) -> PyResult<u32> {
         ensure_graph_node(&self.inner, node)?;
-        Ok(self.inner.canonical_element_id(GraphNodeId(node)).0)
+        Ok(self.inner.canonical_element_id(GraphNodeId::new(node)).get())
     }
 
     /// Returns the local node ID for a canonical node ID, if visible.
     fn local_node_id(&self, canonical: u32) -> Option<u32> {
         self.inner
-            .local_element_id(GraphNodeId(canonical))
-            .map(|node| node.0)
+            .local_element_id(GraphNodeId::new(canonical))
+            .map(|x| x.get())
     }
 
     /// Returns the canonical edge ID for a local edge ID.
     fn canonical_edge_id(&self, edge: u32) -> PyResult<u32> {
         ensure_graph_edge(&self.inner, edge)?;
-        Ok(self.inner.canonical_relation_id(GraphEdgeId(edge)).0)
+        Ok(self.inner.canonical_relation_id(GraphEdgeId::new(edge)).get())
     }
 
     /// Returns the local edge ID for a canonical edge ID, if visible.
     fn local_edge_id(&self, canonical: u32) -> Option<u32> {
         self.inner
-            .local_relation_id(GraphEdgeId(canonical))
-            .map(|edge| edge.0)
+            .local_relation_id(GraphEdgeId::new(canonical))
+            .map(|x| x.get())
     }
 
     /// Returns the node ID for a Python label, if present.
@@ -350,8 +350,8 @@ impl PyFrozenGraph {
     /// Returns `(source_node, target_node)` for a local edge ID.
     fn edge(&self, edge: u32) -> PyResult<(u32, u32)> {
         ensure_graph_edge(&self.inner, edge)?;
-        let (source, target) = self.inner.endpoints(GraphEdgeId(edge));
-        Ok((source.0, target.0))
+        let (source, target) = self.inner.endpoints(GraphEdgeId::new(edge));
+        Ok((source.get(), target.get()))
     }
 
     /// Returns `(edge_id, target_node)` tuples whose source is `node`.
@@ -359,10 +359,10 @@ impl PyFrozenGraph {
         ensure_graph_node(&self.inner, node)?;
         Ok(self
             .inner
-            .outgoing_edges(GraphNodeId(node))
+            .outgoing_edges(GraphNodeId::new(node))
             .map(|edge| {
                 let (_source, target) = self.inner.endpoints(edge);
-                (edge.0, target.0)
+                (edge.get(), target.get())
             })
             .collect())
     }
@@ -372,17 +372,17 @@ impl PyFrozenGraph {
         ensure_graph_node(&self.inner, node)?;
         Ok(self
             .inner
-            .element_successors(GraphNodeId(node))
-            .map(|node| node.0)
+            .element_successors(GraphNodeId::new(node))
+            .map(|x| x.get())
             .collect())
     }
 
     /// Runs BFS from `start` and returns visited node IDs in traversal order.
     fn bfs(&self, start: u32) -> PyResult<Vec<u32>> {
         ensure_graph_node(&self.inner, start)?;
-        let traversal = breadth_first_search(&self.inner, GraphNodeId(start))
+        let traversal = breadth_first_search(&self.inner, GraphNodeId::new(start))
             .map_err(|error| GraphError::new_err(error.to_string()))?;
-        Ok(traversal.map(|node| node.0).collect())
+        Ok(traversal.map(|x| x.get()).collect())
     }
 
     /// Runs unweighted PageRank over all nodes.
@@ -473,8 +473,8 @@ impl PyHypergraphBuilder {
             .inner
             .add_vertex(weight.unwrap_or(DEFAULT_ELEMENT_WEIGHT))
             .map_err(py_hyper_error)?;
-        self.labels.insert_checked(label, vertex.0);
-        Ok(vertex.0)
+        self.labels.insert_checked(label, vertex.get());
+        Ok(vertex.get())
     }
 
     /// Adds a directed hyperedge with optional relation and incidence weights.
@@ -497,20 +497,20 @@ impl PyHypergraphBuilder {
                 weight.unwrap_or(DEFAULT_RELATION_WEIGHT),
             )
             .map_err(py_hyper_error)?;
-        Ok(hyperedge.0)
+        Ok(hyperedge.get())
     }
 
     /// Sets a vertex element weight.
     fn set_element_weight(&mut self, vertex: u32, weight: f64) -> PyResult<()> {
         self.inner
-            .set_element_weight(HyperVertexId(vertex), weight)
+            .set_element_weight(HyperVertexId::new(vertex), weight)
             .map_err(py_hyper_error)
     }
 
     /// Sets a hyperedge relation weight.
     fn set_relation_weight(&mut self, hyperedge: u32, weight: f64) -> PyResult<()> {
         self.inner
-            .set_relation_weight(HyperedgeId(hyperedge), weight)
+            .set_relation_weight(HyperedgeId::new(hyperedge), weight)
             .map_err(py_hyper_error)
     }
 
@@ -522,7 +522,7 @@ impl PyHypergraphBuilder {
         weight: f64,
     ) -> PyResult<()> {
         self.inner
-            .set_source_incidence_weight(HyperedgeId(hyperedge), position, weight)
+            .set_source_incidence_weight(HyperedgeId::new(hyperedge), position, weight)
             .map_err(py_hyper_error)
     }
 
@@ -534,7 +534,7 @@ impl PyHypergraphBuilder {
         weight: f64,
     ) -> PyResult<()> {
         self.inner
-            .set_target_incidence_weight(HyperedgeId(hyperedge), position, weight)
+            .set_target_incidence_weight(HyperedgeId::new(hyperedge), position, weight)
             .map_err(py_hyper_error)
     }
 
@@ -608,45 +608,45 @@ impl PyFrozenHypergraph {
     /// Returns an element weight for a vertex.
     fn element_weight(&self, vertex: u32) -> PyResult<f64> {
         ensure_hyper_vertex(&self.inner, vertex)?;
-        Ok(self.inner.element_weight(HyperVertexId(vertex)))
+        Ok(self.inner.element_weight(HyperVertexId::new(vertex)))
     }
 
     /// Returns a relation weight for a hyperedge.
     fn relation_weight(&self, hyperedge: u32) -> PyResult<f64> {
         ensure_hyperedge(&self.inner, hyperedge)?;
-        Ok(self.inner.relation_weight(HyperedgeId(hyperedge)))
+        Ok(self.inner.relation_weight(HyperedgeId::new(hyperedge)))
     }
 
     /// Returns an incidence weight for a participant ID.
     fn incidence_weight(&self, participant: u32) -> PyResult<f64> {
         ensure_hyper_incidence(&self.inner, participant)?;
-        Ok(self.inner.incidence_weight(HyperParticipantId(participant)))
+        Ok(self.inner.incidence_weight(HyperParticipantId::new(participant)))
     }
 
     /// Returns the canonical vertex ID for a local vertex ID.
     fn canonical_vertex_id(&self, vertex: u32) -> PyResult<u32> {
         ensure_hyper_vertex(&self.inner, vertex)?;
-        Ok(self.inner.canonical_element_id(HyperVertexId(vertex)).0)
+        Ok(self.inner.canonical_element_id(HyperVertexId::new(vertex)).get())
     }
 
     /// Returns the local vertex ID for a canonical vertex ID, if visible.
     fn local_vertex_id(&self, canonical: u32) -> Option<u32> {
         self.inner
-            .local_element_id(HyperVertexId(canonical))
-            .map(|vertex| vertex.0)
+            .local_element_id(HyperVertexId::new(canonical))
+            .map(|x| x.get())
     }
 
     /// Returns the canonical hyperedge ID for a local hyperedge ID.
     fn canonical_hyperedge_id(&self, hyperedge: u32) -> PyResult<u32> {
         ensure_hyperedge(&self.inner, hyperedge)?;
-        Ok(self.inner.canonical_relation_id(HyperedgeId(hyperedge)).0)
+        Ok(self.inner.canonical_relation_id(HyperedgeId::new(hyperedge)).get())
     }
 
     /// Returns the local hyperedge ID for a canonical hyperedge ID, if visible.
     fn local_hyperedge_id(&self, canonical: u32) -> Option<u32> {
         self.inner
-            .local_relation_id(HyperedgeId(canonical))
-            .map(|hyperedge| hyperedge.0)
+            .local_relation_id(HyperedgeId::new(canonical))
+            .map(|x| x.get())
     }
 
     /// Returns the vertex ID for a Python label, if present.
@@ -674,8 +674,8 @@ impl PyFrozenHypergraph {
         ensure_hyperedge(&self.inner, hyperedge)?;
         Ok(self
             .inner
-            .source_participants(HyperedgeId(hyperedge))
-            .map(|vertex| vertex.0)
+            .source_participants(HyperedgeId::new(hyperedge))
+            .map(|x| x.get())
             .collect())
     }
 
@@ -684,8 +684,8 @@ impl PyFrozenHypergraph {
         ensure_hyperedge(&self.inner, hyperedge)?;
         Ok(self
             .inner
-            .target_participants(HyperedgeId(hyperedge))
-            .map(|vertex| vertex.0)
+            .target_participants(HyperedgeId::new(hyperedge))
+            .map(|x| x.get())
             .collect())
     }
 
@@ -694,8 +694,8 @@ impl PyFrozenHypergraph {
         ensure_hyperedge(&self.inner, hyperedge)?;
         Ok(self
             .inner
-            .source_incidences(HyperedgeId(hyperedge))
-            .map(|incidence| incidence.0)
+            .source_incidences(HyperedgeId::new(hyperedge))
+            .map(|x| x.get())
             .collect())
     }
 
@@ -704,8 +704,8 @@ impl PyFrozenHypergraph {
         ensure_hyperedge(&self.inner, hyperedge)?;
         Ok(self
             .inner
-            .target_incidences(HyperedgeId(hyperedge))
-            .map(|incidence| incidence.0)
+            .target_incidences(HyperedgeId::new(hyperedge))
+            .map(|x| x.get())
             .collect())
     }
 
@@ -714,8 +714,8 @@ impl PyFrozenHypergraph {
         ensure_hyper_vertex(&self.inner, vertex)?;
         Ok(self
             .inner
-            .outgoing_hyperedges(HyperVertexId(vertex))
-            .map(|hyperedge| hyperedge.0)
+            .outgoing_hyperedges(HyperVertexId::new(vertex))
+            .map(|x| x.get())
             .collect())
     }
 
@@ -724,17 +724,17 @@ impl PyFrozenHypergraph {
         ensure_hyper_vertex(&self.inner, vertex)?;
         Ok(self
             .inner
-            .element_successors(HyperVertexId(vertex))
-            .map(|vertex| vertex.0)
+            .element_successors(HyperVertexId::new(vertex))
+            .map(|x| x.get())
             .collect())
     }
 
     /// Runs BFS from `start` and returns visited vertex IDs in traversal order.
     fn bfs(&self, start: u32) -> PyResult<Vec<u32>> {
         ensure_hyper_vertex(&self.inner, start)?;
-        let traversal = breadth_first_search(&self.inner, HyperVertexId(start))
+        let traversal = breadth_first_search(&self.inner, HyperVertexId::new(start))
             .map_err(|error| HypergraphError::new_err(error.to_string()))?;
-        Ok(traversal.map(|vertex| vertex.0).collect())
+        Ok(traversal.map(|x| x.get()).collect())
     }
 
     /// Runs unweighted incidence/bipartite PageRank.
@@ -801,16 +801,16 @@ impl PyFrozenHypergraph {
     /// Returns source-side vertex IDs for a known-valid hyperedge.
     fn hyperedge_source_vertices(&self, hyperedge: u32) -> Vec<u32> {
         self.inner
-            .source_participants(HyperedgeId(hyperedge))
-            .map(|vertex| vertex.0)
+            .source_participants(HyperedgeId::new(hyperedge))
+            .map(|x| x.get())
             .collect()
     }
 
     /// Returns target-side vertex IDs for a known-valid hyperedge.
     fn hyperedge_target_vertices(&self, hyperedge: u32) -> Vec<u32> {
         self.inner
-            .target_participants(HyperedgeId(hyperedge))
-            .map(|vertex| vertex.0)
+            .target_participants(HyperedgeId::new(hyperedge))
+            .map(|x| x.get())
             .collect()
     }
 }
@@ -931,7 +931,7 @@ fn pagerank_config(
 
 /// Checks a frozen graph node ID.
 fn ensure_graph_node(graph: &PythonFrozenGraph, node: u32) -> PyResult<()> {
-    if graph.contains_element(GraphNodeId(node)) {
+    if graph.contains_element(GraphNodeId::new(node)) {
         Ok(())
     } else {
         Err(GraphError::new_err(format!("invalid graph node ID {node}")))
@@ -940,7 +940,7 @@ fn ensure_graph_node(graph: &PythonFrozenGraph, node: u32) -> PyResult<()> {
 
 /// Checks a frozen graph edge ID.
 fn ensure_graph_edge(graph: &PythonFrozenGraph, edge: u32) -> PyResult<()> {
-    if graph.contains_relation(GraphEdgeId(edge)) {
+    if graph.contains_relation(GraphEdgeId::new(edge)) {
         Ok(())
     } else {
         Err(GraphError::new_err(format!("invalid graph edge ID {edge}")))
@@ -949,7 +949,7 @@ fn ensure_graph_edge(graph: &PythonFrozenGraph, edge: u32) -> PyResult<()> {
 
 /// Checks a frozen hypergraph vertex ID.
 fn ensure_hyper_vertex(hypergraph: &PythonFrozenHypergraph, vertex: u32) -> PyResult<()> {
-    if hypergraph.contains_element(HyperVertexId(vertex)) {
+    if hypergraph.contains_element(HyperVertexId::new(vertex)) {
         Ok(())
     } else {
         Err(HypergraphError::new_err(format!(
@@ -960,7 +960,7 @@ fn ensure_hyper_vertex(hypergraph: &PythonFrozenHypergraph, vertex: u32) -> PyRe
 
 /// Checks a frozen hypergraph relation ID.
 fn ensure_hyperedge(hypergraph: &PythonFrozenHypergraph, hyperedge: u32) -> PyResult<()> {
-    if hypergraph.contains_relation(HyperedgeId(hyperedge)) {
+    if hypergraph.contains_relation(HyperedgeId::new(hyperedge)) {
         Ok(())
     } else {
         Err(HypergraphError::new_err(format!(
@@ -971,7 +971,7 @@ fn ensure_hyperedge(hypergraph: &PythonFrozenHypergraph, hyperedge: u32) -> PyRe
 
 /// Checks a frozen hypergraph incidence ID.
 fn ensure_hyper_incidence(hypergraph: &PythonFrozenHypergraph, incidence: u32) -> PyResult<()> {
-    if hypergraph.contains_incidence(HyperParticipantId(incidence)) {
+    if hypergraph.contains_incidence(HyperParticipantId::new(incidence)) {
         Ok(())
     } else {
         Err(HypergraphError::new_err(format!(
@@ -1036,12 +1036,12 @@ fn weighted_vertices(
             Ok(vertices
                 .into_iter()
                 .zip(values)
-                .map(|(vertex, weight)| (HyperVertexId(vertex), weight))
+                .map(|(vertex, weight)| (HyperVertexId::new(vertex), weight))
                 .collect())
         }
         None => Ok(vertices
             .into_iter()
-            .map(|vertex| (HyperVertexId(vertex), DEFAULT_INCIDENCE_WEIGHT))
+            .map(|vertex| (HyperVertexId::new(vertex), DEFAULT_INCIDENCE_WEIGHT))
             .collect()),
     }
 }

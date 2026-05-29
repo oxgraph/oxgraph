@@ -225,7 +225,33 @@ where
     }
 
     let hyperedge_count = derive_count_from_offsets(head_len, BcsrSection::HeadOffsets)?;
+    // `head_len == tail_len` was enforced above and `hyperedge_count` is derived
+    // from `head_len`, so both paired hyperedge offset arrays are exactly
+    // `hyperedge_count + 1` long. This makes the "head offsets are canonical"
+    // assumption (head incidence IDs equal head-block positions directly)
+    // explicit rather than implicit. The same pairing holds for the vertex
+    // outgoing/incoming offset arrays via `outgoing_len == incoming_len`.
+    debug_assert_eq!(
+        head_len,
+        hyperedge_count + 1,
+        "head offsets must be hyperedge_count + 1"
+    );
+    debug_assert_eq!(
+        tail_len,
+        hyperedge_count + 1,
+        "tail offsets must be hyperedge_count + 1 (paired with head)"
+    );
     let vertex_count = derive_count_from_offsets(outgoing_len, BcsrSection::VertexOutgoingOffsets)?;
+    debug_assert_eq!(
+        outgoing_len,
+        vertex_count + 1,
+        "vertex outgoing offsets must be vertex_count + 1"
+    );
+    debug_assert_eq!(
+        incoming_len,
+        vertex_count + 1,
+        "vertex incoming offsets must be vertex_count + 1 (paired with outgoing)"
+    );
     let p_outgoing = sections.vertex_outgoing_hyperedges.len();
     let p_incoming = sections.vertex_incoming_hyperedges.len();
     let total_incidences =
@@ -486,6 +512,8 @@ where
     VertexWord: BcsrWord,
     RelationWord: BcsrWord,
 {
+    // Forward containment: every hyperedge-major `(h, v)` incidence appears in
+    // vertex `v`'s vertex-major bucket.
     cross_direction_walk(
         sections.head_offsets,
         sections.head_participants,
@@ -499,7 +527,63 @@ where
         sections.vertex_incoming_offsets,
         sections.vertex_incoming_hyperedges,
         BcsrRoleSide::Incoming,
+    )?;
+    // Converse containment: every vertex-major `(v, h)` incidence appears in
+    // hyperedge `h`'s hyperedge-major bucket. Forward + converse containment
+    // over strictly-ascending (set-semantic) buckets is a true bidirectional
+    // multiset equality, not merely one-directional containment plus a count
+    // check.
+    converse_direction_walk(
+        sections.vertex_outgoing_offsets,
+        sections.vertex_outgoing_hyperedges,
+        sections.head_offsets,
+        sections.head_participants,
+        BcsrRoleSide::Outgoing,
+    )?;
+    converse_direction_walk(
+        sections.vertex_incoming_offsets,
+        sections.vertex_incoming_hyperedges,
+        sections.tail_offsets,
+        sections.tail_participants,
+        BcsrRoleSide::Incoming,
     )
+}
+
+/// Walks one side of the bipartite index vertex-by-vertex and confirms every
+/// `(v, h)` pair appears in the matching hyperedge-major bucket. This is the
+/// converse of [`cross_direction_walk`].
+fn converse_direction_walk<OffsetWord, VertexWord, RelationWord>(
+    vertex_offsets: &[OffsetWord],
+    vertex_values: &[RelationWord],
+    edge_offsets: &[OffsetWord],
+    edge_values: &[VertexWord],
+    side: BcsrRoleSide,
+) -> Result<(), BcsrError>
+where
+    OffsetWord: BcsrWord,
+    VertexWord: BcsrWord,
+    RelationWord: BcsrWord,
+{
+    if vertex_offsets.len() < 2 {
+        return Ok(());
+    }
+    for vertex_index in 0..(vertex_offsets.len() - 1) {
+        let start = index_to_usize(vertex_offsets[vertex_index].get())?;
+        let end = index_to_usize(vertex_offsets[vertex_index + 1].get())?;
+        for word in vertex_values.iter().take(end).skip(start) {
+            let hyperedge = index_to_usize(word.get())?;
+            let bucket_start = index_to_usize(edge_offsets[hyperedge].get())?;
+            let bucket_end = index_to_usize(edge_offsets[hyperedge + 1].get())?;
+            if !bucket_contains(edge_values, bucket_start, bucket_end, vertex_index) {
+                return Err(BcsrError::CrossDirectionMismatch {
+                    side,
+                    hyperedge,
+                    vertex: vertex_index,
+                });
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Walks one side of the bipartite index hyperedge-by-hyperedge and confirms
@@ -616,8 +700,7 @@ pub(in crate::internal) fn index_to_usize<Index: BcsrIndex>(
 ///
 /// This function is `O(1)`.
 pub(in crate::internal) fn index_to_usize_validated<Index: BcsrIndex>(value: Index) -> usize {
-    value
-        .to_usize()
+    oxgraph_layout_util::index_to_usize_validated(value)
         .unwrap_or_else(|| unreachable!("validated bipartite-CSR index must fit usize"))
 }
 
@@ -632,5 +715,6 @@ pub(in crate::internal) fn index_to_usize_validated<Index: BcsrIndex>(value: Ind
 ///
 /// This function is `O(1)`.
 pub(in crate::internal) fn usize_to_index_validated<Index: BcsrIndex>(value: usize) -> Index {
-    Index::from_usize(value).unwrap_or_else(|| unreachable!("validated BCSR slot must fit index"))
+    oxgraph_layout_util::usize_to_index_validated(value)
+        .unwrap_or_else(|| unreachable!("validated BCSR slot must fit index"))
 }

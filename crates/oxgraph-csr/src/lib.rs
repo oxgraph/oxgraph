@@ -38,18 +38,20 @@ mod proofs;
 #[cfg(feature = "build")]
 pub mod build;
 
-use core::{fmt, hash::Hash, marker::PhantomData};
+use core::{fmt, marker::PhantomData};
 
 use oxgraph_graph::{
     ContainsElement, ContainsRelation, EdgeTargetGraph, ElementIndex, ElementSuccessors,
     GraphCounts, OutgoingEdgeCount, OutgoingGraph, RelationIndex, TopologyBase, TopologyCounts,
 };
-use oxgraph_layout_util::{OffsetIntegrityIssue, check_offset_section, check_value_range};
-use oxgraph_snapshot::{SectionViewError, Snapshot};
-use zerocopy::{
-    FromBytes, Immutable, IntoBytes, KnownLayout,
-    byteorder::{LE, U16, U32, U64},
+use oxgraph_layout_util::{
+    IdSlice, LocalId, NodeAxis, OffsetIntegrityIssue, SnapshotWidth, check_offset_section,
+    check_value_range,
 };
+pub use oxgraph_layout_util::{
+    LayoutIndex as CsrIndex, LayoutSnapshotWord as CsrSnapshotWord, LayoutWord as CsrWord,
+};
+use oxgraph_snapshot::{SectionBindError, SectionViewError, Snapshot};
 
 /// Section kind for a CSR `u16` offsets array.
 pub const SNAPSHOT_KIND_CSR_OFFSETS_U16: u32 = 0x0001;
@@ -65,125 +67,25 @@ pub const SNAPSHOT_KIND_CSR_TARGETS_U32: u32 = 0x0005;
 /// Section kind for a CSR `u64` targets array.
 pub const SNAPSHOT_KIND_CSR_TARGETS_U64: u32 = 0x0006;
 
-/// Private sealing traits for CSR-supported index and snapshot word types.
-mod sealed {
-    /// Seals [`super::CsrIndex`] to the built-in unsigned integer widths.
-    pub trait CsrIndex {}
+/// Section version written and expected for CSR offsets/targets payloads.
+pub const SNAPSHOT_CSR_SECTION_VERSION: u32 = 1;
 
-    /// Seals [`super::CsrSnapshotIndex`] to portable snapshot widths.
-    pub trait CsrSnapshotIndex {}
-
-    /// Seals [`super::CsrSnapshotWord`] to built-in little-endian storage words.
-    pub trait CsrSnapshotWord {}
-}
-
-/// Unsigned native index type usable as a CSR node, edge, offset, and target.
+/// Width-specific section-kind tags for persisted CSR offsets/targets payloads.
 ///
-/// CSR uses one logical index type per view. Implementations are the supported
-/// unsigned widths (`u16`, `u32`, `u64`, and `usize`) and expose checked
-/// conversions to and from `usize`, because Rust slices are indexed by `usize`.
+/// This is the thin CSR-specific layer over the shared
+/// [`SnapshotWidth`](oxgraph_layout_util::SnapshotWidth) contract: it adds only
+/// the per-width section-kind and version constants. The little-endian storage
+/// word and the native/LE conversions come from `SnapshotWidth`, so
+/// `EdgeIndex::LittleEndianWord` and `EdgeIndex::to_le_word` keep resolving
+/// through that trait.
 ///
-/// Raw indexes deliberately expose only checked conversions. Infallible
-/// conversion is private to CSR internals and requires a checked slot witness.
-///
-/// ```compile_fail
-/// use oxgraph_csr::CsrIndex;
-///
-/// let raw = 1_u32;
-/// let _ = raw.to_usize_validated();
-/// let _ = <u32 as CsrIndex>::from_usize_validated(0);
-/// ```
+/// `usize` deliberately does not implement this trait: snapshot bytes are
+/// fixed-width.
 ///
 /// # Performance
 ///
-/// Copying, comparing, hashing, formatting, and converting supported values are
-/// expected to be `O(1)`.
-pub trait CsrIndex:
-    sealed::CsrIndex + Copy + Eq + Ord + fmt::Debug + fmt::Display + Hash + Sized
-{
-    /// Zero value for this index type.
-    ///
-    /// # Performance
-    ///
-    /// Reading this constant is `O(1)`.
-    const ZERO: Self;
-
-    /// Converts this index value to `usize` when representable on this target.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`CsrError::UsizeOverflow`] when this index value does not fit
-    /// in `usize` on the current target.
-    ///
-    /// # Performance
-    ///
-    /// This method is `O(1)`.
-    fn to_usize(self) -> Option<usize>;
-
-    /// Converts a `usize` to this index type when representable.
-    ///
-    /// # Performance
-    ///
-    /// This method is `O(1)`.
-    #[must_use]
-    fn from_usize(value: usize) -> Option<Self>;
-}
-
-/// Implements [`CsrIndex`] for one native unsigned integer type.
-macro_rules! impl_csr_index {
-    ($index:ty) => {
-        impl sealed::CsrIndex for $index {}
-
-        impl CsrIndex for $index {
-            const ZERO: Self = 0;
-
-            fn to_usize(self) -> Option<usize> {
-                usize::try_from(self).ok()
-            }
-
-            fn from_usize(value: usize) -> Option<Self> {
-                Self::try_from(value).ok()
-            }
-        }
-    };
-}
-
-impl_csr_index!(u16);
-impl_csr_index!(u32);
-impl_csr_index!(u64);
-
-impl sealed::CsrIndex for usize {}
-
-impl CsrIndex for usize {
-    const ZERO: Self = 0;
-
-    fn to_usize(self) -> Option<usize> {
-        Some(self)
-    }
-
-    fn from_usize(value: usize) -> Option<Self> {
-        Some(value)
-    }
-}
-
-/// Portable index width usable for persisted CSR snapshot payloads.
-///
-/// `usize` deliberately does not implement this trait. Snapshot bytes encode
-/// their width through section kinds and use only fixed little-endian unsigned
-/// widths.
-///
-/// # Performance
-///
-/// `perf: unspecified`; implementations provide `O(1)` metadata access and
-/// little-endian word conversion.
-pub trait CsrSnapshotIndex: sealed::CsrSnapshotIndex + CsrIndex {
-    /// Little-endian zerocopy storage word for this logical index type.
-    ///
-    /// # Performance
-    ///
-    /// `perf: unspecified`; this associated type carries no runtime cost.
-    type LittleEndianWord: CsrSnapshotWord<Index = Self>;
-
+/// Reading the kind/version constants is `O(1)`.
+pub trait CsrSnapshotIndex: SnapshotWidth {
     /// Width-specific CSR offsets section kind.
     ///
     /// # Performance
@@ -198,133 +100,40 @@ pub trait CsrSnapshotIndex: sealed::CsrSnapshotIndex + CsrIndex {
     /// Reading this constant is `O(1)`.
     const TARGETS_KIND: u32;
 
-    /// Converts this value into its little-endian CSR snapshot word.
+    /// Section version written for this width's CSR payloads.
     ///
     /// # Performance
     ///
-    /// This function is `O(1)`.
-    fn to_le_word(self) -> Self::LittleEndianWord;
+    /// Reading this constant is `O(1)`.
+    const SECTION_VERSION: u32;
 }
 
 /// Implements [`CsrSnapshotIndex`] for one portable snapshot width.
 macro_rules! impl_csr_snapshot_index {
-    ($index:ty, $little_endian:ty, $offsets_kind:expr, $targets_kind:expr) => {
-        impl sealed::CsrSnapshotIndex for $index {}
-
+    ($index:ty, $offsets_kind:expr, $targets_kind:expr) => {
         impl CsrSnapshotIndex for $index {
-            type LittleEndianWord = $little_endian;
-
             const OFFSETS_KIND: u32 = $offsets_kind;
             const TARGETS_KIND: u32 = $targets_kind;
-
-            fn to_le_word(self) -> Self::LittleEndianWord {
-                <$little_endian>::new(self)
-            }
+            const SECTION_VERSION: u32 = SNAPSHOT_CSR_SECTION_VERSION;
         }
     };
 }
 
 impl_csr_snapshot_index!(
     u16,
-    U16<LE>,
     SNAPSHOT_KIND_CSR_OFFSETS_U16,
     SNAPSHOT_KIND_CSR_TARGETS_U16
 );
 impl_csr_snapshot_index!(
     u32,
-    U32<LE>,
     SNAPSHOT_KIND_CSR_OFFSETS_U32,
     SNAPSHOT_KIND_CSR_TARGETS_U32
 );
 impl_csr_snapshot_index!(
     u64,
-    U64<LE>,
     SNAPSHOT_KIND_CSR_OFFSETS_U64,
     SNAPSHOT_KIND_CSR_TARGETS_U64
 );
-
-/// Integer word usable in borrowed CSR sections.
-///
-/// Native in-memory graph fixtures use the same type as their logical
-/// [`CsrIndex`]. Snapshot-backed views use unaligned little-endian zerocopy
-/// wrappers such as [`U32<LE>`] and still expose the same host-endian graph ID
-/// type through [`Self::Index`].
-///
-/// Implementors are also `oxgraph_layout_util::ZerocopyWord`, which exposes the
-/// shared `read_as_usize` predicate used by the layout-validation primitives
-/// in `oxgraph-csr-util`. The set of `ZerocopyWord` types is sealed in
-/// `oxgraph-csr-util`, so this supertrait does not widen the public surface.
-///
-/// # Performance
-///
-/// Reading a word is expected to be `O(1)`.
-pub trait CsrWord: Copy + oxgraph_layout_util::ZerocopyWord {
-    /// Host-endian logical index decoded from this word.
-    ///
-    /// # Performance
-    ///
-    /// `perf: unspecified`; this associated type carries no runtime cost.
-    type Index: CsrIndex;
-
-    /// Returns this CSR word as a host-endian index.
-    ///
-    /// # Performance
-    ///
-    /// This method is `O(1)`.
-    fn get(self) -> Self::Index;
-}
-
-/// Implements [`CsrWord`] for one native in-memory index word.
-macro_rules! impl_native_csr_word {
-    ($index:ty) => {
-        impl CsrWord for $index {
-            type Index = $index;
-
-            fn get(self) -> Self::Index {
-                self
-            }
-        }
-    };
-}
-
-impl_native_csr_word!(u16);
-impl_native_csr_word!(u32);
-impl_native_csr_word!(u64);
-impl_native_csr_word!(usize);
-
-/// Implements CSR word traits for one little-endian zerocopy storage word.
-macro_rules! impl_little_endian_csr_word {
-    ($word:ty, $index:ty) => {
-        impl CsrWord for $word {
-            type Index = $index;
-
-            fn get(self) -> Self::Index {
-                Self::get(self)
-            }
-        }
-
-        impl sealed::CsrSnapshotWord for $word {}
-
-        impl CsrSnapshotWord for $word {}
-    };
-}
-
-impl_little_endian_csr_word!(U16<LE>, u16);
-impl_little_endian_csr_word!(U32<LE>, u32);
-impl_little_endian_csr_word!(U64<LE>, u64);
-
-/// Little-endian zerocopy word usable when opening CSR data from a snapshot.
-///
-/// This marker keeps snapshot loading endian-safe: `from_snapshot` is available
-/// for unaligned little-endian storage words, not native-endian primitives.
-///
-/// # Performance
-///
-/// `perf: unspecified`; this marker trait has no methods.
-pub trait CsrSnapshotWord:
-    sealed::CsrSnapshotWord + CsrWord + FromBytes + Immutable + IntoBytes + KnownLayout
-{
-}
 
 /// Native borrowed CSR graph alias.
 ///
@@ -350,53 +159,37 @@ pub type CsrSnapshotGraph<'view, NodeIndex, EdgeIndex> = CsrGraph<
     'view,
     NodeIndex,
     EdgeIndex,
-    <EdgeIndex as CsrSnapshotIndex>::LittleEndianWord,
-    <NodeIndex as CsrSnapshotIndex>::LittleEndianWord,
+    <EdgeIndex as SnapshotWidth>::LittleEndianWord,
+    <NodeIndex as SnapshotWidth>::LittleEndianWord,
 >;
 
 /// Local node ID for [`CsrGraph`].
 ///
 /// Values are dense handles in `0..node_count` for one validated CSR view. They
 /// are topology-local IDs and are not stable across rebuilding or compaction
-/// unless a higher layer defines that contract.
+/// unless a higher layer defines that contract. This is an alias of the shared
+/// [`LocalId`](oxgraph_layout_util::LocalId) branded by the node axis, so a
+/// built graph and its borrowed snapshot view yield the same handle type.
 ///
 /// # Performance
 ///
 /// Copying, comparing, ordering, hashing, and debug-formatting are `O(1)` when
 /// the underlying index type provides those operations in `O(1)`.
-#[derive(Clone, Copy, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct CsrNodeId<Index>(pub Index);
-
-impl<Index> fmt::Debug for CsrNodeId<Index>
-where
-    Index: fmt::Debug,
-{
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.debug_tuple("CsrNodeId").field(&self.0).finish()
-    }
-}
+pub type CsrNodeId<Index> = LocalId<NodeAxis, Index>;
 
 /// Local edge ID for [`CsrGraph`].
 ///
 /// Values are dense handles into the flat CSR target array. They are
 /// topology-local IDs and are not stable across sorting, rebuilding, or
-/// compaction unless a higher layer defines that contract.
+/// compaction unless a higher layer defines that contract. This is an alias of
+/// the shared [`LocalId`](oxgraph_layout_util::LocalId) branded by the edge
+/// axis.
 ///
 /// # Performance
 ///
 /// Copying, comparing, ordering, hashing, and debug-formatting are `O(1)` when
 /// the underlying index type provides those operations in `O(1)`.
-#[derive(Clone, Copy, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct CsrEdgeId<Index>(pub Index);
-
-impl<Index> fmt::Debug for CsrEdgeId<Index>
-where
-    Index: fmt::Debug,
-{
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.debug_tuple("CsrEdgeId").field(&self.0).finish()
-    }
-}
+pub type CsrEdgeId<Index> = LocalId<oxgraph_layout_util::EdgeAxis, Index>;
 
 /// Typestate marker for a slot that still carries an unchecked raw ID.
 #[derive(Clone, Copy, Debug)]
@@ -423,9 +216,12 @@ impl<Index> NodeSlot<Unchecked, Index> {
     /// # Performance
     ///
     /// This function is `O(1)`.
-    fn from_id(id: CsrNodeId<Index>) -> Self {
+    fn from_id(id: CsrNodeId<Index>) -> Self
+    where
+        Index: Copy,
+    {
         Self {
-            raw: id.0,
+            raw: id.get(),
             slot: 0,
             state: PhantomData,
         }
@@ -473,9 +269,12 @@ impl<Index> EdgeSlot<Unchecked, Index> {
     /// # Performance
     ///
     /// This function is `O(1)`.
-    fn from_id(id: CsrEdgeId<Index>) -> Self {
+    fn from_id(id: CsrEdgeId<Index>) -> Self
+    where
+        Index: Copy,
+    {
         Self {
-            raw: id.0,
+            raw: id.get(),
             slot: 0,
             state: PhantomData,
         }
@@ -511,7 +310,7 @@ impl<Index> EdgeSlot<Checked, Index> {
     where
         Index: CsrIndex,
     {
-        let raw = Index::from_usize(slot)?;
+        let raw = oxgraph_layout_util::usize_to_index_validated::<Index>(slot)?;
         Some(Self::from_raw_slot(raw, slot))
     }
 
@@ -552,7 +351,7 @@ impl<Index> EdgeSlot<Checked, Index> {
     where
         Index: Copy,
     {
-        CsrEdgeId(self.raw)
+        CsrEdgeId::new(self.raw)
     }
 }
 
@@ -744,7 +543,7 @@ where
             return false;
         };
         for word in &self.targets[start..end] {
-            if visit(CsrNodeId(word.get())) {
+            if visit(CsrNodeId::new(word.get())) {
                 return true;
             }
         }
@@ -877,8 +676,7 @@ where
     ///
     /// This method is `O(1)`.
     fn checked_offset_slot(offset: EdgeIndex) -> usize {
-        offset
-            .to_usize()
+        oxgraph_layout_util::index_to_usize_validated(offset)
             .unwrap_or_else(|| unreachable!("checked CSR offset must fit usize"))
     }
 
@@ -888,7 +686,7 @@ where
     ///
     /// This method is `O(1)` for valid edge IDs from this view.
     fn target_node(&self, edge: EdgeSlot<Checked, EdgeIndex>) -> CsrNodeId<NodeIndex> {
-        CsrNodeId(self.targets[edge.index()].get())
+        CsrNodeId::new(self.targets[edge.index()].get())
     }
 
     /// Returns the start and end edge slots for a checked node.
@@ -910,8 +708,8 @@ impl<'view, NodeIndex, EdgeIndex>
         'view,
         NodeIndex,
         EdgeIndex,
-        <EdgeIndex as CsrSnapshotIndex>::LittleEndianWord,
-        <NodeIndex as CsrSnapshotIndex>::LittleEndianWord,
+        <EdgeIndex as SnapshotWidth>::LittleEndianWord,
+        <NodeIndex as SnapshotWidth>::LittleEndianWord,
     >
 where
     NodeIndex: CsrSnapshotIndex,
@@ -926,11 +724,14 @@ where
     /// [`CsrSnapshotGraph`] to select node and edge snapshot widths, for example
     /// `CsrSnapshotGraph<'_, u32, u64>`.
     ///
+    /// This delegates to [`from_snapshot_with_kinds`](Self::from_snapshot_with_kinds)
+    /// using the width-default offsets/targets kinds and section version.
+    ///
     /// # Errors
     ///
-    /// Returns [`CsrSnapshotError`] when either section is missing, cannot be
-    /// viewed as the selected word width, is empty, has too many offsets for
-    /// the selected index type, or fails CSR validation.
+    /// Returns [`CsrSnapshotError`] when either section is missing, has the
+    /// wrong version, cannot be viewed as the selected word width, is empty, has
+    /// too many offsets for the selected index type, or fails CSR validation.
     ///
     /// # Performance
     ///
@@ -939,19 +740,43 @@ where
     pub fn from_snapshot(
         snapshot: &Snapshot<'view>,
     ) -> Result<Self, CsrSnapshotError<NodeIndex, EdgeIndex>> {
-        let offsets_section = snapshot
-            .section(EdgeIndex::OFFSETS_KIND)
-            .ok_or(CsrSnapshotError::MissingOffsets)?;
-        let targets_section = snapshot
-            .section(NodeIndex::TARGETS_KIND)
-            .ok_or(CsrSnapshotError::MissingTargets)?;
+        Self::from_snapshot_with_kinds(
+            snapshot,
+            EdgeIndex::OFFSETS_KIND,
+            NodeIndex::TARGETS_KIND,
+            EdgeIndex::SECTION_VERSION,
+        )
+    }
 
-        let offsets: &'view [<EdgeIndex as CsrSnapshotIndex>::LittleEndianWord] = offsets_section
-            .try_as_slice()
-            .map_err(CsrSnapshotError::OffsetsView)?;
-        let targets: &'view [<NodeIndex as CsrSnapshotIndex>::LittleEndianWord] = targets_section
-            .try_as_slice()
-            .map_err(CsrSnapshotError::TargetsView)?;
+    /// Builds a snapshot-backed CSR view using caller-chosen section kinds.
+    ///
+    /// Identical to [`from_snapshot`](Self::from_snapshot) but with the offsets
+    /// and targets section kinds and the section version supplied explicitly, so
+    /// storage layers that persist CSR in a non-default band (for example an
+    /// inbound CSC index) can reuse the same validated borrow logic.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CsrSnapshotError`] when either section is missing, has the
+    /// wrong version, cannot be viewed as the selected word width, is empty, has
+    /// too many offsets for the selected index type, or fails CSR validation.
+    ///
+    /// # Performance
+    ///
+    /// This function is `O(s + n + m)` for `s` snapshot sections, `n` graph
+    /// nodes, and `m` graph edges.
+    pub fn from_snapshot_with_kinds(
+        snapshot: &Snapshot<'view>,
+        offsets_kind: u32,
+        targets_kind: u32,
+        version: u32,
+    ) -> Result<Self, CsrSnapshotError<NodeIndex, EdgeIndex>> {
+        let offsets = snapshot
+            .typed_section::<EdgeIndex>(offsets_kind, version)
+            .map_err(|error| map_offsets_bind(offsets_kind, error))?;
+        let targets = snapshot
+            .typed_section::<NodeIndex>(targets_kind, version)
+            .map_err(|error| map_targets_bind(targets_kind, error))?;
 
         if offsets.is_empty() {
             return Err(CsrSnapshotError::OffsetsEmpty);
@@ -964,6 +789,42 @@ where
             })?;
 
         Ok(Self::validate(node_count, offsets, targets)?)
+    }
+}
+
+/// Maps an offsets-side [`SectionBindError`] into a typed [`CsrSnapshotError`].
+const fn map_offsets_bind<NodeIndex, EdgeIndex>(
+    kind: u32,
+    error: SectionBindError,
+) -> CsrSnapshotError<NodeIndex, EdgeIndex> {
+    match error {
+        SectionBindError::Missing { .. } => CsrSnapshotError::MissingOffsets,
+        SectionBindError::VersionMismatch {
+            expected, actual, ..
+        } => CsrSnapshotError::OffsetsVersion {
+            kind,
+            expected,
+            actual,
+        },
+        SectionBindError::View { error, .. } => CsrSnapshotError::OffsetsView(error),
+    }
+}
+
+/// Maps a targets-side [`SectionBindError`] into a typed [`CsrSnapshotError`].
+const fn map_targets_bind<NodeIndex, EdgeIndex>(
+    kind: u32,
+    error: SectionBindError,
+) -> CsrSnapshotError<NodeIndex, EdgeIndex> {
+    match error {
+        SectionBindError::Missing { .. } => CsrSnapshotError::MissingTargets,
+        SectionBindError::VersionMismatch {
+            expected, actual, ..
+        } => CsrSnapshotError::TargetsVersion {
+            kind,
+            expected,
+            actual,
+        },
+        SectionBindError::View { error, .. } => CsrSnapshotError::TargetsView(error),
     }
 }
 
@@ -1121,15 +982,13 @@ where
     TargetWord: CsrWord<Index = NodeIndex>,
 {
     type Successors<'view>
-        = CsrOutNeighbors<'view, TargetWord>
+        = IdSlice<'view, TargetWord, CsrNodeId<NodeIndex>>
     where
         Self: 'view;
 
     fn element_successors(&self, node: CsrNodeId<NodeIndex>) -> Self::Successors<'_> {
         let range = self.outgoing_range(self.checked_node_slot(node));
-        CsrOutNeighbors {
-            targets: self.targets[range.as_range()].iter(),
-        }
+        IdSlice::new(&self.targets[range.as_range()])
     }
 }
 
@@ -1161,41 +1020,6 @@ where
 {
     fn len(&self) -> usize {
         self.range.len()
-    }
-}
-
-/// Iterator over outgoing CSR target nodes.
-///
-/// This iterator borrows the validated target slice for one node's outgoing
-/// range and yields target node IDs directly. Parallel edges and self-loops are
-/// preserved because each target entry is yielded once in CSR order.
-///
-/// # Performance
-///
-/// Advancing the iterator is `O(1)` and performs no allocation.
-#[derive(Clone, Debug)]
-pub struct CsrOutNeighbors<'view, StorageWord> {
-    /// Remaining target words in the outgoing range.
-    targets: core::slice::Iter<'view, StorageWord>,
-}
-
-impl<StorageWord> Iterator for CsrOutNeighbors<'_, StorageWord>
-where
-    StorageWord: CsrWord,
-{
-    type Item = CsrNodeId<StorageWord::Index>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.targets.next().map(|word| CsrNodeId(word.get()))
-    }
-}
-
-impl<StorageWord> ExactSizeIterator for CsrOutNeighbors<'_, StorageWord>
-where
-    StorageWord: CsrWord,
-{
-    fn len(&self) -> usize {
-        self.targets.len()
     }
 }
 
@@ -1405,6 +1229,24 @@ pub enum CsrSnapshotError<NodeIndex, EdgeIndex> {
     MissingOffsets,
     /// The snapshot has no CSR targets section for the requested node width.
     MissingTargets,
+    /// The CSR offsets section was present but its version did not match.
+    OffsetsVersion {
+        /// Offsets section kind that was bound.
+        kind: u32,
+        /// Section version the reader required.
+        expected: u32,
+        /// Section version recorded in the snapshot.
+        actual: u32,
+    },
+    /// The CSR targets section was present but its version did not match.
+    TargetsVersion {
+        /// Targets section kind that was bound.
+        kind: u32,
+        /// Section version the reader required.
+        expected: u32,
+        /// Section version recorded in the snapshot.
+        actual: u32,
+    },
     /// The CSR offsets section payload could not be borrowed as the selected
     /// little-endian index word slice.
     OffsetsView(SectionViewError),
@@ -1432,6 +1274,22 @@ where
         match self {
             Self::MissingOffsets => formatter.write_str("snapshot has no CSR offsets section"),
             Self::MissingTargets => formatter.write_str("snapshot has no CSR targets section"),
+            Self::OffsetsVersion {
+                kind,
+                expected,
+                actual,
+            } => write!(
+                formatter,
+                "CSR offsets section {kind} version {actual} does not match expected {expected}"
+            ),
+            Self::TargetsVersion {
+                kind,
+                expected,
+                actual,
+            } => write!(
+                formatter,
+                "CSR targets section {kind} version {actual} does not match expected {expected}"
+            ),
             Self::OffsetsView(error) => write!(
                 formatter,
                 "CSR offsets section cannot be borrowed as selected little-endian index words: {error}"

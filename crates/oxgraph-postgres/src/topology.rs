@@ -2,16 +2,22 @@
 
 use alloc::vec::Vec;
 
-use oxgraph_csc::CscSnapshotGraph;
+use oxgraph_csc::{CscNodeId, CscSnapshotGraph};
 use oxgraph_csr::{CsrNodeId, CsrSnapshotGraph};
 use oxgraph_graph::{EdgeTargetGraph, OutgoingGraph, OutgoingNeighborsGraph, TopologyCounts};
 use oxgraph_snapshot::Snapshot;
 
 use crate::{
-    artifact::read_metadata,
+    artifact::{
+        SNAPSHOT_KIND_PG_INBOUND_OFFSETS_U32, SNAPSHOT_KIND_PG_INBOUND_TARGETS_U32, read_metadata,
+    },
     error::{BuildError, PostgresGraphError},
     overlay::OverlayState,
 };
+
+/// Section version the Postgres inbound CSC sections are written under, matching
+/// the CSR section version the layout export uses.
+const INBOUND_SECTION_VERSION: u32 = oxgraph_csr::SNAPSHOT_CSR_SECTION_VERSION;
 
 /// Outgoing adjacency — foundation CSR topology sections only.
 #[derive(Clone, Copy, Debug)]
@@ -187,7 +193,12 @@ impl<'view> GraphTopology<'view> {
             return Err(PostgresGraphError::Build(BuildError::MissingReverseIndex));
         }
         let forward = ForwardCsr(CsrSnapshotGraph::from_snapshot(snapshot)?);
-        let inbound = InboundCsc(CscSnapshotGraph::from_snapshot(snapshot)?);
+        let inbound = InboundCsc(CscSnapshotGraph::from_snapshot_with_kinds(
+            snapshot,
+            SNAPSHOT_KIND_PG_INBOUND_OFFSETS_U32,
+            SNAPSHOT_KIND_PG_INBOUND_TARGETS_U32,
+            INBOUND_SECTION_VERSION,
+        )?);
         if forward.0.element_count() != inbound.0.node_count() {
             return Err(PostgresGraphError::Build(
                 BuildError::TopologyNodeCountMismatch,
@@ -230,7 +241,9 @@ impl ForwardCsr<'_> {
     /// This method is `O(1)` to create and `O(k)` to yield `k` successors.
     #[must_use]
     pub fn successors(&self, source: u32) -> impl ExactSizeIterator<Item = u32> + '_ {
-        self.0.outgoing_neighbors(CsrNodeId(source)).map(|id| id.0)
+        self.0
+            .outgoing_neighbors(CsrNodeId::new(source))
+            .map(CsrNodeId::get)
     }
 
     /// Returns whether `node` is visible for traversal seeds and results.
@@ -247,7 +260,7 @@ impl ForwardCsr<'_> {
         mut visit: impl FnMut(u32) -> bool,
     ) -> bool {
         self.0
-            .for_each_out_target(CsrNodeId(source), |id| visit(id.0))
+            .for_each_out_target(CsrNodeId::new(source), |id| visit(id.get()))
     }
 
     /// Walks parallel outgoing `(target, edge_id)` slots for `source`.
@@ -263,9 +276,9 @@ impl ForwardCsr<'_> {
         mut visit: impl FnMut(u32, u32) -> bool,
     ) -> bool {
         let graph = &self.0;
-        for edge in OutgoingGraph::outgoing_edges(graph, CsrNodeId(source)) {
-            let target = EdgeTargetGraph::target(graph, edge).0;
-            if visit(target, edge.0) {
+        for edge in OutgoingGraph::outgoing_edges(graph, CsrNodeId::new(source)) {
+            let target = EdgeTargetGraph::target(graph, edge).get();
+            if visit(target, edge.get()) {
                 return true;
             }
         }
@@ -291,7 +304,9 @@ impl InboundCsc<'_> {
     /// This method is `O(1)` to create and `O(k)` to yield `k` predecessors.
     #[must_use]
     pub fn predecessors(&self, target: u32) -> impl ExactSizeIterator<Item = u32> + '_ {
-        self.0.predecessors(target)
+        self.0
+            .predecessors(CscNodeId::new(target))
+            .map(CscNodeId::get)
     }
 
     /// Returns whether `node` is visible for traversal seeds and results.
@@ -308,7 +323,12 @@ impl InboundCsc<'_> {
     /// # Performance
     ///
     /// This method is `O(k)` for `k` predecessors with no iterator adapters.
-    pub(crate) fn for_each_in_source(&self, target: u32, visit: impl FnMut(u32) -> bool) -> bool {
-        self.0.for_each_predecessor(target, visit)
+    pub(crate) fn for_each_in_source(
+        &self,
+        target: u32,
+        mut visit: impl FnMut(u32) -> bool,
+    ) -> bool {
+        self.0
+            .for_each_predecessor(CscNodeId::new(target), |pred| visit(pred.get()))
     }
 }

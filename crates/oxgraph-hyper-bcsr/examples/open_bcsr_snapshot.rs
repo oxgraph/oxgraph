@@ -109,14 +109,20 @@ fn main() -> Result<(), DemoError> {
         view.hyperedge_count()
     );
 
-    let h0 = BcsrHyperedgeId(0);
-    let heads: Vec<u32> = view.source_participants(h0).map(|v| v.0).collect();
-    let tails: Vec<u32> = view.target_participants(h0).map(|v| v.0).collect();
+    let h0 = BcsrHyperedgeId::new(0);
+    let heads: Vec<u32> = view
+        .source_participants(h0)
+        .map(BcsrVertexId::get)
+        .collect();
+    let tails: Vec<u32> = view
+        .target_participants(h0)
+        .map(BcsrVertexId::get)
+        .collect();
     println!("h0 head={heads:?} tail={tails:?}");
 
     let successors: Vec<u32> = view
-        .successor_vertices(BcsrVertexId(0))
-        .map(|v| v.0)
+        .successor_vertices(BcsrVertexId::new(0))
+        .map(BcsrVertexId::get)
         .collect();
     println!("successors of v0 (through h0's tail)={successors:?}");
 

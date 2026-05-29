@@ -320,9 +320,9 @@ fn has_visible_forward_edge(
     target: u32,
 ) -> bool {
     let graph = &forward.0;
-    let target_id = CsrNodeId(target);
-    for edge in OutgoingGraph::outgoing_edges(graph, CsrNodeId(source)) {
-        if EdgeTargetGraph::target(graph, edge) == target_id && overlay.edge_visible(edge.0) {
+    let target_id = CsrNodeId::new(target);
+    for edge in OutgoingGraph::outgoing_edges(graph, CsrNodeId::new(source)) {
+        if EdgeTargetGraph::target(graph, edge) == target_id && overlay.edge_visible(edge.get()) {
             return true;
         }
     }

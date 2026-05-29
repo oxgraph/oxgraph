@@ -160,7 +160,12 @@ fn encode_snapshot(words: &SectionWords) -> Vec<u8> {
         ),
     ];
     for (kind, payload) in entries {
-        if let Err(error) = builder.add_section(kind, 0, 2, words_to_bytes(payload)) {
+        if let Err(error) = builder.add_section(
+            kind,
+            oxgraph_hyper_bcsr::SNAPSHOT_BCSR_SECTION_VERSION,
+            2,
+            words_to_bytes(payload),
+        ) {
             panic!("section 0x{kind:04x}: {error:?}");
         }
     }
@@ -178,8 +183,8 @@ fn walk_successors(view: &BcsrSnapshotHypergraph<'_, u32, u32, u32>) -> u64 {
         Err(error) => panic!("benchmark vertex count overflow: {error:?}"),
     };
     for v in 0..v_count {
-        for vertex in view.successor_vertices(BcsrVertexId(v)) {
-            checksum ^= u64::from(vertex.0);
+        for vertex in view.successor_vertices(BcsrVertexId::new(v)) {
+            checksum ^= u64::from(vertex.get());
         }
     }
     checksum

@@ -69,10 +69,7 @@ pub mod hyper {
 /// `perf: unspecified`; this module re-exports another crate.
 #[cfg(feature = "csc")]
 pub mod csc {
-    pub use oxgraph_csc::{
-        CscNodeId, CscSnapshotError, CscSnapshotGraph, SNAPSHOT_KIND_PG_INBOUND_OFFSETS_U32,
-        SNAPSHOT_KIND_PG_INBOUND_TARGETS_U32,
-    };
+    pub use oxgraph_csc::{CscNodeId, CscSnapshotError, CscSnapshotGraph};
 }
 
 /// Borrowed CSR graph layout.
@@ -84,8 +81,8 @@ pub mod csc {
 pub mod csr {
     pub use oxgraph_csr::{
         CsrEdgeId, CsrError, CsrGraph, CsrIndex, CsrNativeGraph, CsrNodeId, CsrOutEdges,
-        CsrOutNeighbors, CsrSnapshotError, CsrSnapshotGraph, CsrSnapshotIndex, CsrSnapshotWord,
-        CsrWord, SNAPSHOT_KIND_CSR_OFFSETS_U16, SNAPSHOT_KIND_CSR_OFFSETS_U32,
+        CsrSnapshotError, CsrSnapshotGraph, CsrSnapshotIndex, CsrSnapshotWord, CsrWord,
+        SNAPSHOT_CSR_SECTION_VERSION, SNAPSHOT_KIND_CSR_OFFSETS_U16, SNAPSHOT_KIND_CSR_OFFSETS_U32,
         SNAPSHOT_KIND_CSR_OFFSETS_U64, SNAPSHOT_KIND_CSR_TARGETS_U16,
         SNAPSHOT_KIND_CSR_TARGETS_U32, SNAPSHOT_KIND_CSR_TARGETS_U64,
     };
@@ -276,7 +273,7 @@ pub mod hyper_build {
         HyperParticipantId, HyperParticipantRole, HyperVertexId, HyperedgeId, HyperedgeSliceIter,
         HypergraphBuilder, IncidentHyperedgeIter, ParticipantRangeIter, ParticipantSliceIter,
         PredecessorIter, SuccessorIter, VertexSliceIter, WeightedHypergraphBuilder,
-        bcsr_slice_to_le, export_bcsr_snapshot, export_weighted_bcsr_snapshot,
+        export_bcsr_snapshot, export_weighted_bcsr_snapshot,
     };
     #[cfg(feature = "hyper-property-arrow")]
     pub use oxgraph_hyper_bcsr::build::{

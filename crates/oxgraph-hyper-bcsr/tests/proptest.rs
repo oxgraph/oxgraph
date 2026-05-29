@@ -307,7 +307,7 @@ proptest! {
         for (h_idx, head_deg) in owned.head_degrees.iter().enumerate() {
             let tail_deg = owned.tail_degrees[h_idx];
             let expected = try_into_usize(*head_deg + tail_deg)?;
-            let h_id = BcsrHyperedgeId(try_into_u32(h_idx)?);
+            let h_id = BcsrHyperedgeId::new(try_into_u32(h_idx)?);
             prop_assert_eq!(view.hyperedge_participants(h_id).count(), expected);
             prop_assert_eq!(view.hyperedge_participant_count(h_id), expected);
             prop_assert_eq!(view.relation_incidence_count(h_id), expected);
@@ -316,7 +316,7 @@ proptest! {
         for (v_idx, out_deg) in owned.outgoing_degrees.iter().enumerate() {
             let in_deg = owned.incoming_degrees[v_idx];
             let expected = try_into_usize(*out_deg + in_deg)?;
-            let v_id = BcsrVertexId(try_into_u32(v_idx)?);
+            let v_id = BcsrVertexId::new(try_into_u32(v_idx)?);
             prop_assert_eq!(view.incident_hyperedges(v_id).count(), expected);
             prop_assert_eq!(view.incident_hyperedge_count(v_id), expected);
             prop_assert_eq!(view.element_incidence_count(v_id), expected);
@@ -346,7 +346,7 @@ proptest! {
         };
 
         for h_idx in 0..owned.hyperedge_count {
-            let h_id = BcsrHyperedgeId(h_idx);
+            let h_id = BcsrHyperedgeId::new(h_idx);
             check_exact_size_walk(view.source_participants(h_id))?;
             check_exact_size_walk(view.target_participants(h_id))?;
         }

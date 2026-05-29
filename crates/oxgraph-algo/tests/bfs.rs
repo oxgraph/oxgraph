@@ -662,12 +662,17 @@ fn bfs_runs_over_csr_graph() -> Result<(), CsrError<u32, u32>> {
     let graph = CsrNativeGraph::<u32, u32>::validate(4, OFFSETS, TARGETS)?;
 
     assert_eq!(
-        scratch_order(&graph, CsrNodeId(0)),
-        Ok(vec![CsrNodeId(0), CsrNodeId(1), CsrNodeId(2), CsrNodeId(3)])
+        scratch_order(&graph, CsrNodeId::new(0)),
+        Ok(vec![
+            CsrNodeId::new(0),
+            CsrNodeId::new(1),
+            CsrNodeId::new(2),
+            CsrNodeId::new(3)
+        ])
     );
     assert_eq!(
-        epoch_order(&graph, CsrNodeId(0)),
-        scratch_order(&graph, CsrNodeId(0))
+        epoch_order(&graph, CsrNodeId::new(0)),
+        scratch_order(&graph, CsrNodeId::new(0))
     );
 
     Ok(())
@@ -682,12 +687,17 @@ fn allocating_bfs_runs_over_csr_graph() -> Result<(), CsrError<u32, u32>> {
     let graph = CsrNativeGraph::<u32, u32>::validate(4, OFFSETS, TARGETS)?;
 
     assert_eq!(
-        breadth_first_search(&graph, CsrNodeId(0)).map(std::iter::Iterator::collect::<Vec<_>>),
-        Ok(vec![CsrNodeId(0), CsrNodeId(1), CsrNodeId(2), CsrNodeId(3)])
+        breadth_first_search(&graph, CsrNodeId::new(0)).map(std::iter::Iterator::collect::<Vec<_>>),
+        Ok(vec![
+            CsrNodeId::new(0),
+            CsrNodeId::new(1),
+            CsrNodeId::new(2),
+            CsrNodeId::new(3)
+        ])
     );
     assert_eq!(
-        workspace_order(&graph, CsrNodeId(0)),
-        scratch_order(&graph, CsrNodeId(0))
+        workspace_order(&graph, CsrNodeId::new(0)),
+        scratch_order(&graph, CsrNodeId::new(0))
     );
 
     Ok(())
@@ -702,8 +712,13 @@ fn hash_bfs_runs_over_csr_graph() -> Result<(), CsrError<u32, u32>> {
     let graph = CsrNativeGraph::<u32, u32>::validate(4, OFFSETS, TARGETS)?;
 
     assert_eq!(
-        breadth_first_search_generic_hash(&graph, CsrNodeId(0)).collect::<Vec<_>>(),
-        vec![CsrNodeId(0), CsrNodeId(1), CsrNodeId(2), CsrNodeId(3)]
+        breadth_first_search_generic_hash(&graph, CsrNodeId::new(0)).collect::<Vec<_>>(),
+        vec![
+            CsrNodeId::new(0),
+            CsrNodeId::new(1),
+            CsrNodeId::new(2),
+            CsrNodeId::new(3)
+        ]
     );
 
     Ok(())
@@ -715,7 +730,12 @@ fn default_bfs_runs_over_snapshot_sections() {
 
     assert_eq!(
         snapshot_csr_order(&bytes),
-        Ok(vec![CsrNodeId(0), CsrNodeId(1), CsrNodeId(2), CsrNodeId(3)])
+        Ok(vec![
+            CsrNodeId::new(0),
+            CsrNodeId::new(1),
+            CsrNodeId::new(2),
+            CsrNodeId::new(3)
+        ])
     );
 }
 
@@ -723,7 +743,7 @@ fn default_bfs_runs_over_snapshot_sections() {
 fn snapshot_csr_order(bytes: &[u8]) -> Result<Vec<CsrNodeId<u32>>, SnapshotFixtureError> {
     let snapshot = Snapshot::open(bytes)?;
     let graph = CsrSnapshotGraph::<u32, u32>::from_snapshot(&snapshot)?;
-    scratch_order(&graph, CsrNodeId(0)).map_err(SnapshotFixtureError::Bfs)
+    scratch_order(&graph, CsrNodeId::new(0)).map_err(SnapshotFixtureError::Bfs)
 }
 
 /// Encodes a sequence of `u32` words as a little-endian byte vector.
@@ -736,7 +756,7 @@ fn valid_snapshot_bytes() -> Vec<u8> {
     let mut builder = SnapshotBuilder::new();
     if let Err(error) = builder.add_section(
         SNAPSHOT_KIND_CSR_OFFSETS_U32,
-        0,
+        oxgraph_csr::SNAPSHOT_CSR_SECTION_VERSION,
         2,
         words_to_bytes(&[0, 2, 3, 4, 4]),
     ) {
@@ -744,7 +764,7 @@ fn valid_snapshot_bytes() -> Vec<u8> {
     }
     if let Err(error) = builder.add_section(
         SNAPSHOT_KIND_CSR_TARGETS_U32,
-        0,
+        oxgraph_csr::SNAPSHOT_CSR_SECTION_VERSION,
         2,
         words_to_bytes(&[1, 2, 3, 3]),
     ) {
@@ -835,7 +855,12 @@ fn bcsr_snapshot_bytes() -> Vec<u8> {
     let mut builder = SnapshotBuilder::new();
 
     let add = |builder: &mut SnapshotBuilder, kind: u32, words: &[u32]| {
-        if let Err(error) = builder.add_section(kind, 0, 2, words_to_bytes(words)) {
+        if let Err(error) = builder.add_section(
+            kind,
+            oxgraph_hyper_bcsr::SNAPSHOT_BCSR_SECTION_VERSION,
+            2,
+            words_to_bytes(words),
+        ) {
             panic!("snapshot section {kind:#06x}: {error:?}");
         }
     };
@@ -929,14 +954,14 @@ fn forward_bfs_runs_over_bcsr_hypergraph() {
     let bytes = bcsr_snapshot_bytes();
     let view = open_bcsr_or_panic(&bytes);
 
-    let order = scratch_order_bcsr(&view, BcsrVertexId(0));
+    let order = scratch_order_bcsr(&view, BcsrVertexId::new(0));
     assert_eq!(
         order,
         vec![
-            BcsrVertexId(0),
-            BcsrVertexId(1),
-            BcsrVertexId(2),
-            BcsrVertexId(3)
+            BcsrVertexId::new(0),
+            BcsrVertexId::new(1),
+            BcsrVertexId::new(2),
+            BcsrVertexId::new(3)
         ]
     );
 }
@@ -946,14 +971,14 @@ fn reverse_bfs_runs_over_bcsr_hypergraph() {
     let bytes = bcsr_snapshot_bytes();
     let view = open_bcsr_or_panic(&bytes);
 
-    let order = reverse_scratch_order_bcsr(&view, BcsrVertexId(3));
+    let order = reverse_scratch_order_bcsr(&view, BcsrVertexId::new(3));
     assert_eq!(
         order,
         vec![
-            BcsrVertexId(3),
-            BcsrVertexId(1),
-            BcsrVertexId(2),
-            BcsrVertexId(0)
+            BcsrVertexId::new(3),
+            BcsrVertexId::new(1),
+            BcsrVertexId::new(2),
+            BcsrVertexId::new(0)
         ]
     );
 }
@@ -964,18 +989,18 @@ fn allocating_bfs_matches_scratch_on_bcsr_hypergraph() {
     let bytes = bcsr_snapshot_bytes();
     let view = open_bcsr_or_panic(&bytes);
 
-    let allocating = match breadth_first_search(&view, BcsrVertexId(0)) {
+    let allocating = match breadth_first_search(&view, BcsrVertexId::new(0)) {
         Ok(traversal) => traversal.collect::<Vec<_>>(),
         Err(error) => panic!("forward indexed BFS on BCSR failed: {error}"),
     };
-    let scratch = scratch_order_bcsr(&view, BcsrVertexId(0));
+    let scratch = scratch_order_bcsr(&view, BcsrVertexId::new(0));
     assert_eq!(allocating, scratch);
 
-    let reverse_allocating = match reverse_breadth_first_search(&view, BcsrVertexId(3)) {
+    let reverse_allocating = match reverse_breadth_first_search(&view, BcsrVertexId::new(3)) {
         Ok(traversal) => traversal.collect::<Vec<_>>(),
         Err(error) => panic!("reverse indexed BFS on BCSR failed: {error}"),
     };
-    let reverse_scratch = reverse_scratch_order_bcsr(&view, BcsrVertexId(3));
+    let reverse_scratch = reverse_scratch_order_bcsr(&view, BcsrVertexId::new(3));
     assert_eq!(reverse_allocating, reverse_scratch);
 }
 
@@ -992,24 +1017,24 @@ fn hash_bfs_runs_over_bcsr_hypergraph() {
     // a `HashSet` and compare — that is the property substrate-agnostic BFS
     // actually guarantees.
     let forward_set: HashSet<_> =
-        breadth_first_search_generic_hash(&view, BcsrVertexId(0)).collect();
+        breadth_first_search_generic_hash(&view, BcsrVertexId::new(0)).collect();
     let expected_forward: HashSet<_> = [
-        BcsrVertexId(0),
-        BcsrVertexId(1),
-        BcsrVertexId(2),
-        BcsrVertexId(3),
+        BcsrVertexId::new(0),
+        BcsrVertexId::new(1),
+        BcsrVertexId::new(2),
+        BcsrVertexId::new(3),
     ]
     .into_iter()
     .collect();
     assert_eq!(forward_set, expected_forward);
 
     let reverse_set: HashSet<_> =
-        reverse_breadth_first_search_generic_hash(&view, BcsrVertexId(3)).collect();
+        reverse_breadth_first_search_generic_hash(&view, BcsrVertexId::new(3)).collect();
     let expected_reverse: HashSet<_> = [
-        BcsrVertexId(3),
-        BcsrVertexId(1),
-        BcsrVertexId(2),
-        BcsrVertexId(0),
+        BcsrVertexId::new(3),
+        BcsrVertexId::new(1),
+        BcsrVertexId::new(2),
+        BcsrVertexId::new(0),
     ]
     .into_iter()
     .collect();
@@ -1054,11 +1079,11 @@ proptest! {
             Ok(value) => value,
             Err(error) => return Err(TestCaseError::fail(format!("valid CSR rejected: {error:?}"))),
         };
-        let indexed = match scratch_order(&graph, CsrNodeId(0)) {
+        let indexed = match scratch_order(&graph, CsrNodeId::new(0)) {
             Ok(value) => value,
             Err(error) => return Err(TestCaseError::fail(format!("scratch BFS failed: {error:?}"))),
         };
-        let epoch = match epoch_order(&graph, CsrNodeId(0)) {
+        let epoch = match epoch_order(&graph, CsrNodeId::new(0)) {
             Ok(value) => value,
             Err(error) => return Err(TestCaseError::fail(format!("epoch BFS failed: {error:?}"))),
         };
@@ -1066,12 +1091,12 @@ proptest! {
 
         #[cfg(feature = "alloc")]
         {
-            let generic = breadth_first_search_generic(&graph, CsrNodeId(0)).collect::<Vec<_>>();
-            let allocating = match breadth_first_search(&graph, CsrNodeId(0)) {
+            let generic = breadth_first_search_generic(&graph, CsrNodeId::new(0)).collect::<Vec<_>>();
+            let allocating = match breadth_first_search(&graph, CsrNodeId::new(0)) {
                 Ok(value) => value.collect::<Vec<_>>(),
                 Err(error) => return Err(TestCaseError::fail(format!("allocating BFS failed: {error:?}"))),
             };
-            let workspace = match workspace_order(&graph, CsrNodeId(0)) {
+            let workspace = match workspace_order(&graph, CsrNodeId::new(0)) {
                 Ok(value) => value,
                 Err(error) => return Err(TestCaseError::fail(format!("workspace BFS failed: {error:?}"))),
             };
@@ -1083,7 +1108,7 @@ proptest! {
 
         #[cfg(feature = "std")]
         {
-            let hash = breadth_first_search_generic_hash(&graph, CsrNodeId(0)).collect::<Vec<_>>();
+            let hash = breadth_first_search_generic_hash(&graph, CsrNodeId::new(0)).collect::<Vec<_>>();
             prop_assert_eq!(&indexed, &hash);
         }
 
@@ -1113,11 +1138,11 @@ proptest! {
             Ok(value) => value,
             Err(error) => return Err(TestCaseError::fail(format!("valid CSR rejected: {error:?}"))),
         };
-        let order = match scratch_order(&graph, CsrNodeId(0)) {
+        let order = match scratch_order(&graph, CsrNodeId::new(0)) {
             Ok(value) => value,
             Err(error) => return Err(TestCaseError::fail(format!("scratch BFS failed: {error:?}"))),
         };
-        let distances = reference_bfs_distances(&graph, CsrNodeId(0));
+        let distances = reference_bfs_distances(&graph, CsrNodeId::new(0));
         for window in order.windows(2) {
             let prev_index = graph.element_index(window[0]);
             let next_index = graph.element_index(window[1]);
@@ -1146,11 +1171,11 @@ proptest! {
             Ok(value) => value,
             Err(error) => return Err(TestCaseError::fail(format!("valid CSR rejected: {error:?}"))),
         };
-        let order = match scratch_order(&graph, CsrNodeId(0)) {
+        let order = match scratch_order(&graph, CsrNodeId::new(0)) {
             Ok(value) => value,
             Err(error) => return Err(TestCaseError::fail(format!("scratch BFS failed: {error:?}"))),
         };
-        let reachable = reference_reachable_set(&graph, CsrNodeId(0));
+        let reachable = reference_reachable_set(&graph, CsrNodeId::new(0));
         let visited: std::collections::BTreeSet<usize> =
             order.iter().map(|node| graph.element_index(*node)).collect();
         prop_assert_eq!(visited, reachable);

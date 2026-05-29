@@ -166,29 +166,33 @@ where
 fn generic_consumers_use_oxgraph_hyper_traits() -> Result<(), BcsrError> {
     let view = BcsrHypergraph::open(canonical_sections())?;
 
-    let h0 = BcsrHyperedgeId(0);
+    let h0 = BcsrHyperedgeId::new(0);
     assert_eq!(
         collect_source_participants(&view, h0),
-        vec![BcsrVertexId(0)]
+        vec![BcsrVertexId::new(0)]
     );
     assert_eq!(
         collect_target_participants(&view, h0),
-        vec![BcsrVertexId(1), BcsrVertexId(2)]
+        vec![BcsrVertexId::new(1), BcsrVertexId::new(2)]
     );
     assert_eq!(
         collect_hyperedge_participants(&view, h0),
-        vec![BcsrVertexId(0), BcsrVertexId(1), BcsrVertexId(2)]
+        vec![
+            BcsrVertexId::new(0),
+            BcsrVertexId::new(1),
+            BcsrVertexId::new(2)
+        ]
     );
 
-    let v2 = BcsrVertexId(2);
+    let v2 = BcsrVertexId::new(2);
     assert_eq!(
         collect_incident(&view, v2),
-        vec![BcsrHyperedgeId(0), BcsrHyperedgeId(1)]
+        vec![BcsrHyperedgeId::new(0), BcsrHyperedgeId::new(1)]
     );
     assert!(collect_successors(&view, v2).is_empty());
     assert_eq!(
         collect_predecessors(&view, v2),
-        vec![BcsrVertexId(0), BcsrVertexId(1)]
+        vec![BcsrVertexId::new(0), BcsrVertexId::new(1)]
     );
 
     assert_eq!(count_relation_incidences(&view, h0), 3);
@@ -198,9 +202,9 @@ fn generic_consumers_use_oxgraph_hyper_traits() -> Result<(), BcsrError> {
 #[test]
 fn generic_consumers_query_dense_indexes() -> Result<(), BcsrError> {
     let view = BcsrHypergraph::open(canonical_sections())?;
-    check_element_index(&view, BcsrVertexId(2), 2);
-    check_relation_index(&view, BcsrHyperedgeId(1), 1);
-    check_incidence_index(&view, BcsrParticipantId(3), 3);
+    check_element_index(&view, BcsrVertexId::new(2), 2);
+    check_relation_index(&view, BcsrHyperedgeId::new(1), 1);
+    check_incidence_index(&view, BcsrParticipantId::new(3), 3);
     Ok(())
 }
 
@@ -209,10 +213,13 @@ fn generic_consumers_use_count_traits() -> Result<(), BcsrError> {
     let view = BcsrHypergraph::open(canonical_sections())?;
     assert_eq!(vertex_count_via_trait(&view), 3);
     assert_eq!(hyperedge_count_via_trait(&view), 2);
-    assert_eq!(relation_size_via_trait(&view, BcsrHyperedgeId(0)), 3);
-    assert_eq!(element_size_via_trait(&view, BcsrVertexId(2)), 2);
-    assert_eq!(participant_size_via_trait(&view, BcsrHyperedgeId(1)), 2);
-    assert_eq!(incident_size_via_trait(&view, BcsrVertexId(1)), 2);
+    assert_eq!(relation_size_via_trait(&view, BcsrHyperedgeId::new(0)), 3);
+    assert_eq!(element_size_via_trait(&view, BcsrVertexId::new(2)), 2);
+    assert_eq!(
+        participant_size_via_trait(&view, BcsrHyperedgeId::new(1)),
+        2
+    );
+    assert_eq!(incident_size_via_trait(&view, BcsrVertexId::new(1)), 2);
     Ok(())
 }
 
@@ -221,16 +228,16 @@ fn generic_consumers_resolve_incidences() -> Result<(), BcsrError> {
     let view = BcsrHypergraph::open(canonical_sections())?;
     check_incidence_resolution(
         &view,
-        BcsrParticipantId(0),
-        &BcsrVertexId(0),
-        &BcsrHyperedgeId(0),
+        BcsrParticipantId::new(0),
+        &BcsrVertexId::new(0),
+        &BcsrHyperedgeId::new(0),
         &BcsrRole::Head,
     );
     check_incidence_resolution(
         &view,
-        BcsrParticipantId(2),
-        &BcsrVertexId(1),
-        &BcsrHyperedgeId(0),
+        BcsrParticipantId::new(2),
+        &BcsrVertexId::new(1),
+        &BcsrHyperedgeId::new(0),
         &BcsrRole::Tail,
     );
     Ok(())
@@ -241,9 +248,9 @@ fn generic_consumers_check_membership() -> Result<(), BcsrError> {
     let view = BcsrHypergraph::open(canonical_sections())?;
     assert_membership::<_, BcsrVertexId<u32>, BcsrHyperedgeId<u32>, BcsrParticipantId<u32>>(
         &view,
-        BcsrVertexId(0),
-        BcsrHyperedgeId(0),
-        BcsrParticipantId(0),
+        BcsrVertexId::new(0),
+        BcsrHyperedgeId::new(0),
+        BcsrParticipantId::new(0),
     );
     Ok(())
 }
