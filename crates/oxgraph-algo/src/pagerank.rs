@@ -1687,8 +1687,12 @@ fn mark_visible_relation<S>(visible: &mut [u8], index: usize) -> Result<(), Page
     Ok(())
 }
 
+// `visible` slices are sized to the view's element/relation bound and every
+// index is derived from `element_index`/`relation_index`, so direct indexing is
+// in range — matching `mark_visible_element`/`mark_visible_relation`, which also
+// index directly. This keeps a single "exactly-sized bitset" contract.
 fn is_visible(visible: &[u8], index: usize) -> bool {
-    visible.get(index).copied().unwrap_or(0) != 0
+    visible[index] != 0
 }
 
 #[expect(
@@ -1794,10 +1798,14 @@ where
     ///
     /// # Errors
     ///
-    /// [`PageRankError::PersonalizationTooShort`] when the input slice is
-    /// shorter than `state_bound`, plus any error returned by per-index
-    /// validation (`StateIndexOutOfBounds`, `DuplicateVisibleElement`,
-    /// `DuplicateVisibleRelation`, `InvalidPersonalization`).
+    /// [`PageRankError::PersonalizationTooShort`] when a `FromInput` slice is
+    /// shorter than `state_bound`;
+    /// [`PageRankError::ElementIndexOutOfBounds`] /
+    /// [`PageRankError::RelationIndexOutOfBounds`] when a visible element or
+    /// relation maps outside its bound; [`PageRankError::DuplicateElement`] /
+    /// [`PageRankError::DuplicateRelation`] when a state is marked visible
+    /// twice; and [`PageRankError::InvalidPersonalization`] for a negative
+    /// personalization entry.
     ///
     /// # Performance
     ///
@@ -2216,6 +2224,29 @@ where
     Ok(total)
 }
 
+/// Computes the teleport-blended rank for one state and its absolute delta.
+///
+/// Shared by the graph and both hypergraph state legs so the convergence
+/// formula `damping * accumulated + teleport_scale * teleport` lives in exactly
+/// one place. Returns `(new_value, |new_value - previous|)`; the caller writes
+/// `new_value` into the rank slice (the `next`/accumulator slice is cleared at
+/// the top of the following iteration, so it is intentionally not written back).
+///
+/// # Performance
+///
+/// This function is `O(1)`.
+fn teleport_update<S: PageRankScalar>(
+    damping: S,
+    teleport_scale: S,
+    accumulated: S,
+    teleport: S,
+    previous: S,
+) -> (S, S) {
+    let value = (damping * accumulated) + (teleport_scale * teleport);
+    let delta = (value - previous).abs();
+    (value, delta)
+}
+
 #[expect(
     clippy::too_many_arguments,
     reason = "teleport helper updates caller-provided rank and scratch slices"
@@ -2227,7 +2258,7 @@ fn apply_graph_teleport<G, I, S>(
     teleport: &[S],
     dangling: S,
     ranks: &mut [S],
-    next: &mut [S],
+    next: &[S],
 ) -> Result<S, PageRankError<S>>
 where
     G: ElementIndex,
@@ -2238,10 +2269,15 @@ where
     let teleport_scale = (S::ONE - config.damping) + (config.damping * dangling);
     for element in elements {
         let index = checked_element_index(graph, element)?;
-        let value = (config.damping * next[index]) + (teleport_scale * teleport[index]);
-        delta += (value - ranks[index]).abs();
+        let (value, state_delta) = teleport_update(
+            config.damping,
+            teleport_scale,
+            next[index],
+            teleport[index],
+            ranks[index],
+        );
+        delta += state_delta;
         ranks[index] = value;
-        next[index] = value;
     }
     Ok(delta)
 }
@@ -2317,8 +2353,8 @@ fn apply_hyper_teleport<H, IE, IR, S>(
     dangling: S,
     element_ranks: &mut [S],
     relation_ranks: &mut [S],
-    next_elements: &mut [S],
-    next_relations: &mut [S],
+    next_elements: &[S],
+    next_relations: &[S],
 ) -> Result<S, PageRankError<S>>
 where
     H: ElementIndex + RelationIndex,
@@ -2331,18 +2367,28 @@ where
     let teleport_scale = (S::ONE - config.damping) + (config.damping * dangling);
     for element in elements {
         let index = checked_element_index(hypergraph, element)?;
-        let value = (config.damping * next_elements[index]) + (teleport_scale * teleport[index]);
-        delta += (value - element_ranks[index]).abs();
+        let (value, state_delta) = teleport_update(
+            config.damping,
+            teleport_scale,
+            next_elements[index],
+            teleport[index],
+            element_ranks[index],
+        );
+        delta += state_delta;
         element_ranks[index] = value;
-        next_elements[index] = value;
     }
     for relation in relations {
         let index = checked_relation_index_for(hypergraph, relation)?;
         let state = e_bound + index;
-        let value = (config.damping * next_relations[index]) + (teleport_scale * teleport[state]);
-        delta += (value - relation_ranks[index]).abs();
+        let (value, state_delta) = teleport_update(
+            config.damping,
+            teleport_scale,
+            next_relations[index],
+            teleport[state],
+            relation_ranks[index],
+        );
+        delta += state_delta;
         relation_ranks[index] = value;
-        next_relations[index] = value;
     }
     Ok(delta)
 }
