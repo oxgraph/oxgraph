@@ -13,7 +13,7 @@ repository.workspace = true
 
 [features]
 default = []
-alloc = []
+alloc = ["oxgraph-layout-util/alloc"]
 std = ["alloc"]
 
 [dependencies]

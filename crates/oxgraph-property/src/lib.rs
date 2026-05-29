@@ -1591,6 +1591,25 @@ where
     I: PropertyIndex,
 {
     let descriptor = layer.descriptor().clone();
+
+    // Validate every mapping entry up front, for both storage modes, so the
+    // dense arm enforces the same structured contract as the sparse arm rather
+    // than relying on Arrow `take` to surface a generic out-of-range error.
+    // `rekey` is a remap into snapshot-local order: every canonical index named
+    // by `local_to_canonical` must be a valid index into the source layer.
+    let layer_len = layer.len();
+    for canonical in local_to_canonical.iter().copied() {
+        let in_range = canonical
+            .to_usize()
+            .is_some_and(|index| index < layer_len);
+        if !in_range {
+            return Err(PropertyError::SparseIndexOutOfBounds {
+                index: canonical.to_u64(),
+                len: layer_len,
+            });
+        }
+    }
+
     match layer.data() {
         PropertyLayerData::Dense { values } => {
             let take_indices = I::primitive_array(local_to_canonical.to_vec());
