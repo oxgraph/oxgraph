@@ -1,7 +1,6 @@
 //! Engine construction: validate artifact once and attach typed topology views.
 
 use alloc::{boxed::Box, vec::Vec};
-use core::cell::{Cell, RefCell};
 
 use oxgraph_snapshot::Snapshot;
 use yoke::Yoke;
@@ -12,7 +11,7 @@ use crate::{
     engine::{Engine, EngineCart, EngineState},
     error::{BuildError, PostgresGraphError},
     overlay::OverlayState,
-    topology::{GraphTopology, UniqueAdjacency},
+    topology::GraphTopology,
     traverse::TraverseScratch,
 };
 
@@ -96,8 +95,6 @@ impl EngineBuilder {
             overlay,
             self.config,
             traverse_scratch,
-            RefCell::new(UniqueAdjacency::default()),
-            Cell::new(false),
         ))
     }
 }

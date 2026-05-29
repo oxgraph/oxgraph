@@ -91,7 +91,7 @@ pub(crate) fn traverse_core(
     mode: TraverseMode,
 ) -> Result<KernelTraversalOutcome, PostgresGraphError> {
     let session = TraverseSession::open(engine, seeds, limits, direction, mode)?;
-    match run_bfs_multi(engine, &session) {
+    match run_bfs_multi(engine, &session)? {
         KernelOutcome::Nodes(nodes) => Ok(KernelTraversalOutcome::Nodes(nodes)),
         KernelOutcome::Count(count) => Ok(KernelTraversalOutcome::Count(count)),
     }

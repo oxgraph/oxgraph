@@ -1,14 +1,11 @@
 //! Sync log replay into overlay buffers.
 
-use alloc::{
-    collections::{BTreeMap, BTreeSet},
-    vec::Vec,
-};
+use alloc::{collections::BTreeMap, vec::Vec};
 
 use crate::{
     build::EdgeRow,
     catalog::NodeKey,
-    error::{BuildError, PostgresGraphError, SyncError},
+    error::{PostgresGraphError, SyncError},
     overlay::{OverlayEdge, OverlayState},
 };
 
@@ -292,11 +289,7 @@ pub fn dense_node_map_for_sync_resolution(
     edges: &[EdgeRow],
     raw_rows: &[RawSyncRow],
 ) -> Result<BTreeMap<NodeKey, u32>, PostgresGraphError> {
-    let mut keys = BTreeSet::new();
-    for edge in edges {
-        keys.insert(edge.source);
-        keys.insert(edge.target);
-    }
+    let mut keys = crate::build::distinct_node_keys(edges);
     for (_, action_type, arg0, arg1) in raw_rows {
         if SyncActionCodec::try_from(*action_type).is_ok_and(SyncActionCodec::carries_node_keys) {
             if let Some(key) = node_key_from_i64(*arg0) {
@@ -307,12 +300,7 @@ pub fn dense_node_map_for_sync_resolution(
             }
         }
     }
-    let mut map = BTreeMap::new();
-    for (index, key) in keys.into_iter().enumerate() {
-        let dense = u32::try_from(index).map_err(|_| BuildError::NodeCountOverflow)?;
-        map.insert(key, dense);
-    }
-    Ok(map)
+    Ok(crate::build::dense_node_map_from_keys(keys)?)
 }
 
 /// Parses a non-negative sync-log node key when present.
