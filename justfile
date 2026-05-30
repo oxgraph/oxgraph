@@ -52,11 +52,15 @@ python-ci: python-build python-test python-unsafe-check
 bench:
     cargo bench --workspace --all-features
 
+# Excludes oxgraph-pgrx (consistent with `ci`): the pgrx extension is a cdylib
+# built/tested via `postgres-test`, has no kani proofs, and cannot run under
+# miri (C FFI). `-Zmiri-disable-isolation` lets the durable-store tests touch
+# the filesystem.
 miri:
-    cargo +nightly miri test --workspace
+    MIRIFLAGS="-Zmiri-disable-isolation" cargo +nightly miri test --workspace --exclude oxgraph-pgrx
 
 kani:
-    cargo kani --workspace
+    cargo kani --workspace --exclude oxgraph-pgrx
 
 # --- aggregate ---
 
