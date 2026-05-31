@@ -28,9 +28,9 @@ use oxgraph_hyper::{
     LocalRelationIdentity, RelationIncidenceCount, RelationIncidences,
     RelationIndex as RelationIndexTrait, RelationWeight, TopologyBase, TopologyCounts,
 };
-pub use oxgraph_layout_util::BuildIndex;
 use oxgraph_layout_util::{
-    IdOutOfBounds, OffsetOverflow, build_offset_index, id_to_slot, index_from_usize, slot_or_max,
+    IdOutOfBounds, LayoutIndex, OffsetOverflow, build_offset_index, id_to_slot, index_from_usize,
+    slot_or_max,
 };
 #[cfg(feature = "build-property-arrow")]
 use oxgraph_property::{
@@ -313,9 +313,9 @@ impl<VertexIndex, RelationIndex, IncidenceIndex> From<PropertyError>
 #[must_use]
 pub struct HypergraphBuilder<VertexIndex, RelationIndex, IncidenceIndex>
 where
-    VertexIndex: BuildIndex,
-    RelationIndex: BuildIndex,
-    IncidenceIndex: BuildIndex,
+    VertexIndex: LayoutIndex,
+    RelationIndex: LayoutIndex,
+    IncidenceIndex: LayoutIndex,
 {
     vertex_count: usize,
     hyperedges: Vec<HyperedgeRecord<VertexIndex>>,
@@ -325,9 +325,9 @@ where
 impl<VertexIndex, RelationIndex, IncidenceIndex>
     HypergraphBuilder<VertexIndex, RelationIndex, IncidenceIndex>
 where
-    VertexIndex: BuildIndex,
-    RelationIndex: BuildIndex,
-    IncidenceIndex: BuildIndex,
+    VertexIndex: LayoutIndex,
+    RelationIndex: LayoutIndex,
+    IncidenceIndex: LayoutIndex,
 {
     /// Constructs an empty unweighted hypergraph builder.
     ///
@@ -468,9 +468,9 @@ where
 impl<VertexIndex, RelationIndex, IncidenceIndex> Default
     for HypergraphBuilder<VertexIndex, RelationIndex, IncidenceIndex>
 where
-    VertexIndex: BuildIndex,
-    RelationIndex: BuildIndex,
-    IncidenceIndex: BuildIndex,
+    VertexIndex: LayoutIndex,
+    RelationIndex: LayoutIndex,
+    IncidenceIndex: LayoutIndex,
 {
     fn default() -> Self {
         Self::new()
@@ -487,9 +487,9 @@ where
 #[must_use]
 pub struct WeightedHypergraphBuilder<VertexIndex, RelationIndex, IncidenceIndex, EW, RW, IW>
 where
-    VertexIndex: BuildIndex,
-    RelationIndex: BuildIndex,
-    IncidenceIndex: BuildIndex,
+    VertexIndex: LayoutIndex,
+    RelationIndex: LayoutIndex,
+    IncidenceIndex: LayoutIndex,
 {
     vertex_count: usize,
     element_weights: Vec<EW>,
@@ -501,9 +501,9 @@ where
 impl<VertexIndex, RelationIndex, IncidenceIndex, EW, RW, IW>
     WeightedHypergraphBuilder<VertexIndex, RelationIndex, IncidenceIndex, EW, RW, IW>
 where
-    VertexIndex: BuildIndex,
-    RelationIndex: BuildIndex,
-    IncidenceIndex: BuildIndex,
+    VertexIndex: LayoutIndex,
+    RelationIndex: LayoutIndex,
+    IncidenceIndex: LayoutIndex,
 {
     /// Constructs an empty weighted hypergraph builder.
     ///
@@ -765,9 +765,9 @@ where
 impl<VertexIndex, RelationIndex, IncidenceIndex, EW, RW, IW> Default
     for WeightedHypergraphBuilder<VertexIndex, RelationIndex, IncidenceIndex, EW, RW, IW>
 where
-    VertexIndex: BuildIndex,
-    RelationIndex: BuildIndex,
-    IncidenceIndex: BuildIndex,
+    VertexIndex: LayoutIndex,
+    RelationIndex: LayoutIndex,
+    IncidenceIndex: LayoutIndex,
 {
     fn default() -> Self {
         Self::new()
@@ -784,9 +784,9 @@ where
 #[must_use]
 pub struct FrozenHypergraph<VertexIndex, RelationIndex, IncidenceIndex>
 where
-    VertexIndex: BuildIndex,
-    RelationIndex: BuildIndex,
-    IncidenceIndex: BuildIndex,
+    VertexIndex: LayoutIndex,
+    RelationIndex: LayoutIndex,
+    IncidenceIndex: LayoutIndex,
 {
     topology: FrozenTopology<VertexIndex, RelationIndex, IncidenceIndex>,
 }
@@ -800,9 +800,9 @@ where
 #[must_use]
 pub struct FrozenWeightedHypergraph<VertexIndex, RelationIndex, IncidenceIndex, EW, RW, IW>
 where
-    VertexIndex: BuildIndex,
-    RelationIndex: BuildIndex,
-    IncidenceIndex: BuildIndex,
+    VertexIndex: LayoutIndex,
+    RelationIndex: LayoutIndex,
+    IncidenceIndex: LayoutIndex,
 {
     topology: FrozenTopology<VertexIndex, RelationIndex, IncidenceIndex>,
     element_weights: Box<[EW]>,
@@ -813,9 +813,9 @@ where
 #[derive(Clone, Debug)]
 struct FrozenTopology<VertexIndex, RelationIndex, IncidenceIndex>
 where
-    VertexIndex: BuildIndex,
-    RelationIndex: BuildIndex,
-    IncidenceIndex: BuildIndex,
+    VertexIndex: LayoutIndex,
+    RelationIndex: LayoutIndex,
+    IncidenceIndex: LayoutIndex,
 {
     vertex_count: usize,
     head_offsets: Box<[IncidenceIndex]>,
@@ -836,9 +836,9 @@ where
 impl<VertexIndex, RelationIndex, IncidenceIndex>
     FrozenTopology<VertexIndex, RelationIndex, IncidenceIndex>
 where
-    VertexIndex: BuildIndex,
-    RelationIndex: BuildIndex,
-    IncidenceIndex: BuildIndex,
+    VertexIndex: LayoutIndex,
+    RelationIndex: LayoutIndex,
+    IncidenceIndex: LayoutIndex,
 {
     fn relation_count(&self) -> usize {
         self.head_offsets.len().saturating_sub(1)
@@ -962,15 +962,15 @@ where
     }
 }
 
-fn vertex_slot<VertexIndex: BuildIndex>(vertex: HyperVertexId<VertexIndex>) -> usize {
+fn vertex_slot<VertexIndex: LayoutIndex>(vertex: HyperVertexId<VertexIndex>) -> usize {
     slot_or_max::<VertexIndex>(vertex.get())
 }
 
-fn hyperedge_slot<RelationIndex: BuildIndex>(hyperedge: HyperedgeId<RelationIndex>) -> usize {
+fn hyperedge_slot<RelationIndex: LayoutIndex>(hyperedge: HyperedgeId<RelationIndex>) -> usize {
     slot_or_max::<RelationIndex>(hyperedge.get())
 }
 
-fn participant_slot<IncidenceIndex: BuildIndex>(
+fn participant_slot<IncidenceIndex: LayoutIndex>(
     participant: HyperParticipantId<IncidenceIndex>,
 ) -> usize {
     slot_or_max::<IncidenceIndex>(participant.get())
@@ -993,9 +993,9 @@ macro_rules! impl_topology_for {
         impl<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*> TopologyBase
             for $name<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*>
         where
-            VertexIndex: BuildIndex,
-            RelationIndex: BuildIndex,
-            IncidenceIndex: BuildIndex,
+            VertexIndex: LayoutIndex,
+            RelationIndex: LayoutIndex,
+            IncidenceIndex: LayoutIndex,
         {
             type ElementId = HyperVertexId<VertexIndex>;
             type RelationId = HyperedgeId<RelationIndex>;
@@ -1004,9 +1004,9 @@ macro_rules! impl_topology_for {
         impl<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*> IncidenceBase
             for $name<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*>
         where
-            VertexIndex: BuildIndex,
-            RelationIndex: BuildIndex,
-            IncidenceIndex: BuildIndex,
+            VertexIndex: LayoutIndex,
+            RelationIndex: LayoutIndex,
+            IncidenceIndex: LayoutIndex,
         {
             type IncidenceId = HyperParticipantId<IncidenceIndex>;
             type Role = HyperParticipantRole;
@@ -1015,9 +1015,9 @@ macro_rules! impl_topology_for {
         impl<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*> TopologyCounts
             for $name<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*>
         where
-            VertexIndex: BuildIndex,
-            RelationIndex: BuildIndex,
-            IncidenceIndex: BuildIndex,
+            VertexIndex: LayoutIndex,
+            RelationIndex: LayoutIndex,
+            IncidenceIndex: LayoutIndex,
         {
             fn element_count(&self) -> usize {
                 self.$topology.vertex_count
@@ -1031,18 +1031,18 @@ macro_rules! impl_topology_for {
         impl<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*> HypergraphCounts
             for $name<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*>
         where
-            VertexIndex: BuildIndex,
-            RelationIndex: BuildIndex,
-            IncidenceIndex: BuildIndex,
+            VertexIndex: LayoutIndex,
+            RelationIndex: LayoutIndex,
+            IncidenceIndex: LayoutIndex,
         {
         }
 
         impl<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*> IncidenceCounts
             for $name<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*>
         where
-            VertexIndex: BuildIndex,
-            RelationIndex: BuildIndex,
-            IncidenceIndex: BuildIndex,
+            VertexIndex: LayoutIndex,
+            RelationIndex: LayoutIndex,
+            IncidenceIndex: LayoutIndex,
         {
             fn incidence_count(&self) -> usize {
                 self.$topology.participant_elements.len()
@@ -1052,9 +1052,9 @@ macro_rules! impl_topology_for {
         impl<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*> ElementIndexTrait
             for $name<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*>
         where
-            VertexIndex: BuildIndex,
-            RelationIndex: BuildIndex,
-            IncidenceIndex: BuildIndex,
+            VertexIndex: LayoutIndex,
+            RelationIndex: LayoutIndex,
+            IncidenceIndex: LayoutIndex,
         {
             fn element_bound(&self) -> usize {
                 self.$topology.vertex_count
@@ -1068,9 +1068,9 @@ macro_rules! impl_topology_for {
         impl<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*> RelationIndexTrait
             for $name<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*>
         where
-            VertexIndex: BuildIndex,
-            RelationIndex: BuildIndex,
-            IncidenceIndex: BuildIndex,
+            VertexIndex: LayoutIndex,
+            RelationIndex: LayoutIndex,
+            IncidenceIndex: LayoutIndex,
         {
             fn relation_bound(&self) -> usize {
                 self.$topology.relation_count()
@@ -1084,9 +1084,9 @@ macro_rules! impl_topology_for {
         impl<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*> IncidenceIndexTrait
             for $name<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*>
         where
-            VertexIndex: BuildIndex,
-            RelationIndex: BuildIndex,
-            IncidenceIndex: BuildIndex,
+            VertexIndex: LayoutIndex,
+            RelationIndex: LayoutIndex,
+            IncidenceIndex: LayoutIndex,
         {
             fn incidence_bound(&self) -> usize {
                 self.$topology.participant_elements.len()
@@ -1100,9 +1100,9 @@ macro_rules! impl_topology_for {
         impl<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*> ContainsElement
             for $name<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*>
         where
-            VertexIndex: BuildIndex,
-            RelationIndex: BuildIndex,
-            IncidenceIndex: BuildIndex,
+            VertexIndex: LayoutIndex,
+            RelationIndex: LayoutIndex,
+            IncidenceIndex: LayoutIndex,
         {
             fn contains_element(&self, element: HyperVertexId<VertexIndex>) -> bool {
                 element
@@ -1115,9 +1115,9 @@ macro_rules! impl_topology_for {
         impl<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*> ContainsRelation
             for $name<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*>
         where
-            VertexIndex: BuildIndex,
-            RelationIndex: BuildIndex,
-            IncidenceIndex: BuildIndex,
+            VertexIndex: LayoutIndex,
+            RelationIndex: LayoutIndex,
+            IncidenceIndex: LayoutIndex,
         {
             fn contains_relation(&self, relation: HyperedgeId<RelationIndex>) -> bool {
                 relation
@@ -1130,9 +1130,9 @@ macro_rules! impl_topology_for {
         impl<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*> ContainsIncidence
             for $name<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*>
         where
-            VertexIndex: BuildIndex,
-            RelationIndex: BuildIndex,
-            IncidenceIndex: BuildIndex,
+            VertexIndex: LayoutIndex,
+            RelationIndex: LayoutIndex,
+            IncidenceIndex: LayoutIndex,
         {
             fn contains_incidence(&self, incidence: HyperParticipantId<IncidenceIndex>) -> bool {
                 incidence
@@ -1145,9 +1145,9 @@ macro_rules! impl_topology_for {
         impl<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*> IncidenceElement
             for $name<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*>
         where
-            VertexIndex: BuildIndex,
-            RelationIndex: BuildIndex,
-            IncidenceIndex: BuildIndex,
+            VertexIndex: LayoutIndex,
+            RelationIndex: LayoutIndex,
+            IncidenceIndex: LayoutIndex,
         {
             fn incidence_element(
                 &self,
@@ -1160,9 +1160,9 @@ macro_rules! impl_topology_for {
         impl<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*> IncidenceRelation
             for $name<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*>
         where
-            VertexIndex: BuildIndex,
-            RelationIndex: BuildIndex,
-            IncidenceIndex: BuildIndex,
+            VertexIndex: LayoutIndex,
+            RelationIndex: LayoutIndex,
+            IncidenceIndex: LayoutIndex,
         {
             fn incidence_relation(
                 &self,
@@ -1175,9 +1175,9 @@ macro_rules! impl_topology_for {
         impl<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*> IncidenceRole
             for $name<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*>
         where
-            VertexIndex: BuildIndex,
-            RelationIndex: BuildIndex,
-            IncidenceIndex: BuildIndex,
+            VertexIndex: LayoutIndex,
+            RelationIndex: LayoutIndex,
+            IncidenceIndex: LayoutIndex,
         {
             fn incidence_role(&self, incidence: HyperParticipantId<IncidenceIndex>) -> HyperParticipantRole {
                 self.$topology.participant_roles[participant_slot(incidence)]
@@ -1187,9 +1187,9 @@ macro_rules! impl_topology_for {
         impl<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*> RelationIncidences
             for $name<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*>
         where
-            VertexIndex: BuildIndex,
-            RelationIndex: BuildIndex,
-            IncidenceIndex: BuildIndex,
+            VertexIndex: LayoutIndex,
+            RelationIndex: LayoutIndex,
+            IncidenceIndex: LayoutIndex,
         {
             type Incidences<'view>
                 = core::iter::Chain<ParticipantRangeIter<IncidenceIndex>, ParticipantRangeIter<IncidenceIndex>>
@@ -1205,9 +1205,9 @@ macro_rules! impl_topology_for {
         impl<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*> ElementIncidences
             for $name<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*>
         where
-            VertexIndex: BuildIndex,
-            RelationIndex: BuildIndex,
-            IncidenceIndex: BuildIndex,
+            VertexIndex: LayoutIndex,
+            RelationIndex: LayoutIndex,
+            IncidenceIndex: LayoutIndex,
         {
             type Incidences<'view>
                 = ParticipantSliceIter<'view, IncidenceIndex>
@@ -1224,9 +1224,9 @@ macro_rules! impl_topology_for {
         impl<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*> RelationIncidenceCount
             for $name<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*>
         where
-            VertexIndex: BuildIndex,
-            RelationIndex: BuildIndex,
-            IncidenceIndex: BuildIndex,
+            VertexIndex: LayoutIndex,
+            RelationIndex: LayoutIndex,
+            IncidenceIndex: LayoutIndex,
         {
             fn relation_incidence_count(&self, relation: HyperedgeId<RelationIndex>) -> usize {
                 self.$topology.source_incidence_range(relation).len()
@@ -1237,9 +1237,9 @@ macro_rules! impl_topology_for {
         impl<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*> ElementIncidenceCount
             for $name<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*>
         where
-            VertexIndex: BuildIndex,
-            RelationIndex: BuildIndex,
-            IncidenceIndex: BuildIndex,
+            VertexIndex: LayoutIndex,
+            RelationIndex: LayoutIndex,
+            IncidenceIndex: LayoutIndex,
         {
             fn element_incidence_count(&self, element: HyperVertexId<VertexIndex>) -> usize {
                 self.$topology.element_incidence_range(element).len()
@@ -1249,9 +1249,9 @@ macro_rules! impl_topology_for {
         impl<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*> HyperedgeParticipants
             for $name<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*>
         where
-            VertexIndex: BuildIndex,
-            RelationIndex: BuildIndex,
-            IncidenceIndex: BuildIndex,
+            VertexIndex: LayoutIndex,
+            RelationIndex: LayoutIndex,
+            IncidenceIndex: LayoutIndex,
         {
             type Participants<'view>
                 = core::iter::Chain<VertexSliceIter<'view, VertexIndex>, VertexSliceIter<'view, VertexIndex>>
@@ -1267,9 +1267,9 @@ macro_rules! impl_topology_for {
         impl<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*> IncidentHyperedges
             for $name<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*>
         where
-            VertexIndex: BuildIndex,
-            RelationIndex: BuildIndex,
-            IncidenceIndex: BuildIndex,
+            VertexIndex: LayoutIndex,
+            RelationIndex: LayoutIndex,
+            IncidenceIndex: LayoutIndex,
         {
             type IncidentHyperedges<'view>
                 = IncidentHyperedgeIter<'view, IncidenceIndex, RelationIndex>
@@ -1291,9 +1291,9 @@ macro_rules! impl_topology_for {
         impl<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*> DirectedHyperedgeParticipants
             for $name<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*>
         where
-            VertexIndex: BuildIndex,
-            RelationIndex: BuildIndex,
-            IncidenceIndex: BuildIndex,
+            VertexIndex: LayoutIndex,
+            RelationIndex: LayoutIndex,
+            IncidenceIndex: LayoutIndex,
         {
             type SourceParticipants<'view>
                 = VertexSliceIter<'view, VertexIndex>
@@ -1316,9 +1316,9 @@ macro_rules! impl_topology_for {
         impl<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*> DirectedHyperedgeIncidences
             for $name<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*>
         where
-            VertexIndex: BuildIndex,
-            RelationIndex: BuildIndex,
-            IncidenceIndex: BuildIndex,
+            VertexIndex: LayoutIndex,
+            RelationIndex: LayoutIndex,
+            IncidenceIndex: LayoutIndex,
         {
             type SourceIncidences<'view>
                 = ParticipantRangeIter<IncidenceIndex>
@@ -1341,9 +1341,9 @@ macro_rules! impl_topology_for {
         impl<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*> DirectedVertexHyperedges
             for $name<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*>
         where
-            VertexIndex: BuildIndex,
-            RelationIndex: BuildIndex,
-            IncidenceIndex: BuildIndex,
+            VertexIndex: LayoutIndex,
+            RelationIndex: LayoutIndex,
+            IncidenceIndex: LayoutIndex,
         {
             type OutgoingHyperedges<'view>
                 = HyperedgeSliceIter<'view, RelationIndex>
@@ -1366,9 +1366,9 @@ macro_rules! impl_topology_for {
         impl<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*> ElementSuccessors
             for $name<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*>
         where
-            VertexIndex: BuildIndex,
-            RelationIndex: BuildIndex,
-            IncidenceIndex: BuildIndex,
+            VertexIndex: LayoutIndex,
+            RelationIndex: LayoutIndex,
+            IncidenceIndex: LayoutIndex,
         {
             type Successors<'view>
                 = SuccessorIter<'view, VertexIndex, RelationIndex, IncidenceIndex>
@@ -1387,9 +1387,9 @@ macro_rules! impl_topology_for {
         impl<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*> ElementPredecessors
             for $name<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*>
         where
-            VertexIndex: BuildIndex,
-            RelationIndex: BuildIndex,
-            IncidenceIndex: BuildIndex,
+            VertexIndex: LayoutIndex,
+            RelationIndex: LayoutIndex,
+            IncidenceIndex: LayoutIndex,
         {
             type Predecessors<'view>
                 = PredecessorIter<'view, VertexIndex, RelationIndex, IncidenceIndex>
@@ -1408,9 +1408,9 @@ macro_rules! impl_topology_for {
         impl<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*> CanonicalElementIdentity
             for $name<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*>
         where
-            VertexIndex: BuildIndex,
-            RelationIndex: BuildIndex,
-            IncidenceIndex: BuildIndex,
+            VertexIndex: LayoutIndex,
+            RelationIndex: LayoutIndex,
+            IncidenceIndex: LayoutIndex,
         {
             type CanonicalElementId = HyperVertexId<VertexIndex>;
 
@@ -1422,9 +1422,9 @@ macro_rules! impl_topology_for {
         impl<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*> LocalElementIdentity
             for $name<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*>
         where
-            VertexIndex: BuildIndex,
-            RelationIndex: BuildIndex,
-            IncidenceIndex: BuildIndex,
+            VertexIndex: LayoutIndex,
+            RelationIndex: LayoutIndex,
+            IncidenceIndex: LayoutIndex,
         {
             fn local_element_id(&self, canonical: Self::CanonicalElementId) -> Option<Self::ElementId> {
                 self.contains_element(canonical).then_some(canonical)
@@ -1434,9 +1434,9 @@ macro_rules! impl_topology_for {
         impl<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*> CanonicalRelationIdentity
             for $name<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*>
         where
-            VertexIndex: BuildIndex,
-            RelationIndex: BuildIndex,
-            IncidenceIndex: BuildIndex,
+            VertexIndex: LayoutIndex,
+            RelationIndex: LayoutIndex,
+            IncidenceIndex: LayoutIndex,
         {
             type CanonicalRelationId = HyperedgeId<RelationIndex>;
 
@@ -1448,9 +1448,9 @@ macro_rules! impl_topology_for {
         impl<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*> LocalRelationIdentity
             for $name<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*>
         where
-            VertexIndex: BuildIndex,
-            RelationIndex: BuildIndex,
-            IncidenceIndex: BuildIndex,
+            VertexIndex: LayoutIndex,
+            RelationIndex: LayoutIndex,
+            IncidenceIndex: LayoutIndex,
         {
             fn local_relation_id(&self, canonical: Self::CanonicalRelationId) -> Option<Self::RelationId> {
                 self.contains_relation(canonical).then_some(canonical)
@@ -1460,9 +1460,9 @@ macro_rules! impl_topology_for {
         impl<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*> CanonicalIncidenceIdentity
             for $name<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*>
         where
-            VertexIndex: BuildIndex,
-            RelationIndex: BuildIndex,
-            IncidenceIndex: BuildIndex,
+            VertexIndex: LayoutIndex,
+            RelationIndex: LayoutIndex,
+            IncidenceIndex: LayoutIndex,
         {
             type CanonicalIncidenceId = HyperParticipantId<IncidenceIndex>;
 
@@ -1477,9 +1477,9 @@ macro_rules! impl_topology_for {
         impl<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*> LocalIncidenceIdentity
             for $name<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*>
         where
-            VertexIndex: BuildIndex,
-            RelationIndex: BuildIndex,
-            IncidenceIndex: BuildIndex,
+            VertexIndex: LayoutIndex,
+            RelationIndex: LayoutIndex,
+            IncidenceIndex: LayoutIndex,
         {
             fn local_incidence_id(
                 &self,
@@ -1497,9 +1497,9 @@ impl_topology_for!(FrozenWeightedHypergraph, [EW, RW, IW], topology);
 impl<VertexIndex, RelationIndex, IncidenceIndex, EW: Copy, RW, IW> ElementWeight
     for FrozenWeightedHypergraph<VertexIndex, RelationIndex, IncidenceIndex, EW, RW, IW>
 where
-    VertexIndex: BuildIndex,
-    RelationIndex: BuildIndex,
-    IncidenceIndex: BuildIndex,
+    VertexIndex: LayoutIndex,
+    RelationIndex: LayoutIndex,
+    IncidenceIndex: LayoutIndex,
 {
     type Weight = EW;
 
@@ -1511,9 +1511,9 @@ where
 impl<VertexIndex, RelationIndex, IncidenceIndex, EW, RW: Copy, IW> RelationWeight
     for FrozenWeightedHypergraph<VertexIndex, RelationIndex, IncidenceIndex, EW, RW, IW>
 where
-    VertexIndex: BuildIndex,
-    RelationIndex: BuildIndex,
-    IncidenceIndex: BuildIndex,
+    VertexIndex: LayoutIndex,
+    RelationIndex: LayoutIndex,
+    IncidenceIndex: LayoutIndex,
 {
     type Weight = RW;
 
@@ -1525,9 +1525,9 @@ where
 impl<VertexIndex, RelationIndex, IncidenceIndex, EW, RW, IW: Copy> IncidenceWeight
     for FrozenWeightedHypergraph<VertexIndex, RelationIndex, IncidenceIndex, EW, RW, IW>
 where
-    VertexIndex: BuildIndex,
-    RelationIndex: BuildIndex,
-    IncidenceIndex: BuildIndex,
+    VertexIndex: LayoutIndex,
+    RelationIndex: LayoutIndex,
+    IncidenceIndex: LayoutIndex,
 {
     type Weight = IW;
 
@@ -1626,7 +1626,7 @@ impl<IncidenceIndex> ParticipantRangeIter<IncidenceIndex> {
     }
 }
 
-impl<IncidenceIndex: BuildIndex> Iterator for ParticipantRangeIter<IncidenceIndex> {
+impl<IncidenceIndex: LayoutIndex> Iterator for ParticipantRangeIter<IncidenceIndex> {
     type Item = HyperParticipantId<IncidenceIndex>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -1644,7 +1644,7 @@ impl<IncidenceIndex: BuildIndex> Iterator for ParticipantRangeIter<IncidenceInde
     }
 }
 
-impl<IncidenceIndex: BuildIndex> ExactSizeIterator for ParticipantRangeIter<IncidenceIndex> {}
+impl<IncidenceIndex: LayoutIndex> ExactSizeIterator for ParticipantRangeIter<IncidenceIndex> {}
 
 /// Iterator that maps vertex incidences to hyperedges.
 ///
@@ -1659,7 +1659,7 @@ pub struct IncidentHyperedgeIter<'view, IncidenceIndex, RelationIndex> {
 impl<IncidenceIndex, RelationIndex> Iterator
     for IncidentHyperedgeIter<'_, IncidenceIndex, RelationIndex>
 where
-    IncidenceIndex: BuildIndex,
+    IncidenceIndex: LayoutIndex,
     RelationIndex: Copy,
 {
     type Item = HyperedgeId<RelationIndex>;
@@ -1681,7 +1681,7 @@ where
 impl<IncidenceIndex, RelationIndex> ExactSizeIterator
     for IncidentHyperedgeIter<'_, IncidenceIndex, RelationIndex>
 where
-    IncidenceIndex: BuildIndex,
+    IncidenceIndex: LayoutIndex,
     RelationIndex: Copy,
 {
 }
@@ -1693,9 +1693,9 @@ where
 /// Each yielded successor is `O(1)` after the containing hyperedge is loaded.
 pub struct SuccessorIter<'view, VertexIndex, RelationIndex, IncidenceIndex>
 where
-    VertexIndex: BuildIndex,
-    RelationIndex: BuildIndex,
-    IncidenceIndex: BuildIndex,
+    VertexIndex: LayoutIndex,
+    RelationIndex: LayoutIndex,
+    IncidenceIndex: LayoutIndex,
 {
     topology: &'view FrozenTopology<VertexIndex, RelationIndex, IncidenceIndex>,
     hyperedges: HyperedgeSliceIter<'view, RelationIndex>,
@@ -1705,9 +1705,9 @@ where
 impl<VertexIndex, RelationIndex, IncidenceIndex> Iterator
     for SuccessorIter<'_, VertexIndex, RelationIndex, IncidenceIndex>
 where
-    VertexIndex: BuildIndex,
-    RelationIndex: BuildIndex,
-    IncidenceIndex: BuildIndex,
+    VertexIndex: LayoutIndex,
+    RelationIndex: LayoutIndex,
+    IncidenceIndex: LayoutIndex,
 {
     type Item = HyperVertexId<VertexIndex>;
 
@@ -1731,9 +1731,9 @@ where
 /// Each yielded predecessor is `O(1)` after the containing hyperedge is loaded.
 pub struct PredecessorIter<'view, VertexIndex, RelationIndex, IncidenceIndex>
 where
-    VertexIndex: BuildIndex,
-    RelationIndex: BuildIndex,
-    IncidenceIndex: BuildIndex,
+    VertexIndex: LayoutIndex,
+    RelationIndex: LayoutIndex,
+    IncidenceIndex: LayoutIndex,
 {
     topology: &'view FrozenTopology<VertexIndex, RelationIndex, IncidenceIndex>,
     hyperedges: HyperedgeSliceIter<'view, RelationIndex>,
@@ -1743,9 +1743,9 @@ where
 impl<VertexIndex, RelationIndex, IncidenceIndex> Iterator
     for PredecessorIter<'_, VertexIndex, RelationIndex, IncidenceIndex>
 where
-    VertexIndex: BuildIndex,
-    RelationIndex: BuildIndex,
-    IncidenceIndex: BuildIndex,
+    VertexIndex: LayoutIndex,
+    RelationIndex: LayoutIndex,
+    IncidenceIndex: LayoutIndex,
 {
     type Item = HyperVertexId<VertexIndex>;
 
@@ -1794,9 +1794,9 @@ pub fn export_bcsr_snapshot<VertexIndex, RelationIndex, IncidenceIndex>(
     graph: &FrozenHypergraph<VertexIndex, RelationIndex, IncidenceIndex>,
 ) -> Result<Vec<u8>, HyperBuildError<VertexIndex, RelationIndex, IncidenceIndex>>
 where
-    VertexIndex: BuildIndex + BcsrSnapshotIndex,
-    RelationIndex: BuildIndex + BcsrSnapshotIndex,
-    IncidenceIndex: BuildIndex + BcsrSnapshotIndex,
+    VertexIndex: LayoutIndex + BcsrSnapshotIndex,
+    RelationIndex: LayoutIndex + BcsrSnapshotIndex,
+    IncidenceIndex: LayoutIndex + BcsrSnapshotIndex,
 {
     export_topology_snapshot(&graph.topology)
 }
@@ -1818,9 +1818,9 @@ pub fn export_weighted_bcsr_snapshot<VertexIndex, RelationIndex, IncidenceIndex,
     graph: &FrozenWeightedHypergraph<VertexIndex, RelationIndex, IncidenceIndex, EW, RW, IW>,
 ) -> Result<Vec<u8>, HyperBuildError<VertexIndex, RelationIndex, IncidenceIndex>>
 where
-    VertexIndex: BuildIndex + BcsrSnapshotIndex,
-    RelationIndex: BuildIndex + BcsrSnapshotIndex,
-    IncidenceIndex: BuildIndex + BcsrSnapshotIndex,
+    VertexIndex: LayoutIndex + BcsrSnapshotIndex,
+    RelationIndex: LayoutIndex + BcsrSnapshotIndex,
+    IncidenceIndex: LayoutIndex + BcsrSnapshotIndex,
 {
     export_topology_snapshot(&graph.topology)
 }
@@ -1841,9 +1841,9 @@ pub fn export_bcsr_snapshot_with_properties<VertexIndex, RelationIndex, Incidenc
     layers: HyperPropertyLayers<'_, Id, VertexIndex, RelationIndex, IncidenceIndex>,
 ) -> Result<Vec<u8>, HyperBuildError<VertexIndex, RelationIndex, IncidenceIndex>>
 where
-    VertexIndex: BuildIndex + BcsrSnapshotIndex + oxgraph_property::PropertyIndex,
-    RelationIndex: BuildIndex + BcsrSnapshotIndex + oxgraph_property::PropertyIndex,
-    IncidenceIndex: BuildIndex + BcsrSnapshotIndex + PropertySnapshotMetaWord,
+    VertexIndex: LayoutIndex + BcsrSnapshotIndex + oxgraph_property::PropertyIndex,
+    RelationIndex: LayoutIndex + BcsrSnapshotIndex + oxgraph_property::PropertyIndex,
+    IncidenceIndex: LayoutIndex + BcsrSnapshotIndex + PropertySnapshotMetaWord,
     Id: Clone + Copy + Into<u64> + Ord + TryInto<IncidenceIndex>,
 {
     let property = encode_hyper_properties(&graph.topology, layers)?;
@@ -1874,9 +1874,9 @@ pub fn export_weighted_bcsr_snapshot_with_properties<
     layers: HyperPropertyLayers<'_, Id, VertexIndex, RelationIndex, IncidenceIndex>,
 ) -> Result<Vec<u8>, HyperBuildError<VertexIndex, RelationIndex, IncidenceIndex>>
 where
-    VertexIndex: BuildIndex + BcsrSnapshotIndex + oxgraph_property::PropertyIndex,
-    RelationIndex: BuildIndex + BcsrSnapshotIndex + oxgraph_property::PropertyIndex,
-    IncidenceIndex: BuildIndex + BcsrSnapshotIndex + PropertySnapshotMetaWord,
+    VertexIndex: LayoutIndex + BcsrSnapshotIndex + oxgraph_property::PropertyIndex,
+    RelationIndex: LayoutIndex + BcsrSnapshotIndex + oxgraph_property::PropertyIndex,
+    IncidenceIndex: LayoutIndex + BcsrSnapshotIndex + PropertySnapshotMetaWord,
     Id: Clone + Copy + Into<u64> + Ord + TryInto<IncidenceIndex>,
 {
     let property = encode_hyper_properties(&graph.topology, layers)?;
@@ -1900,9 +1900,9 @@ fn build_topology<VertexIndex, RelationIndex, IncidenceIndex, IW>(
     records: &[NormalizedHyperedgeRecord<VertexIndex, IW>],
 ) -> BuiltTopologyResult<VertexIndex, RelationIndex, IncidenceIndex, IW>
 where
-    VertexIndex: BuildIndex,
-    RelationIndex: BuildIndex,
-    IncidenceIndex: BuildIndex,
+    VertexIndex: LayoutIndex,
+    RelationIndex: LayoutIndex,
+    IncidenceIndex: LayoutIndex,
     IW: Clone,
 {
     let participant_count = records
@@ -1988,9 +1988,9 @@ fn build_vertex_relation_index<VertexIndex, RelationIndex, IncidenceIndex, IW>(
     role: HyperParticipantRole,
 ) -> VertexRelationIndexResult<VertexIndex, RelationIndex, IncidenceIndex>
 where
-    VertexIndex: BuildIndex,
-    RelationIndex: BuildIndex,
-    IncidenceIndex: BuildIndex,
+    VertexIndex: LayoutIndex,
+    RelationIndex: LayoutIndex,
+    IncidenceIndex: LayoutIndex,
 {
     let mut buckets = vec![Vec::<RelationIndex>::new(); vertex_count];
     for (relation, record) in records.iter().enumerate() {
@@ -2014,9 +2014,9 @@ fn build_element_incidence_index<VertexIndex, RelationIndex, IncidenceIndex>(
     participant_elements: &[VertexIndex],
 ) -> ElementIncidenceIndexResult<VertexIndex, RelationIndex, IncidenceIndex>
 where
-    VertexIndex: BuildIndex,
-    RelationIndex: BuildIndex,
-    IncidenceIndex: BuildIndex,
+    VertexIndex: LayoutIndex,
+    RelationIndex: LayoutIndex,
+    IncidenceIndex: LayoutIndex,
 {
     let mut buckets = vec![Vec::<IncidenceIndex>::new(); vertex_count];
     for (participant, vertex) in participant_elements.iter().copied().enumerate() {
@@ -2033,9 +2033,9 @@ fn ensure_vertices<VertexIndex, RelationIndex, IncidenceIndex, I>(
     participants: I,
 ) -> Result<(), HyperBuildError<VertexIndex, RelationIndex, IncidenceIndex>>
 where
-    VertexIndex: BuildIndex,
-    RelationIndex: BuildIndex,
-    IncidenceIndex: BuildIndex,
+    VertexIndex: LayoutIndex,
+    RelationIndex: LayoutIndex,
+    IncidenceIndex: LayoutIndex,
     I: IntoIterator<Item = HyperVertexId<VertexIndex>>,
 {
     for vertex in participants {
@@ -2049,9 +2049,9 @@ fn ensure_unique_participants<VertexIndex, RelationIndex, IncidenceIndex, I>(
     role: HyperParticipantRole,
 ) -> Result<(), HyperBuildError<VertexIndex, RelationIndex, IncidenceIndex>>
 where
-    VertexIndex: BuildIndex,
-    RelationIndex: BuildIndex,
-    IncidenceIndex: BuildIndex,
+    VertexIndex: LayoutIndex,
+    RelationIndex: LayoutIndex,
+    IncidenceIndex: LayoutIndex,
     I: IntoIterator<Item = HyperVertexId<VertexIndex>>,
 {
     let mut sorted: Vec<VertexIndex> = participants.into_iter().map(HyperVertexId::get).collect();
@@ -2072,9 +2072,9 @@ fn vertex_index_checked<VertexIndex, RelationIndex, IncidenceIndex>(
     vertex: HyperVertexId<VertexIndex>,
 ) -> Result<usize, HyperBuildError<VertexIndex, RelationIndex, IncidenceIndex>>
 where
-    VertexIndex: BuildIndex,
-    RelationIndex: BuildIndex,
-    IncidenceIndex: BuildIndex,
+    VertexIndex: LayoutIndex,
+    RelationIndex: LayoutIndex,
+    IncidenceIndex: LayoutIndex,
 {
     id_to_slot::<VertexIndex>(vertex.get(), vertex_count)
         .map_err(|_: IdOutOfBounds| HyperBuildError::InvalidVertex { vertex })
@@ -2085,9 +2085,9 @@ fn hyperedge_index_checked<VertexIndex, RelationIndex, IncidenceIndex>(
     hyperedge: HyperedgeId<RelationIndex>,
 ) -> Result<usize, HyperBuildError<VertexIndex, RelationIndex, IncidenceIndex>>
 where
-    VertexIndex: BuildIndex,
-    RelationIndex: BuildIndex,
-    IncidenceIndex: BuildIndex,
+    VertexIndex: LayoutIndex,
+    RelationIndex: LayoutIndex,
+    IncidenceIndex: LayoutIndex,
 {
     id_to_slot::<RelationIndex>(hyperedge.get(), hyperedge_count)
         .map_err(|_: IdOutOfBounds| HyperBuildError::InvalidHyperedge { hyperedge })
@@ -2097,9 +2097,9 @@ fn export_topology_snapshot<VertexIndex, RelationIndex, IncidenceIndex>(
     topology: &FrozenTopology<VertexIndex, RelationIndex, IncidenceIndex>,
 ) -> Result<Vec<u8>, HyperBuildError<VertexIndex, RelationIndex, IncidenceIndex>>
 where
-    VertexIndex: BuildIndex + BcsrSnapshotIndex,
-    RelationIndex: BuildIndex + BcsrSnapshotIndex,
-    IncidenceIndex: BuildIndex + BcsrSnapshotIndex,
+    VertexIndex: LayoutIndex + BcsrSnapshotIndex,
+    RelationIndex: LayoutIndex + BcsrSnapshotIndex,
+    IncidenceIndex: LayoutIndex + BcsrSnapshotIndex,
 {
     let mut builder = SnapshotBuilder::new();
     add_topology_sections::<VertexIndex, RelationIndex, IncidenceIndex>(&mut builder, topology)?;
@@ -2115,9 +2115,9 @@ fn add_topology_sections<VertexIndex, RelationIndex, IncidenceIndex>(
     topology: &FrozenTopology<VertexIndex, RelationIndex, IncidenceIndex>,
 ) -> Result<(), HyperBuildError<VertexIndex, RelationIndex, IncidenceIndex>>
 where
-    VertexIndex: BuildIndex + BcsrSnapshotIndex,
-    RelationIndex: BuildIndex + BcsrSnapshotIndex,
-    IncidenceIndex: BuildIndex + BcsrSnapshotIndex,
+    VertexIndex: LayoutIndex + BcsrSnapshotIndex,
+    RelationIndex: LayoutIndex + BcsrSnapshotIndex,
+    IncidenceIndex: LayoutIndex + BcsrSnapshotIndex,
 {
     builder.add_section_widths(
         IncidenceIndex::HEAD_OFFSETS_KIND,
@@ -2168,9 +2168,9 @@ fn encode_hyper_properties<VertexIndex, RelationIndex, IncidenceIndex, Id>(
     layers: HyperPropertyLayers<'_, Id, VertexIndex, RelationIndex, IncidenceIndex>,
 ) -> Result<EncodedPropertySnapshot, HyperBuildError<VertexIndex, RelationIndex, IncidenceIndex>>
 where
-    VertexIndex: BuildIndex + BcsrSnapshotIndex + oxgraph_property::PropertyIndex,
-    RelationIndex: BuildIndex + BcsrSnapshotIndex + oxgraph_property::PropertyIndex,
-    IncidenceIndex: BuildIndex + BcsrSnapshotIndex + PropertySnapshotMetaWord,
+    VertexIndex: LayoutIndex + BcsrSnapshotIndex + oxgraph_property::PropertyIndex,
+    RelationIndex: LayoutIndex + BcsrSnapshotIndex + oxgraph_property::PropertyIndex,
+    IncidenceIndex: LayoutIndex + BcsrSnapshotIndex + PropertySnapshotMetaWord,
     Id: Clone + Copy + Into<u64> + Ord + TryInto<IncidenceIndex>,
 {
     validate_property_lengths(topology, layers.element, IdFamily::Element)?;
@@ -2203,9 +2203,9 @@ fn validate_property_lengths<Id, I, VertexIndex, RelationIndex, IncidenceIndex>(
 ) -> Result<(), HyperBuildError<VertexIndex, RelationIndex, IncidenceIndex>>
 where
     I: oxgraph_property::PropertyIndex,
-    VertexIndex: BuildIndex,
-    RelationIndex: BuildIndex,
-    IncidenceIndex: BuildIndex,
+    VertexIndex: LayoutIndex,
+    RelationIndex: LayoutIndex,
+    IncidenceIndex: LayoutIndex,
 {
     let required = match id_family {
         IdFamily::Element => topology.vertex_count,
@@ -2235,9 +2235,9 @@ fn export_topology_property_snapshot<VertexIndex, RelationIndex, IncidenceIndex>
     property: EncodedPropertySnapshot,
 ) -> Result<Vec<u8>, HyperBuildError<VertexIndex, RelationIndex, IncidenceIndex>>
 where
-    VertexIndex: BuildIndex + BcsrSnapshotIndex,
-    RelationIndex: BuildIndex + BcsrSnapshotIndex,
-    IncidenceIndex: BuildIndex + BcsrSnapshotIndex + PropertySnapshotMetaWord,
+    VertexIndex: LayoutIndex + BcsrSnapshotIndex,
+    RelationIndex: LayoutIndex + BcsrSnapshotIndex,
+    IncidenceIndex: LayoutIndex + BcsrSnapshotIndex + PropertySnapshotMetaWord,
 {
     let incidence_map = bcsr_local_incidence_to_canonical(topology)?;
     let identity_modes = [
@@ -2294,9 +2294,9 @@ fn bcsr_local_incidence_to_canonical<VertexIndex, RelationIndex, IncidenceIndex>
     topology: &FrozenTopology<VertexIndex, RelationIndex, IncidenceIndex>,
 ) -> Result<Vec<IncidenceIndex>, HyperBuildError<VertexIndex, RelationIndex, IncidenceIndex>>
 where
-    VertexIndex: BuildIndex,
-    RelationIndex: BuildIndex,
-    IncidenceIndex: BuildIndex,
+    VertexIndex: LayoutIndex,
+    RelationIndex: LayoutIndex,
+    IncidenceIndex: LayoutIndex,
 {
     let total = topology.participant_elements.len();
     let mut map = Vec::with_capacity(total);

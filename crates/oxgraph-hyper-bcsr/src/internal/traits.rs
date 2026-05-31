@@ -22,7 +22,7 @@ use crate::{
         validation::{index_to_usize_validated, usize_to_index_validated},
         view::BcsrHypergraph,
     },
-    word::{BcsrIndex, BcsrWord},
+    word::{LayoutIndex, LayoutWord},
 };
 
 /// Private shorthand for the generic BCSR view.
@@ -30,12 +30,12 @@ type View<'a, V, R, I, O, VW, RW> = BcsrHypergraph<'a, V, R, I, O, VW, RW>;
 
 impl<V, R, I, O, VW, RW> TopologyBase for View<'_, V, R, I, O, VW, RW>
 where
-    V: BcsrIndex,
-    R: BcsrIndex,
-    I: BcsrIndex,
-    O: BcsrWord<Index = I>,
-    VW: BcsrWord<Index = V>,
-    RW: BcsrWord<Index = R>,
+    V: LayoutIndex,
+    R: LayoutIndex,
+    I: LayoutIndex,
+    O: LayoutWord<Index = I>,
+    VW: LayoutWord<Index = V>,
+    RW: LayoutWord<Index = R>,
 {
     type ElementId = BcsrVertexId<V>;
     type RelationId = BcsrHyperedgeId<R>;
@@ -43,12 +43,12 @@ where
 
 impl<V, R, I, O, VW, RW> IncidenceBase for View<'_, V, R, I, O, VW, RW>
 where
-    V: BcsrIndex,
-    R: BcsrIndex,
-    I: BcsrIndex,
-    O: BcsrWord<Index = I>,
-    VW: BcsrWord<Index = V>,
-    RW: BcsrWord<Index = R>,
+    V: LayoutIndex,
+    R: LayoutIndex,
+    I: LayoutIndex,
+    O: LayoutWord<Index = I>,
+    VW: LayoutWord<Index = V>,
+    RW: LayoutWord<Index = R>,
 {
     type IncidenceId = BcsrParticipantId<I>;
     type Role = BcsrRole;
@@ -56,12 +56,12 @@ where
 
 impl<V, R, I, O, VW, RW> TopologyCounts for View<'_, V, R, I, O, VW, RW>
 where
-    V: BcsrIndex,
-    R: BcsrIndex,
-    I: BcsrIndex,
-    O: BcsrWord<Index = I>,
-    VW: BcsrWord<Index = V>,
-    RW: BcsrWord<Index = R>,
+    V: LayoutIndex,
+    R: LayoutIndex,
+    I: LayoutIndex,
+    O: LayoutWord<Index = I>,
+    VW: LayoutWord<Index = V>,
+    RW: LayoutWord<Index = R>,
 {
     fn element_count(&self) -> usize {
         self.vertex_count()
@@ -74,12 +74,12 @@ where
 
 impl<V, R, I, O, VW, RW> IncidenceCounts for View<'_, V, R, I, O, VW, RW>
 where
-    V: BcsrIndex,
-    R: BcsrIndex,
-    I: BcsrIndex,
-    O: BcsrWord<Index = I>,
-    VW: BcsrWord<Index = V>,
-    RW: BcsrWord<Index = R>,
+    V: LayoutIndex,
+    R: LayoutIndex,
+    I: LayoutIndex,
+    O: LayoutWord<Index = I>,
+    VW: LayoutWord<Index = V>,
+    RW: LayoutWord<Index = R>,
 {
     fn incidence_count(&self) -> usize {
         self.counts().total_incidences
@@ -88,23 +88,23 @@ where
 
 impl<V, R, I, O, VW, RW> HypergraphCounts for View<'_, V, R, I, O, VW, RW>
 where
-    V: BcsrIndex,
-    R: BcsrIndex,
-    I: BcsrIndex,
-    O: BcsrWord<Index = I>,
-    VW: BcsrWord<Index = V>,
-    RW: BcsrWord<Index = R>,
+    V: LayoutIndex,
+    R: LayoutIndex,
+    I: LayoutIndex,
+    O: LayoutWord<Index = I>,
+    VW: LayoutWord<Index = V>,
+    RW: LayoutWord<Index = R>,
 {
 }
 
 impl<V, R, I, O, VW, RW> ElementIndex for View<'_, V, R, I, O, VW, RW>
 where
-    V: BcsrIndex,
-    R: BcsrIndex,
-    I: BcsrIndex,
-    O: BcsrWord<Index = I>,
-    VW: BcsrWord<Index = V>,
-    RW: BcsrWord<Index = R>,
+    V: LayoutIndex,
+    R: LayoutIndex,
+    I: LayoutIndex,
+    O: LayoutWord<Index = I>,
+    VW: LayoutWord<Index = V>,
+    RW: LayoutWord<Index = R>,
 {
     fn element_bound(&self) -> usize {
         self.vertex_count()
@@ -117,12 +117,12 @@ where
 
 impl<V, R, I, O, VW, RW> RelationIndex for View<'_, V, R, I, O, VW, RW>
 where
-    V: BcsrIndex,
-    R: BcsrIndex,
-    I: BcsrIndex,
-    O: BcsrWord<Index = I>,
-    VW: BcsrWord<Index = V>,
-    RW: BcsrWord<Index = R>,
+    V: LayoutIndex,
+    R: LayoutIndex,
+    I: LayoutIndex,
+    O: LayoutWord<Index = I>,
+    VW: LayoutWord<Index = V>,
+    RW: LayoutWord<Index = R>,
 {
     fn relation_bound(&self) -> usize {
         self.hyperedge_count()
@@ -135,12 +135,12 @@ where
 
 impl<V, R, I, O, VW, RW> IncidenceIndex for View<'_, V, R, I, O, VW, RW>
 where
-    V: BcsrIndex,
-    R: BcsrIndex,
-    I: BcsrIndex,
-    O: BcsrWord<Index = I>,
-    VW: BcsrWord<Index = V>,
-    RW: BcsrWord<Index = R>,
+    V: LayoutIndex,
+    R: LayoutIndex,
+    I: LayoutIndex,
+    O: LayoutWord<Index = I>,
+    VW: LayoutWord<Index = V>,
+    RW: LayoutWord<Index = R>,
 {
     fn incidence_bound(&self) -> usize {
         self.counts().total_incidences
@@ -153,12 +153,12 @@ where
 
 impl<V, R, I, O, VW, RW> ContainsElement for View<'_, V, R, I, O, VW, RW>
 where
-    V: BcsrIndex,
-    R: BcsrIndex,
-    I: BcsrIndex,
-    O: BcsrWord<Index = I>,
-    VW: BcsrWord<Index = V>,
-    RW: BcsrWord<Index = R>,
+    V: LayoutIndex,
+    R: LayoutIndex,
+    I: LayoutIndex,
+    O: LayoutWord<Index = I>,
+    VW: LayoutWord<Index = V>,
+    RW: LayoutWord<Index = R>,
 {
     fn contains_element(&self, element: BcsrVertexId<V>) -> bool {
         index_to_usize_validated(element.get()) < self.counts().vertex_count
@@ -167,12 +167,12 @@ where
 
 impl<V, R, I, O, VW, RW> ContainsRelation for View<'_, V, R, I, O, VW, RW>
 where
-    V: BcsrIndex,
-    R: BcsrIndex,
-    I: BcsrIndex,
-    O: BcsrWord<Index = I>,
-    VW: BcsrWord<Index = V>,
-    RW: BcsrWord<Index = R>,
+    V: LayoutIndex,
+    R: LayoutIndex,
+    I: LayoutIndex,
+    O: LayoutWord<Index = I>,
+    VW: LayoutWord<Index = V>,
+    RW: LayoutWord<Index = R>,
 {
     fn contains_relation(&self, relation: BcsrHyperedgeId<R>) -> bool {
         index_to_usize_validated(relation.get()) < self.counts().hyperedge_count
@@ -181,12 +181,12 @@ where
 
 impl<V, R, I, O, VW, RW> ContainsIncidence for View<'_, V, R, I, O, VW, RW>
 where
-    V: BcsrIndex,
-    R: BcsrIndex,
-    I: BcsrIndex,
-    O: BcsrWord<Index = I>,
-    VW: BcsrWord<Index = V>,
-    RW: BcsrWord<Index = R>,
+    V: LayoutIndex,
+    R: LayoutIndex,
+    I: LayoutIndex,
+    O: LayoutWord<Index = I>,
+    VW: LayoutWord<Index = V>,
+    RW: LayoutWord<Index = R>,
 {
     fn contains_incidence(&self, incidence: BcsrParticipantId<I>) -> bool {
         index_to_usize_validated(incidence.get()) < self.counts().total_incidences
@@ -195,12 +195,12 @@ where
 
 impl<V, R, I, O, VW, RW> IncidenceElement for View<'_, V, R, I, O, VW, RW>
 where
-    V: BcsrIndex,
-    R: BcsrIndex,
-    I: BcsrIndex,
-    O: BcsrWord<Index = I>,
-    VW: BcsrWord<Index = V>,
-    RW: BcsrWord<Index = R>,
+    V: LayoutIndex,
+    R: LayoutIndex,
+    I: LayoutIndex,
+    O: LayoutWord<Index = I>,
+    VW: LayoutWord<Index = V>,
+    RW: LayoutWord<Index = R>,
 {
     fn incidence_element(&self, incidence: BcsrParticipantId<I>) -> BcsrVertexId<V> {
         let incidence_index = index_to_usize_validated(incidence.get());
@@ -217,12 +217,12 @@ where
 
 impl<V, R, I, O, VW, RW> IncidenceRelation for View<'_, V, R, I, O, VW, RW>
 where
-    V: BcsrIndex,
-    R: BcsrIndex,
-    I: BcsrIndex,
-    O: BcsrWord<Index = I>,
-    VW: BcsrWord<Index = V>,
-    RW: BcsrWord<Index = R>,
+    V: LayoutIndex,
+    R: LayoutIndex,
+    I: LayoutIndex,
+    O: LayoutWord<Index = I>,
+    VW: LayoutWord<Index = V>,
+    RW: LayoutWord<Index = R>,
 {
     fn incidence_relation(&self, incidence: BcsrParticipantId<I>) -> BcsrHyperedgeId<R> {
         let incidence_index = index_to_usize_validated(incidence.get());
@@ -239,12 +239,12 @@ where
 
 impl<V, R, I, O, VW, RW> IncidenceRole for View<'_, V, R, I, O, VW, RW>
 where
-    V: BcsrIndex,
-    R: BcsrIndex,
-    I: BcsrIndex,
-    O: BcsrWord<Index = I>,
-    VW: BcsrWord<Index = V>,
-    RW: BcsrWord<Index = R>,
+    V: LayoutIndex,
+    R: LayoutIndex,
+    I: LayoutIndex,
+    O: LayoutWord<Index = I>,
+    VW: LayoutWord<Index = V>,
+    RW: LayoutWord<Index = R>,
 {
     fn incidence_role(&self, incidence: BcsrParticipantId<I>) -> BcsrRole {
         if index_to_usize_validated(incidence.get()) < self.counts().p_outgoing {
@@ -257,12 +257,12 @@ where
 
 impl<V, R, I, O, VW, RW> RelationIncidences for View<'_, V, R, I, O, VW, RW>
 where
-    V: BcsrIndex,
-    R: BcsrIndex,
-    I: BcsrIndex,
-    O: BcsrWord<Index = I>,
-    VW: BcsrWord<Index = V>,
-    RW: BcsrWord<Index = R>,
+    V: LayoutIndex,
+    R: LayoutIndex,
+    I: LayoutIndex,
+    O: LayoutWord<Index = I>,
+    VW: LayoutWord<Index = V>,
+    RW: LayoutWord<Index = R>,
 {
     type Incidences<'view>
         = BcsrChainedRelationIncidences<I>
@@ -284,12 +284,12 @@ where
 
 impl<V, R, I, O, VW, RW> ElementIncidences for View<'_, V, R, I, O, VW, RW>
 where
-    V: BcsrIndex,
-    R: BcsrIndex,
-    I: BcsrIndex,
-    O: BcsrWord<Index = I>,
-    VW: BcsrWord<Index = V>,
-    RW: BcsrWord<Index = R>,
+    V: LayoutIndex,
+    R: LayoutIndex,
+    I: LayoutIndex,
+    O: LayoutWord<Index = I>,
+    VW: LayoutWord<Index = V>,
+    RW: LayoutWord<Index = R>,
 {
     type Incidences<'view>
         = BcsrElementIncidences<'view, O, VW, RW>
@@ -316,12 +316,12 @@ where
 
 impl<V, R, I, O, VW, RW> RelationIncidenceCount for View<'_, V, R, I, O, VW, RW>
 where
-    V: BcsrIndex,
-    R: BcsrIndex,
-    I: BcsrIndex,
-    O: BcsrWord<Index = I>,
-    VW: BcsrWord<Index = V>,
-    RW: BcsrWord<Index = R>,
+    V: LayoutIndex,
+    R: LayoutIndex,
+    I: LayoutIndex,
+    O: LayoutWord<Index = I>,
+    VW: LayoutWord<Index = V>,
+    RW: LayoutWord<Index = R>,
 {
     fn relation_incidence_count(&self, relation: BcsrHyperedgeId<R>) -> usize {
         let sections = self.sections();
@@ -336,12 +336,12 @@ where
 
 impl<V, R, I, O, VW, RW> ElementIncidenceCount for View<'_, V, R, I, O, VW, RW>
 where
-    V: BcsrIndex,
-    R: BcsrIndex,
-    I: BcsrIndex,
-    O: BcsrWord<Index = I>,
-    VW: BcsrWord<Index = V>,
-    RW: BcsrWord<Index = R>,
+    V: LayoutIndex,
+    R: LayoutIndex,
+    I: LayoutIndex,
+    O: LayoutWord<Index = I>,
+    VW: LayoutWord<Index = V>,
+    RW: LayoutWord<Index = R>,
 {
     fn element_incidence_count(&self, element: BcsrVertexId<V>) -> usize {
         let sections = self.sections();
@@ -361,12 +361,12 @@ where
 
 impl<V, R, I, O, VW, RW> HyperedgeParticipants for View<'_, V, R, I, O, VW, RW>
 where
-    V: BcsrIndex,
-    R: BcsrIndex,
-    I: BcsrIndex,
-    O: BcsrWord<Index = I>,
-    VW: BcsrWord<Index = V>,
-    RW: BcsrWord<Index = R>,
+    V: LayoutIndex,
+    R: LayoutIndex,
+    I: LayoutIndex,
+    O: LayoutWord<Index = I>,
+    VW: LayoutWord<Index = V>,
+    RW: LayoutWord<Index = R>,
 {
     type Participants<'view>
         = BcsrChainedParticipants<'view, VW>
@@ -384,12 +384,12 @@ where
 
 impl<V, R, I, O, VW, RW> IncidentHyperedges for View<'_, V, R, I, O, VW, RW>
 where
-    V: BcsrIndex,
-    R: BcsrIndex,
-    I: BcsrIndex,
-    O: BcsrWord<Index = I>,
-    VW: BcsrWord<Index = V>,
-    RW: BcsrWord<Index = R>,
+    V: LayoutIndex,
+    R: LayoutIndex,
+    I: LayoutIndex,
+    O: LayoutWord<Index = I>,
+    VW: LayoutWord<Index = V>,
+    RW: LayoutWord<Index = R>,
 {
     type IncidentHyperedges<'view>
         = BcsrChainedHyperedges<'view, RW>
@@ -415,12 +415,12 @@ where
 
 impl<V, R, I, O, VW, RW> DirectedHyperedgeParticipants for View<'_, V, R, I, O, VW, RW>
 where
-    V: BcsrIndex,
-    R: BcsrIndex,
-    I: BcsrIndex,
-    O: BcsrWord<Index = I>,
-    VW: BcsrWord<Index = V>,
-    RW: BcsrWord<Index = R>,
+    V: LayoutIndex,
+    R: LayoutIndex,
+    I: LayoutIndex,
+    O: LayoutWord<Index = I>,
+    VW: LayoutWord<Index = V>,
+    RW: LayoutWord<Index = R>,
 {
     type SourceParticipants<'view>
         = BcsrVertexSlice<'view, VW>
@@ -449,12 +449,12 @@ where
 
 impl<V, R, I, O, VW, RW> DirectedHyperedgeIncidences for View<'_, V, R, I, O, VW, RW>
 where
-    V: BcsrIndex,
-    R: BcsrIndex,
-    I: BcsrIndex,
-    O: BcsrWord<Index = I>,
-    VW: BcsrWord<Index = V>,
-    RW: BcsrWord<Index = R>,
+    V: LayoutIndex,
+    R: LayoutIndex,
+    I: LayoutIndex,
+    O: LayoutWord<Index = I>,
+    VW: LayoutWord<Index = V>,
+    RW: LayoutWord<Index = R>,
 {
     type SourceIncidences<'view>
         = BcsrParticipantSlice<I>
@@ -485,12 +485,12 @@ where
 
 impl<V, R, I, O, VW, RW> DirectedVertexHyperedges for View<'_, V, R, I, O, VW, RW>
 where
-    V: BcsrIndex,
-    R: BcsrIndex,
-    I: BcsrIndex,
-    O: BcsrWord<Index = I>,
-    VW: BcsrWord<Index = V>,
-    RW: BcsrWord<Index = R>,
+    V: LayoutIndex,
+    R: LayoutIndex,
+    I: LayoutIndex,
+    O: LayoutWord<Index = I>,
+    VW: LayoutWord<Index = V>,
+    RW: LayoutWord<Index = R>,
 {
     type OutgoingHyperedges<'view>
         = BcsrHyperedgeSlice<'view, RW>
@@ -527,12 +527,12 @@ where
 
 impl<V, R, I, O, VW, RW> ElementSuccessors for View<'_, V, R, I, O, VW, RW>
 where
-    V: BcsrIndex,
-    R: BcsrIndex,
-    I: BcsrIndex,
-    O: BcsrWord<Index = I>,
-    VW: BcsrWord<Index = V>,
-    RW: BcsrWord<Index = R>,
+    V: LayoutIndex,
+    R: LayoutIndex,
+    I: LayoutIndex,
+    O: LayoutWord<Index = I>,
+    VW: LayoutWord<Index = V>,
+    RW: LayoutWord<Index = R>,
 {
     type Successors<'view>
         = BcsrSuccessorVertices<'view, RW, O, VW>
@@ -553,12 +553,12 @@ where
 
 impl<V, R, I, O, VW, RW> ElementPredecessors for View<'_, V, R, I, O, VW, RW>
 where
-    V: BcsrIndex,
-    R: BcsrIndex,
-    I: BcsrIndex,
-    O: BcsrWord<Index = I>,
-    VW: BcsrWord<Index = V>,
-    RW: BcsrWord<Index = R>,
+    V: LayoutIndex,
+    R: LayoutIndex,
+    I: LayoutIndex,
+    O: LayoutWord<Index = I>,
+    VW: LayoutWord<Index = V>,
+    RW: LayoutWord<Index = R>,
 {
     type Predecessors<'view>
         = BcsrPredecessorVertices<'view, RW, O, VW>
@@ -584,7 +584,7 @@ fn vertex_bucket<'view, OffsetWord, ValueWord>(
     index: usize,
 ) -> &'view [ValueWord]
 where
-    OffsetWord: BcsrWord,
+    OffsetWord: LayoutWord,
 {
     let start = index_to_usize_validated(offsets[index].get());
     let end = index_to_usize_validated(offsets[index + 1].get());
@@ -598,8 +598,8 @@ fn locate_owning_bucket<OffsetWord, RelationIndex>(
     target: usize,
 ) -> RelationIndex
 where
-    OffsetWord: BcsrWord,
-    RelationIndex: BcsrIndex,
+    OffsetWord: LayoutWord,
+    RelationIndex: LayoutIndex,
 {
     let mut low = 0_usize;
     let mut high = offsets.len() - 1;

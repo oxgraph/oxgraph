@@ -4,7 +4,7 @@
 use crate::{
     error::BcsrError,
     internal::validation::{BcsrValidation, DerivedCounts, validate_sections},
-    word::BcsrWord,
+    word::LayoutWord,
 };
 
 /// Borrowed input slices for a bipartite-CSR hypergraph view.
@@ -20,9 +20,9 @@ use crate::{
 #[derive(Clone, Copy, Debug)]
 pub struct BcsrSections<'view, OffsetWord, VertexWord, RelationWord>
 where
-    OffsetWord: BcsrWord,
-    VertexWord: BcsrWord,
-    RelationWord: BcsrWord,
+    OffsetWord: LayoutWord,
+    VertexWord: LayoutWord,
+    RelationWord: LayoutWord,
 {
     /// Hyperedge-major head offsets, length `hyperedge_count + 1`.
     pub head_offsets: &'view [OffsetWord],
@@ -46,9 +46,9 @@ where
 impl<'view, OffsetWord, VertexWord, RelationWord>
     BcsrSections<'view, OffsetWord, VertexWord, RelationWord>
 where
-    OffsetWord: BcsrWord,
-    VertexWord: BcsrWord,
-    RelationWord: BcsrWord,
+    OffsetWord: LayoutWord,
+    VertexWord: LayoutWord,
+    RelationWord: LayoutWord,
 {
     /// Builds a [`BcsrSections`] from eight ordered borrowed slices.
     ///
@@ -111,12 +111,12 @@ pub struct BcsrHypergraph<
     VertexWord,
     RelationWord,
 > where
-    OffsetWord: BcsrWord<Index = IncidenceIndex>,
-    VertexWord: BcsrWord<Index = VertexIndex>,
-    RelationWord: BcsrWord<Index = RelationIndex>,
-    VertexIndex: crate::word::BcsrIndex,
-    RelationIndex: crate::word::BcsrIndex,
-    IncidenceIndex: crate::word::BcsrIndex,
+    OffsetWord: LayoutWord<Index = IncidenceIndex>,
+    VertexWord: LayoutWord<Index = VertexIndex>,
+    RelationWord: LayoutWord<Index = RelationIndex>,
+    VertexIndex: crate::word::LayoutIndex,
+    RelationIndex: crate::word::LayoutIndex,
+    IncidenceIndex: crate::word::LayoutIndex,
 {
     /// Validated counts cached for `O(1)` access.
     counts: DerivedCounts,
@@ -135,12 +135,12 @@ impl<'view, VertexIndex, RelationIndex, IncidenceIndex, OffsetWord, VertexWord, 
         RelationWord,
     >
 where
-    OffsetWord: BcsrWord<Index = IncidenceIndex>,
-    VertexWord: BcsrWord<Index = VertexIndex>,
-    RelationWord: BcsrWord<Index = RelationIndex>,
-    VertexIndex: crate::word::BcsrIndex,
-    RelationIndex: crate::word::BcsrIndex,
-    IncidenceIndex: crate::word::BcsrIndex,
+    OffsetWord: LayoutWord<Index = IncidenceIndex>,
+    VertexWord: LayoutWord<Index = VertexIndex>,
+    RelationWord: LayoutWord<Index = RelationIndex>,
+    VertexIndex: crate::word::LayoutIndex,
+    RelationIndex: crate::word::LayoutIndex,
+    IncidenceIndex: crate::word::LayoutIndex,
 {
     /// Validates `sections` at [`BcsrValidation::Layout`] and returns a view.
     ///

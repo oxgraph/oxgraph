@@ -1,7 +1,7 @@
 //! Property tests for layout-util primitives (build-time + read-time).
 
 use oxgraph_layout_util::{
-    BuildIndex, IdOutOfBounds, OffsetIntegrityIssue, OffsetOverflow, build_offset_index,
+    IdOutOfBounds, LayoutIndex, OffsetIntegrityIssue, OffsetOverflow, build_offset_index,
     check_offset_section, check_offsets_monotonic, check_value_range, id_to_slot, index_from_usize,
     slot_or_max,
 };
@@ -67,7 +67,7 @@ proptest! {
     #[test]
     fn slot_or_max_total(id: u64) {
         let result = slot_or_max::<u64>(id);
-        if let Some(value) = <u64 as BuildIndex>::to_usize(id) {
+        if let Some(value) = <u64 as LayoutIndex>::to_usize(id) {
             prop_assert_eq!(result, value);
         } else {
             prop_assert_eq!(result, usize::MAX);
@@ -128,13 +128,13 @@ proptest! {
         }
     }
 
-    /// `BuildIndex::from_usize` ∘ `BuildIndex::to_usize` is identity for `u32`.
+    /// `LayoutIndex::from_usize` ∘ `LayoutIndex::to_usize` is identity for `u32`.
     #[test]
     fn build_index_roundtrip_u32(value in 0_usize..(u32::MAX as usize + 1)) {
-        let Some(index) = <u32 as BuildIndex>::from_usize(value) else {
+        let Some(index) = <u32 as LayoutIndex>::from_usize(value) else {
             return Err(TestCaseError::fail("value should fit u32"));
         };
-        let Some(back) = <u32 as BuildIndex>::to_usize(index) else {
+        let Some(back) = <u32 as LayoutIndex>::to_usize(index) else {
             return Err(TestCaseError::fail("u32 always fits usize"));
         };
         prop_assert_eq!(back, value);

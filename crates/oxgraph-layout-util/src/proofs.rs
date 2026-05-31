@@ -11,7 +11,7 @@
 use alloc::{vec, vec::Vec};
 
 use crate::{
-    BuildIndex, IdOutOfBounds, OffsetIntegrityIssue, OffsetOverflow, build_offset_index,
+    IdOutOfBounds, LayoutIndex, OffsetIntegrityIssue, OffsetOverflow, build_offset_index,
     check_offset_section, check_offsets_monotonic, check_value_range, id_to_slot, index_from_usize,
     slot_or_max,
 };
@@ -147,15 +147,15 @@ fn build_offset_index_empty() {
     }
 }
 
-/// `BuildIndex` round-trip on `u16`: any `usize` that fits in `u16` round-trips
+/// `LayoutIndex` round-trip on `u16`: any `usize` that fits in `u16` round-trips
 /// back to itself through `from_usize` ∘ `to_usize`.
 #[kani::proof]
 fn build_index_roundtrip_u16() {
     let value: usize = kani::any();
-    let Some(index) = <u16 as BuildIndex>::from_usize(value) else {
+    let Some(index) = <u16 as LayoutIndex>::from_usize(value) else {
         return;
     };
-    match <u16 as BuildIndex>::to_usize(index) {
+    match <u16 as LayoutIndex>::to_usize(index) {
         Some(back) => assert_eq!(back, value),
         None => kani::cover!(false, "u16 always fits in usize"),
     }

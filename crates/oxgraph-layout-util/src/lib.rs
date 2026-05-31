@@ -98,17 +98,6 @@ pub trait LayoutIndex:
     fn from_usize(value: usize) -> Option<Self>;
 }
 
-/// Transitional alias for the merged index-width contract.
-///
-/// Older call sites referred to this contract as `BuildIndex`; it is now
-/// [`LayoutIndex`]. Kept so build-side modules can migrate incrementally.
-///
-/// # Performance
-///
-/// `perf: unspecified`; this is a trait re-export.
-#[doc(hidden)]
-pub use LayoutIndex as BuildIndex;
-
 /// Implements [`LayoutIndex`] for one unsigned width.
 macro_rules! impl_layout_index {
     ($index:ty) => {

@@ -10,12 +10,12 @@ use oxgraph_layout_util::{OffsetIntegrityIssue, check_offset_section, check_valu
 use crate::{
     error::{BcsrError, BcsrRoleSide, BcsrSection},
     internal::view::BcsrSections,
-    word::{BcsrIndex, BcsrWord},
+    word::{LayoutIndex, LayoutWord},
 };
 
 /// Maps an [`OffsetIntegrityIssue`] from `oxgraph-csr-util` into a typed
 /// [`BcsrError`], stamping the originating [`BcsrSection`] discriminator.
-fn map_offsets_issue<W: BcsrWord>(
+fn map_offsets_issue<W: LayoutWord>(
     section: BcsrSection,
     offsets: &[W],
     issue: OffsetIntegrityIssue,
@@ -59,7 +59,7 @@ fn map_offsets_issue<W: BcsrWord>(
 
 /// Maps a value-range [`OffsetIntegrityIssue`] for vertex IDs into a
 /// [`BcsrError::VertexOutOfRange`].
-fn map_vertex_value_issue<W: BcsrWord>(
+fn map_vertex_value_issue<W: LayoutWord>(
     section: BcsrSection,
     values: &[W],
     issue: OffsetIntegrityIssue,
@@ -89,7 +89,7 @@ fn map_vertex_value_issue<W: BcsrWord>(
 
 /// Maps a value-range [`OffsetIntegrityIssue`] for hyperedge IDs into a
 /// [`BcsrError::HyperedgeOutOfRange`].
-fn map_hyperedge_value_issue<W: BcsrWord>(
+fn map_hyperedge_value_issue<W: LayoutWord>(
     section: BcsrSection,
     values: &[W],
     issue: OffsetIntegrityIssue,
@@ -182,9 +182,9 @@ pub(in crate::internal) fn validate_sections<OffsetWord, VertexWord, RelationWor
     level: BcsrValidation,
 ) -> Result<DerivedCounts, BcsrError>
 where
-    OffsetWord: BcsrWord,
-    VertexWord: BcsrWord,
-    RelationWord: BcsrWord,
+    OffsetWord: LayoutWord,
+    VertexWord: LayoutWord,
+    RelationWord: LayoutWord,
 {
     let counts = derive_counts(sections)?;
     validate_all_offsets(sections, counts)?;
@@ -203,9 +203,9 @@ fn derive_counts<OffsetWord, VertexWord, RelationWord>(
     sections: &BcsrSections<'_, OffsetWord, VertexWord, RelationWord>,
 ) -> Result<DerivedCounts, BcsrError>
 where
-    OffsetWord: BcsrWord,
-    VertexWord: BcsrWord,
-    RelationWord: BcsrWord,
+    OffsetWord: LayoutWord,
+    VertexWord: LayoutWord,
+    RelationWord: LayoutWord,
 {
     let head_len = sections.head_offsets.len();
     let tail_len = sections.tail_offsets.len();
@@ -292,9 +292,9 @@ fn validate_all_offsets<OffsetWord, VertexWord, RelationWord>(
     counts: DerivedCounts,
 ) -> Result<(), BcsrError>
 where
-    OffsetWord: BcsrWord,
-    VertexWord: BcsrWord,
-    RelationWord: BcsrWord,
+    OffsetWord: LayoutWord,
+    VertexWord: LayoutWord,
+    RelationWord: LayoutWord,
 {
     validate_one_offsets(
         sections.head_offsets,
@@ -326,7 +326,7 @@ where
 /// monotonic non-decreasing, final offset matches `value_len`. Delegates to
 /// [`oxgraph_layout_util::check_offset_section`] and stamps the [`BcsrSection`]
 /// discriminator on any returned issue.
-fn validate_one_offsets<Word: BcsrWord>(
+fn validate_one_offsets<Word: LayoutWord>(
     offsets: &[Word],
     section: BcsrSection,
     count: usize,
@@ -345,9 +345,9 @@ const fn validate_total_lengths<OffsetWord, VertexWord, RelationWord>(
     sections: &BcsrSections<'_, OffsetWord, VertexWord, RelationWord>,
 ) -> Result<(), BcsrError>
 where
-    OffsetWord: BcsrWord,
-    VertexWord: BcsrWord,
-    RelationWord: BcsrWord,
+    OffsetWord: LayoutWord,
+    VertexWord: LayoutWord,
+    RelationWord: LayoutWord,
 {
     if sections.head_participants.len() != sections.vertex_outgoing_hyperedges.len() {
         return Err(BcsrError::OutgoingTotalMismatch {
@@ -370,9 +370,9 @@ fn validate_value_ranges<OffsetWord, VertexWord, RelationWord>(
     counts: DerivedCounts,
 ) -> Result<(), BcsrError>
 where
-    OffsetWord: BcsrWord,
-    VertexWord: BcsrWord,
-    RelationWord: BcsrWord,
+    OffsetWord: LayoutWord,
+    VertexWord: LayoutWord,
+    RelationWord: LayoutWord,
 {
     check_vertex_values(
         sections.head_participants,
@@ -399,7 +399,7 @@ where
 /// Returns `Err` if any vertex word is `>= vertex_count`. Delegates to
 /// [`oxgraph_layout_util::check_value_range`] and stamps [`BcsrSection`] on the
 /// returned issue.
-fn check_vertex_values<Word: BcsrWord>(
+fn check_vertex_values<Word: LayoutWord>(
     values: &[Word],
     section: BcsrSection,
     vertex_count: usize,
@@ -411,7 +411,7 @@ fn check_vertex_values<Word: BcsrWord>(
 /// Returns `Err` if any hyperedge word is `>= hyperedge_count`. Delegates to
 /// [`oxgraph_layout_util::check_value_range`] and stamps [`BcsrSection`] on the
 /// returned issue.
-fn check_hyperedge_values<Word: BcsrWord>(
+fn check_hyperedge_values<Word: LayoutWord>(
     values: &[Word],
     section: BcsrSection,
     hyperedge_count: usize,
@@ -426,9 +426,9 @@ fn validate_within_range_sorted<OffsetWord, VertexWord, RelationWord>(
     sections: &BcsrSections<'_, OffsetWord, VertexWord, RelationWord>,
 ) -> Result<(), BcsrError>
 where
-    OffsetWord: BcsrWord,
-    VertexWord: BcsrWord,
-    RelationWord: BcsrWord,
+    OffsetWord: LayoutWord,
+    VertexWord: LayoutWord,
+    RelationWord: LayoutWord,
 {
     check_strictly_ascending_buckets(
         sections.head_offsets,
@@ -460,8 +460,8 @@ fn check_strictly_ascending_buckets<OffsetWord, Word>(
     section: BcsrSection,
 ) -> Result<(), BcsrError>
 where
-    OffsetWord: BcsrWord,
-    Word: BcsrWord,
+    OffsetWord: LayoutWord,
+    Word: LayoutWord,
 {
     if offsets.len() < 2 {
         return Ok(());
@@ -475,7 +475,7 @@ where
 }
 
 /// Verifies `values[start..end]` is strictly ascending.
-fn check_strictly_ascending_range<Word: BcsrWord>(
+fn check_strictly_ascending_range<Word: LayoutWord>(
     values: &[Word],
     start: usize,
     end: usize,
@@ -508,9 +508,9 @@ fn validate_cross_direction<OffsetWord, VertexWord, RelationWord>(
     sections: &BcsrSections<'_, OffsetWord, VertexWord, RelationWord>,
 ) -> Result<(), BcsrError>
 where
-    OffsetWord: BcsrWord,
-    VertexWord: BcsrWord,
-    RelationWord: BcsrWord,
+    OffsetWord: LayoutWord,
+    VertexWord: LayoutWord,
+    RelationWord: LayoutWord,
 {
     // Forward containment: every hyperedge-major `(h, v)` incidence appears in
     // vertex `v`'s vertex-major bucket.
@@ -560,9 +560,9 @@ fn converse_direction_walk<OffsetWord, VertexWord, RelationWord>(
     side: BcsrRoleSide,
 ) -> Result<(), BcsrError>
 where
-    OffsetWord: BcsrWord,
-    VertexWord: BcsrWord,
-    RelationWord: BcsrWord,
+    OffsetWord: LayoutWord,
+    VertexWord: LayoutWord,
+    RelationWord: LayoutWord,
 {
     if vertex_offsets.len() < 2 {
         return Ok(());
@@ -596,9 +596,9 @@ fn cross_direction_walk<OffsetWord, VertexWord, RelationWord>(
     side: BcsrRoleSide,
 ) -> Result<(), BcsrError>
 where
-    OffsetWord: BcsrWord,
-    VertexWord: BcsrWord,
-    RelationWord: BcsrWord,
+    OffsetWord: LayoutWord,
+    VertexWord: LayoutWord,
+    RelationWord: LayoutWord,
 {
     if edge_offsets.len() < 2 {
         return Ok(());
@@ -645,9 +645,9 @@ fn cross_direction_check_bucket<OffsetWord, VertexWord, RelationWord>(
     args: CrossDirectionBucket<'_, OffsetWord, VertexWord, RelationWord>,
 ) -> Result<(), BcsrError>
 where
-    OffsetWord: BcsrWord,
-    VertexWord: BcsrWord,
-    RelationWord: BcsrWord,
+    OffsetWord: LayoutWord,
+    VertexWord: LayoutWord,
+    RelationWord: LayoutWord,
 {
     for word in args.edge_values.iter().take(args.end).skip(args.start) {
         let vertex = index_to_usize(word.get())?;
@@ -667,7 +667,7 @@ where
 
 /// Returns whether `values[start..end]` contains `needle`. Values within the
 /// range are required to be strictly ascending, so binary search is correct.
-fn bucket_contains<Word: BcsrWord>(
+fn bucket_contains<Word: LayoutWord>(
     values: &[Word],
     start: usize,
     end: usize,
@@ -680,7 +680,7 @@ fn bucket_contains<Word: BcsrWord>(
 }
 
 /// Converts a BCSR index to `usize`, returning a typed error on truncation.
-pub(in crate::internal) fn index_to_usize<Index: BcsrIndex>(
+pub(in crate::internal) fn index_to_usize<Index: LayoutIndex>(
     value: Index,
 ) -> Result<usize, BcsrError> {
     value
@@ -699,7 +699,7 @@ pub(in crate::internal) fn index_to_usize<Index: BcsrIndex>(
 /// # Performance
 ///
 /// This function is `O(1)`.
-pub(in crate::internal) fn index_to_usize_validated<Index: BcsrIndex>(value: Index) -> usize {
+pub(in crate::internal) fn index_to_usize_validated<Index: LayoutIndex>(value: Index) -> usize {
     oxgraph_layout_util::index_to_usize_validated(value)
         .unwrap_or_else(|| unreachable!("validated bipartite-CSR index must fit usize"))
 }
@@ -714,7 +714,7 @@ pub(in crate::internal) fn index_to_usize_validated<Index: BcsrIndex>(value: Ind
 /// # Performance
 ///
 /// This function is `O(1)`.
-pub(in crate::internal) fn usize_to_index_validated<Index: BcsrIndex>(value: usize) -> Index {
+pub(in crate::internal) fn usize_to_index_validated<Index: LayoutIndex>(value: usize) -> Index {
     oxgraph_layout_util::usize_to_index_validated(value)
         .unwrap_or_else(|| unreachable!("validated BCSR slot must fit index"))
 }

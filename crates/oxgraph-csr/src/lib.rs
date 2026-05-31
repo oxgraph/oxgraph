@@ -48,9 +48,7 @@ use oxgraph_layout_util::{
     IdSlice, LocalId, NodeAxis, OffsetIntegrityIssue, SnapshotWidth, check_offset_section,
     check_value_range,
 };
-pub use oxgraph_layout_util::{
-    LayoutIndex as CsrIndex, LayoutSnapshotWord as CsrSnapshotWord, LayoutWord as CsrWord,
-};
+pub use oxgraph_layout_util::{LayoutIndex, LayoutSnapshotWord, LayoutWord};
 use oxgraph_snapshot::{SectionBindError, SectionViewError, Snapshot};
 
 /// Section kind for a CSR `u16` offsets array.
@@ -308,7 +306,7 @@ impl<Index> EdgeSlot<Checked, Index> {
     /// This function is `O(1)`.
     fn from_csr_range_slot(slot: usize) -> Option<Self>
     where
-        Index: CsrIndex,
+        Index: LayoutIndex,
     {
         let raw = oxgraph_layout_util::usize_to_index_validated::<Index>(slot)?;
         Some(Self::from_raw_slot(raw, slot))
@@ -327,7 +325,7 @@ impl<Index> EdgeSlot<Checked, Index> {
     /// This function is `O(1)`.
     fn from_csr_range_slot_unchecked(slot: usize) -> Self
     where
-        Index: CsrIndex,
+        Index: LayoutIndex,
     {
         Self::from_csr_range_slot(slot)
             .unwrap_or_else(|| unreachable!("checked CSR edge slot must fit index type"))
@@ -370,7 +368,7 @@ struct EdgeRange<State, Index> {
 
 impl<Index> EdgeRange<Checked, Index>
 where
-    Index: CsrIndex,
+    Index: LayoutIndex,
 {
     /// Creates a checked edge range after CSR row offsets have been validated.
     ///
@@ -437,10 +435,10 @@ where
 #[derive(Clone, Copy, Debug)]
 pub struct CsrGraph<'view, NodeIndex, EdgeIndex, OffsetWord, TargetWord>
 where
-    NodeIndex: CsrIndex,
-    EdgeIndex: CsrIndex,
-    OffsetWord: CsrWord<Index = EdgeIndex>,
-    TargetWord: CsrWord<Index = NodeIndex>,
+    NodeIndex: LayoutIndex,
+    EdgeIndex: LayoutIndex,
+    OffsetWord: LayoutWord<Index = EdgeIndex>,
+    TargetWord: LayoutWord<Index = NodeIndex>,
 {
     /// Number of nodes in the graph as the public logical index type.
     node_count: NodeIndex,
@@ -455,10 +453,10 @@ where
 impl<'view, NodeIndex, EdgeIndex, OffsetWord, TargetWord>
     CsrGraph<'view, NodeIndex, EdgeIndex, OffsetWord, TargetWord>
 where
-    NodeIndex: CsrIndex,
-    EdgeIndex: CsrIndex,
-    OffsetWord: CsrWord<Index = EdgeIndex>,
-    TargetWord: CsrWord<Index = NodeIndex>,
+    NodeIndex: LayoutIndex,
+    EdgeIndex: LayoutIndex,
+    OffsetWord: LayoutWord<Index = EdgeIndex>,
+    TargetWord: LayoutWord<Index = NodeIndex>,
 {
     /// Validates borrowed CSR sections and returns a graph view.
     ///
@@ -831,10 +829,10 @@ const fn map_targets_bind<NodeIndex, EdgeIndex>(
 impl<NodeIndex, EdgeIndex, OffsetWord, TargetWord> TopologyBase
     for CsrGraph<'_, NodeIndex, EdgeIndex, OffsetWord, TargetWord>
 where
-    NodeIndex: CsrIndex,
-    EdgeIndex: CsrIndex,
-    OffsetWord: CsrWord<Index = EdgeIndex>,
-    TargetWord: CsrWord<Index = NodeIndex>,
+    NodeIndex: LayoutIndex,
+    EdgeIndex: LayoutIndex,
+    OffsetWord: LayoutWord<Index = EdgeIndex>,
+    TargetWord: LayoutWord<Index = NodeIndex>,
 {
     type ElementId = CsrNodeId<NodeIndex>;
     type RelationId = CsrEdgeId<EdgeIndex>;
@@ -843,10 +841,10 @@ where
 impl<NodeIndex, EdgeIndex, OffsetWord, TargetWord> TopologyCounts
     for CsrGraph<'_, NodeIndex, EdgeIndex, OffsetWord, TargetWord>
 where
-    NodeIndex: CsrIndex,
-    EdgeIndex: CsrIndex,
-    OffsetWord: CsrWord<Index = EdgeIndex>,
-    TargetWord: CsrWord<Index = NodeIndex>,
+    NodeIndex: LayoutIndex,
+    EdgeIndex: LayoutIndex,
+    OffsetWord: LayoutWord<Index = EdgeIndex>,
+    TargetWord: LayoutWord<Index = NodeIndex>,
 {
     fn element_count(&self) -> usize {
         self.node_bound
@@ -860,20 +858,20 @@ where
 impl<NodeIndex, EdgeIndex, OffsetWord, TargetWord> GraphCounts
     for CsrGraph<'_, NodeIndex, EdgeIndex, OffsetWord, TargetWord>
 where
-    NodeIndex: CsrIndex,
-    EdgeIndex: CsrIndex,
-    OffsetWord: CsrWord<Index = EdgeIndex>,
-    TargetWord: CsrWord<Index = NodeIndex>,
+    NodeIndex: LayoutIndex,
+    EdgeIndex: LayoutIndex,
+    OffsetWord: LayoutWord<Index = EdgeIndex>,
+    TargetWord: LayoutWord<Index = NodeIndex>,
 {
 }
 
 impl<NodeIndex, EdgeIndex, OffsetWord, TargetWord> ElementIndex
     for CsrGraph<'_, NodeIndex, EdgeIndex, OffsetWord, TargetWord>
 where
-    NodeIndex: CsrIndex,
-    EdgeIndex: CsrIndex,
-    OffsetWord: CsrWord<Index = EdgeIndex>,
-    TargetWord: CsrWord<Index = NodeIndex>,
+    NodeIndex: LayoutIndex,
+    EdgeIndex: LayoutIndex,
+    OffsetWord: LayoutWord<Index = EdgeIndex>,
+    TargetWord: LayoutWord<Index = NodeIndex>,
 {
     fn element_bound(&self) -> usize {
         self.node_bound
@@ -887,10 +885,10 @@ where
 impl<NodeIndex, EdgeIndex, OffsetWord, TargetWord> RelationIndex
     for CsrGraph<'_, NodeIndex, EdgeIndex, OffsetWord, TargetWord>
 where
-    NodeIndex: CsrIndex,
-    EdgeIndex: CsrIndex,
-    OffsetWord: CsrWord<Index = EdgeIndex>,
-    TargetWord: CsrWord<Index = NodeIndex>,
+    NodeIndex: LayoutIndex,
+    EdgeIndex: LayoutIndex,
+    OffsetWord: LayoutWord<Index = EdgeIndex>,
+    TargetWord: LayoutWord<Index = NodeIndex>,
 {
     fn relation_bound(&self) -> usize {
         self.targets.len()
@@ -904,10 +902,10 @@ where
 impl<NodeIndex, EdgeIndex, OffsetWord, TargetWord> ContainsElement
     for CsrGraph<'_, NodeIndex, EdgeIndex, OffsetWord, TargetWord>
 where
-    NodeIndex: CsrIndex,
-    EdgeIndex: CsrIndex,
-    OffsetWord: CsrWord<Index = EdgeIndex>,
-    TargetWord: CsrWord<Index = NodeIndex>,
+    NodeIndex: LayoutIndex,
+    EdgeIndex: LayoutIndex,
+    OffsetWord: LayoutWord<Index = EdgeIndex>,
+    TargetWord: LayoutWord<Index = NodeIndex>,
 {
     fn contains_element(&self, element: CsrNodeId<NodeIndex>) -> bool {
         self.contains_node(element)
@@ -917,10 +915,10 @@ where
 impl<NodeIndex, EdgeIndex, OffsetWord, TargetWord> ContainsRelation
     for CsrGraph<'_, NodeIndex, EdgeIndex, OffsetWord, TargetWord>
 where
-    NodeIndex: CsrIndex,
-    EdgeIndex: CsrIndex,
-    OffsetWord: CsrWord<Index = EdgeIndex>,
-    TargetWord: CsrWord<Index = NodeIndex>,
+    NodeIndex: LayoutIndex,
+    EdgeIndex: LayoutIndex,
+    OffsetWord: LayoutWord<Index = EdgeIndex>,
+    TargetWord: LayoutWord<Index = NodeIndex>,
 {
     fn contains_relation(&self, relation: CsrEdgeId<EdgeIndex>) -> bool {
         self.contains_edge(relation)
@@ -930,10 +928,10 @@ where
 impl<NodeIndex, EdgeIndex, OffsetWord, TargetWord> EdgeTargetGraph
     for CsrGraph<'_, NodeIndex, EdgeIndex, OffsetWord, TargetWord>
 where
-    NodeIndex: CsrIndex,
-    EdgeIndex: CsrIndex,
-    OffsetWord: CsrWord<Index = EdgeIndex>,
-    TargetWord: CsrWord<Index = NodeIndex>,
+    NodeIndex: LayoutIndex,
+    EdgeIndex: LayoutIndex,
+    OffsetWord: LayoutWord<Index = EdgeIndex>,
+    TargetWord: LayoutWord<Index = NodeIndex>,
 {
     fn target(&self, edge: CsrEdgeId<EdgeIndex>) -> CsrNodeId<NodeIndex> {
         self.target_node(self.checked_edge_slot(edge))
@@ -943,10 +941,10 @@ where
 impl<NodeIndex, EdgeIndex, OffsetWord, TargetWord> OutgoingGraph
     for CsrGraph<'_, NodeIndex, EdgeIndex, OffsetWord, TargetWord>
 where
-    NodeIndex: CsrIndex,
-    EdgeIndex: CsrIndex,
-    OffsetWord: CsrWord<Index = EdgeIndex>,
-    TargetWord: CsrWord<Index = NodeIndex>,
+    NodeIndex: LayoutIndex,
+    EdgeIndex: LayoutIndex,
+    OffsetWord: LayoutWord<Index = EdgeIndex>,
+    TargetWord: LayoutWord<Index = NodeIndex>,
 {
     type OutEdges<'view>
         = CsrOutEdges<EdgeIndex>
@@ -963,10 +961,10 @@ where
 impl<NodeIndex, EdgeIndex, OffsetWord, TargetWord> OutgoingEdgeCount
     for CsrGraph<'_, NodeIndex, EdgeIndex, OffsetWord, TargetWord>
 where
-    NodeIndex: CsrIndex,
-    EdgeIndex: CsrIndex,
-    OffsetWord: CsrWord<Index = EdgeIndex>,
-    TargetWord: CsrWord<Index = NodeIndex>,
+    NodeIndex: LayoutIndex,
+    EdgeIndex: LayoutIndex,
+    OffsetWord: LayoutWord<Index = EdgeIndex>,
+    TargetWord: LayoutWord<Index = NodeIndex>,
 {
     fn out_degree(&self, node: CsrNodeId<NodeIndex>) -> usize {
         self.outgoing_range(self.checked_node_slot(node)).len()
@@ -976,10 +974,10 @@ where
 impl<NodeIndex, EdgeIndex, OffsetWord, TargetWord> ElementSuccessors
     for CsrGraph<'_, NodeIndex, EdgeIndex, OffsetWord, TargetWord>
 where
-    NodeIndex: CsrIndex,
-    EdgeIndex: CsrIndex,
-    OffsetWord: CsrWord<Index = EdgeIndex>,
-    TargetWord: CsrWord<Index = NodeIndex>,
+    NodeIndex: LayoutIndex,
+    EdgeIndex: LayoutIndex,
+    OffsetWord: LayoutWord<Index = EdgeIndex>,
+    TargetWord: LayoutWord<Index = NodeIndex>,
 {
     type Successors<'view>
         = IdSlice<'view, TargetWord, CsrNodeId<NodeIndex>>
@@ -1005,7 +1003,7 @@ pub struct CsrOutEdges<Index> {
 
 impl<Index> Iterator for CsrOutEdges<Index>
 where
-    Index: CsrIndex,
+    Index: LayoutIndex,
 {
     type Item = CsrEdgeId<Index>;
 
@@ -1016,7 +1014,7 @@ where
 
 impl<Index> ExactSizeIterator for CsrOutEdges<Index>
 where
-    Index: CsrIndex,
+    Index: LayoutIndex,
 {
     fn len(&self) -> usize {
         self.range.len()
@@ -1034,9 +1032,9 @@ fn map_offsets_issue<NodeIndex, EdgeIndex, OffsetWord>(
     issue: OffsetIntegrityIssue,
 ) -> CsrError<NodeIndex, EdgeIndex>
 where
-    NodeIndex: CsrIndex,
-    EdgeIndex: CsrIndex,
-    OffsetWord: CsrWord<Index = EdgeIndex>,
+    NodeIndex: LayoutIndex,
+    EdgeIndex: LayoutIndex,
+    OffsetWord: LayoutWord<Index = EdgeIndex>,
 {
     match issue {
         OffsetIntegrityIssue::Length { expected, actual } => {
@@ -1078,9 +1076,9 @@ fn map_targets_issue<NodeIndex, EdgeIndex, TargetWord>(
     issue: OffsetIntegrityIssue,
 ) -> CsrError<NodeIndex, EdgeIndex>
 where
-    NodeIndex: CsrIndex,
-    EdgeIndex: CsrIndex,
-    TargetWord: CsrWord<Index = NodeIndex>,
+    NodeIndex: LayoutIndex,
+    EdgeIndex: LayoutIndex,
+    TargetWord: LayoutWord<Index = NodeIndex>,
 {
     match issue {
         OffsetIntegrityIssue::ValueOutOfRange { index, .. } => CsrError::TargetOutOfRange {

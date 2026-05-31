@@ -16,14 +16,8 @@ use oxgraph_graph::{
     LocalElementIdentity, LocalRelationIdentity, OutgoingEdgeCount, OutgoingGraph, RelationIndex,
     RelationWeight, TopologyBase, TopologyCounts,
 };
-/// Builder index-width contract (alias of [`crate::CsrIndex`]).
-///
-/// Kept as a named re-export so the umbrella crate's `graph_build` module can
-/// continue to re-export `BuildIndex`; new code should prefer
-/// [`crate::CsrIndex`].
-pub use oxgraph_layout_util::LayoutIndex as BuildIndex;
 use oxgraph_layout_util::{
-    IdOutOfBounds, id_to_slot, index_from_usize, map_offset_overflow, slot_or_max,
+    IdOutOfBounds, LayoutIndex, id_to_slot, index_from_usize, map_offset_overflow, slot_or_max,
 };
 #[cfg(feature = "build-property-arrow")]
 use oxgraph_property::{
@@ -179,8 +173,8 @@ impl<NodeIndex, EdgeIndex> From<PropertyError> for GraphBuildError<NodeIndex, Ed
 #[must_use]
 pub struct GraphBuilder<NodeIndex, EdgeIndex>
 where
-    NodeIndex: BuildIndex,
-    EdgeIndex: BuildIndex,
+    NodeIndex: LayoutIndex,
+    EdgeIndex: LayoutIndex,
 {
     /// Number of nodes assigned so far.
     node_count: usize,
@@ -194,8 +188,8 @@ where
 
 impl<NodeIndex, EdgeIndex> GraphBuilder<NodeIndex, EdgeIndex>
 where
-    NodeIndex: BuildIndex,
-    EdgeIndex: BuildIndex,
+    NodeIndex: LayoutIndex,
+    EdgeIndex: LayoutIndex,
 {
     /// Constructs an empty unweighted graph builder.
     ///
@@ -302,8 +296,8 @@ where
 
 impl<NodeIndex, EdgeIndex> Default for GraphBuilder<NodeIndex, EdgeIndex>
 where
-    NodeIndex: BuildIndex,
-    EdgeIndex: BuildIndex,
+    NodeIndex: LayoutIndex,
+    EdgeIndex: LayoutIndex,
 {
     fn default() -> Self {
         Self::new()
@@ -319,8 +313,8 @@ where
 #[must_use]
 pub struct WeightedGraphBuilder<NodeIndex, EdgeIndex, EW, RW>
 where
-    NodeIndex: BuildIndex,
-    EdgeIndex: BuildIndex,
+    NodeIndex: LayoutIndex,
+    EdgeIndex: LayoutIndex,
 {
     /// Number of nodes assigned so far.
     node_count: usize,
@@ -338,8 +332,8 @@ where
 
 impl<NodeIndex, EdgeIndex, EW, RW> WeightedGraphBuilder<NodeIndex, EdgeIndex, EW, RW>
 where
-    NodeIndex: BuildIndex,
-    EdgeIndex: BuildIndex,
+    NodeIndex: LayoutIndex,
+    EdgeIndex: LayoutIndex,
 {
     /// Constructs an empty weighted graph builder.
     ///
@@ -494,8 +488,8 @@ where
 
 impl<NodeIndex, EdgeIndex, EW, RW> Default for WeightedGraphBuilder<NodeIndex, EdgeIndex, EW, RW>
 where
-    NodeIndex: BuildIndex,
-    EdgeIndex: BuildIndex,
+    NodeIndex: LayoutIndex,
+    EdgeIndex: LayoutIndex,
 {
     fn default() -> Self {
         Self::new()
@@ -512,8 +506,8 @@ where
 #[must_use]
 pub struct FrozenGraph<NodeIndex, EdgeIndex>
 where
-    NodeIndex: BuildIndex,
-    EdgeIndex: BuildIndex,
+    NodeIndex: LayoutIndex,
+    EdgeIndex: LayoutIndex,
 {
     /// Shared frozen topology.
     topology: FrozenTopology<NodeIndex, EdgeIndex>,
@@ -528,8 +522,8 @@ where
 #[must_use]
 pub struct FrozenWeightedGraph<NodeIndex, EdgeIndex, EW, RW>
 where
-    NodeIndex: BuildIndex,
-    EdgeIndex: BuildIndex,
+    NodeIndex: LayoutIndex,
+    EdgeIndex: LayoutIndex,
 {
     /// Shared frozen topology.
     topology: FrozenTopology<NodeIndex, EdgeIndex>,
@@ -543,8 +537,8 @@ where
 #[derive(Clone, Debug)]
 struct FrozenTopology<NodeIndex, EdgeIndex>
 where
-    NodeIndex: BuildIndex,
-    EdgeIndex: BuildIndex,
+    NodeIndex: LayoutIndex,
+    EdgeIndex: LayoutIndex,
 {
     /// Node count.
     node_count: usize,
@@ -562,8 +556,8 @@ where
 
 impl<NodeIndex, EdgeIndex> FrozenGraph<NodeIndex, EdgeIndex>
 where
-    NodeIndex: BuildIndex,
-    EdgeIndex: BuildIndex,
+    NodeIndex: LayoutIndex,
+    EdgeIndex: LayoutIndex,
 {
     /// Returns the CSR offsets array.
     ///
@@ -626,8 +620,8 @@ where
 
 impl<NodeIndex, EdgeIndex, EW, RW> FrozenWeightedGraph<NodeIndex, EdgeIndex, EW, RW>
 where
-    NodeIndex: BuildIndex,
-    EdgeIndex: BuildIndex,
+    NodeIndex: LayoutIndex,
+    EdgeIndex: LayoutIndex,
 {
     /// Returns the CSR offsets array.
     ///
@@ -665,8 +659,8 @@ macro_rules! impl_topology_for {
     ($name:ident, [$($extra:ident),*], $topology:ident) => {
         impl<NodeIndex, EdgeIndex$(, $extra)*> TopologyBase for $name<NodeIndex, EdgeIndex$(, $extra)*>
         where
-            NodeIndex: BuildIndex,
-            EdgeIndex: BuildIndex,
+            NodeIndex: LayoutIndex,
+            EdgeIndex: LayoutIndex,
         {
             type ElementId = GraphNodeId<NodeIndex>;
             type RelationId = GraphEdgeId<EdgeIndex>;
@@ -674,8 +668,8 @@ macro_rules! impl_topology_for {
 
         impl<NodeIndex, EdgeIndex$(, $extra)*> TopologyCounts for $name<NodeIndex, EdgeIndex$(, $extra)*>
         where
-            NodeIndex: BuildIndex,
-            EdgeIndex: BuildIndex,
+            NodeIndex: LayoutIndex,
+            EdgeIndex: LayoutIndex,
         {
             fn element_count(&self) -> usize {
                 self.$topology.node_count
@@ -688,15 +682,15 @@ macro_rules! impl_topology_for {
 
         impl<NodeIndex, EdgeIndex$(, $extra)*> GraphCounts for $name<NodeIndex, EdgeIndex$(, $extra)*>
         where
-            NodeIndex: BuildIndex,
-            EdgeIndex: BuildIndex,
+            NodeIndex: LayoutIndex,
+            EdgeIndex: LayoutIndex,
         {
         }
 
         impl<NodeIndex, EdgeIndex$(, $extra)*> ElementIndex for $name<NodeIndex, EdgeIndex$(, $extra)*>
         where
-            NodeIndex: BuildIndex,
-            EdgeIndex: BuildIndex,
+            NodeIndex: LayoutIndex,
+            EdgeIndex: LayoutIndex,
         {
             fn element_bound(&self) -> usize {
                 self.$topology.node_count
@@ -709,8 +703,8 @@ macro_rules! impl_topology_for {
 
         impl<NodeIndex, EdgeIndex$(, $extra)*> RelationIndex for $name<NodeIndex, EdgeIndex$(, $extra)*>
         where
-            NodeIndex: BuildIndex,
-            EdgeIndex: BuildIndex,
+            NodeIndex: LayoutIndex,
+            EdgeIndex: LayoutIndex,
         {
             fn relation_bound(&self) -> usize {
                 self.$topology.sources.len()
@@ -723,8 +717,8 @@ macro_rules! impl_topology_for {
 
         impl<NodeIndex, EdgeIndex$(, $extra)*> ContainsElement for $name<NodeIndex, EdgeIndex$(, $extra)*>
         where
-            NodeIndex: BuildIndex,
-            EdgeIndex: BuildIndex,
+            NodeIndex: LayoutIndex,
+            EdgeIndex: LayoutIndex,
         {
             fn contains_element(&self, element: GraphNodeId<NodeIndex>) -> bool {
                 element
@@ -736,8 +730,8 @@ macro_rules! impl_topology_for {
 
         impl<NodeIndex, EdgeIndex$(, $extra)*> ContainsRelation for $name<NodeIndex, EdgeIndex$(, $extra)*>
         where
-            NodeIndex: BuildIndex,
-            EdgeIndex: BuildIndex,
+            NodeIndex: LayoutIndex,
+            EdgeIndex: LayoutIndex,
         {
             fn contains_relation(&self, relation: GraphEdgeId<EdgeIndex>) -> bool {
                 relation
@@ -749,8 +743,8 @@ macro_rules! impl_topology_for {
 
         impl<NodeIndex, EdgeIndex$(, $extra)*> EdgeSourceGraph for $name<NodeIndex, EdgeIndex$(, $extra)*>
         where
-            NodeIndex: BuildIndex,
-            EdgeIndex: BuildIndex,
+            NodeIndex: LayoutIndex,
+            EdgeIndex: LayoutIndex,
         {
             fn source(&self, edge: GraphEdgeId<EdgeIndex>) -> GraphNodeId<NodeIndex> {
                 GraphNodeId::new(self.$topology.sources[edge_slot(edge)])
@@ -759,8 +753,8 @@ macro_rules! impl_topology_for {
 
         impl<NodeIndex, EdgeIndex$(, $extra)*> EdgeTargetGraph for $name<NodeIndex, EdgeIndex$(, $extra)*>
         where
-            NodeIndex: BuildIndex,
-            EdgeIndex: BuildIndex,
+            NodeIndex: LayoutIndex,
+            EdgeIndex: LayoutIndex,
         {
             fn target(&self, edge: GraphEdgeId<EdgeIndex>) -> GraphNodeId<NodeIndex> {
                 GraphNodeId::new(self.$topology.edge_targets[edge_slot(edge)])
@@ -769,8 +763,8 @@ macro_rules! impl_topology_for {
 
         impl<NodeIndex, EdgeIndex$(, $extra)*> OutgoingGraph for $name<NodeIndex, EdgeIndex$(, $extra)*>
         where
-            NodeIndex: BuildIndex,
-            EdgeIndex: BuildIndex,
+            NodeIndex: LayoutIndex,
+            EdgeIndex: LayoutIndex,
         {
             type OutEdges<'view>
                 = FrozenOutEdges<'view, EdgeIndex>
@@ -786,8 +780,8 @@ macro_rules! impl_topology_for {
 
         impl<NodeIndex, EdgeIndex$(, $extra)*> OutgoingEdgeCount for $name<NodeIndex, EdgeIndex$(, $extra)*>
         where
-            NodeIndex: BuildIndex,
-            EdgeIndex: BuildIndex,
+            NodeIndex: LayoutIndex,
+            EdgeIndex: LayoutIndex,
         {
             fn out_degree(&self, node: GraphNodeId<NodeIndex>) -> usize {
                 outgoing_range(&self.$topology, node).len()
@@ -796,8 +790,8 @@ macro_rules! impl_topology_for {
 
         impl<NodeIndex, EdgeIndex$(, $extra)*> ElementSuccessors for $name<NodeIndex, EdgeIndex$(, $extra)*>
         where
-            NodeIndex: BuildIndex,
-            EdgeIndex: BuildIndex,
+            NodeIndex: LayoutIndex,
+            EdgeIndex: LayoutIndex,
         {
             type Successors<'view>
                 = FrozenSuccessors<'view, EdgeIndex, NodeIndex>
@@ -814,8 +808,8 @@ macro_rules! impl_topology_for {
 
         impl<NodeIndex, EdgeIndex$(, $extra)*> CanonicalElementIdentity for $name<NodeIndex, EdgeIndex$(, $extra)*>
         where
-            NodeIndex: BuildIndex,
-            EdgeIndex: BuildIndex,
+            NodeIndex: LayoutIndex,
+            EdgeIndex: LayoutIndex,
         {
             type CanonicalElementId = GraphNodeId<NodeIndex>;
 
@@ -829,8 +823,8 @@ macro_rules! impl_topology_for {
 
         impl<NodeIndex, EdgeIndex$(, $extra)*> LocalElementIdentity for $name<NodeIndex, EdgeIndex$(, $extra)*>
         where
-            NodeIndex: BuildIndex,
-            EdgeIndex: BuildIndex,
+            NodeIndex: LayoutIndex,
+            EdgeIndex: LayoutIndex,
         {
             fn local_element_id(
                 &self,
@@ -842,8 +836,8 @@ macro_rules! impl_topology_for {
 
         impl<NodeIndex, EdgeIndex$(, $extra)*> CanonicalRelationIdentity for $name<NodeIndex, EdgeIndex$(, $extra)*>
         where
-            NodeIndex: BuildIndex,
-            EdgeIndex: BuildIndex,
+            NodeIndex: LayoutIndex,
+            EdgeIndex: LayoutIndex,
         {
             type CanonicalRelationId = GraphEdgeId<EdgeIndex>;
 
@@ -857,8 +851,8 @@ macro_rules! impl_topology_for {
 
         impl<NodeIndex, EdgeIndex$(, $extra)*> LocalRelationIdentity for $name<NodeIndex, EdgeIndex$(, $extra)*>
         where
-            NodeIndex: BuildIndex,
-            EdgeIndex: BuildIndex,
+            NodeIndex: LayoutIndex,
+            EdgeIndex: LayoutIndex,
         {
             fn local_relation_id(
                 &self,
@@ -876,8 +870,8 @@ impl_topology_for!(FrozenWeightedGraph, [EW, RW], topology);
 impl<NodeIndex, EdgeIndex, EW: Copy, RW> ElementWeight
     for FrozenWeightedGraph<NodeIndex, EdgeIndex, EW, RW>
 where
-    NodeIndex: BuildIndex,
-    EdgeIndex: BuildIndex,
+    NodeIndex: LayoutIndex,
+    EdgeIndex: LayoutIndex,
 {
     type Weight = EW;
 
@@ -889,8 +883,8 @@ where
 impl<NodeIndex, EdgeIndex, EW, RW: Copy> RelationWeight
     for FrozenWeightedGraph<NodeIndex, EdgeIndex, EW, RW>
 where
-    NodeIndex: BuildIndex,
-    EdgeIndex: BuildIndex,
+    NodeIndex: LayoutIndex,
+    EdgeIndex: LayoutIndex,
 {
     type Weight = RW;
 
@@ -937,7 +931,7 @@ pub struct FrozenSuccessors<'view, EdgeIndex, NodeIndex> {
 
 impl<EdgeIndex, NodeIndex> Iterator for FrozenSuccessors<'_, EdgeIndex, NodeIndex>
 where
-    EdgeIndex: BuildIndex,
+    EdgeIndex: LayoutIndex,
     NodeIndex: Copy,
 {
     type Item = GraphNodeId<NodeIndex>;
@@ -955,7 +949,7 @@ where
 
 impl<EdgeIndex, NodeIndex> ExactSizeIterator for FrozenSuccessors<'_, EdgeIndex, NodeIndex>
 where
-    EdgeIndex: BuildIndex,
+    EdgeIndex: LayoutIndex,
     NodeIndex: Copy,
 {
 }
@@ -967,8 +961,8 @@ fn freeze_topology<NodeIndex, EdgeIndex>(
     targets: &[NodeIndex],
 ) -> Result<FrozenTopology<NodeIndex, EdgeIndex>, GraphBuildError<NodeIndex, EdgeIndex>>
 where
-    NodeIndex: BuildIndex,
-    EdgeIndex: BuildIndex,
+    NodeIndex: LayoutIndex,
+    EdgeIndex: LayoutIndex,
 {
     let mut counts = vec![0_usize; node_count + 1];
     for &source in sources {
@@ -1017,7 +1011,7 @@ where
 /// Returns zero for an edge index width.
 fn edge_zero<NodeIndex, EdgeIndex>() -> Result<EdgeIndex, GraphBuildError<NodeIndex, EdgeIndex>>
 where
-    EdgeIndex: BuildIndex,
+    EdgeIndex: LayoutIndex,
 {
     index_from_usize::<EdgeIndex>(0)
         .map_err(|error| map_offset_overflow(error, |value| GraphBuildError::IdOverflow { value }))
@@ -1026,7 +1020,7 @@ where
 /// Returns zero for a node index width.
 fn node_zero<NodeIndex, EdgeIndex>() -> Result<NodeIndex, GraphBuildError<NodeIndex, EdgeIndex>>
 where
-    NodeIndex: BuildIndex,
+    NodeIndex: LayoutIndex,
 {
     index_from_usize::<NodeIndex>(0)
         .map_err(|error| map_offset_overflow(error, |value| GraphBuildError::IdOverflow { value }))
@@ -1038,7 +1032,7 @@ fn ensure_node<NodeIndex, EdgeIndex>(
     node_count: usize,
 ) -> Result<usize, GraphBuildError<NodeIndex, EdgeIndex>>
 where
-    NodeIndex: BuildIndex,
+    NodeIndex: LayoutIndex,
 {
     id_to_slot::<NodeIndex>(node.get(), node_count)
         .map_err(|_: IdOutOfBounds| GraphBuildError::InvalidNode { node })
@@ -1050,19 +1044,19 @@ fn ensure_edge<NodeIndex, EdgeIndex>(
     edge_count: usize,
 ) -> Result<usize, GraphBuildError<NodeIndex, EdgeIndex>>
 where
-    EdgeIndex: BuildIndex,
+    EdgeIndex: LayoutIndex,
 {
     id_to_slot::<EdgeIndex>(edge.get(), edge_count)
         .map_err(|_: IdOutOfBounds| GraphBuildError::InvalidEdge { edge })
 }
 
 /// Returns a node slot without panicking.
-fn node_slot<NodeIndex: BuildIndex>(node: GraphNodeId<NodeIndex>) -> usize {
+fn node_slot<NodeIndex: LayoutIndex>(node: GraphNodeId<NodeIndex>) -> usize {
     slot_or_max::<NodeIndex>(node.get())
 }
 
 /// Returns an edge slot without panicking.
-fn edge_slot<EdgeIndex: BuildIndex>(edge: GraphEdgeId<EdgeIndex>) -> usize {
+fn edge_slot<EdgeIndex: LayoutIndex>(edge: GraphEdgeId<EdgeIndex>) -> usize {
     slot_or_max::<EdgeIndex>(edge.get())
 }
 
@@ -1072,8 +1066,8 @@ fn outgoing_range<NodeIndex, EdgeIndex>(
     node: GraphNodeId<NodeIndex>,
 ) -> core::ops::Range<usize>
 where
-    NodeIndex: BuildIndex,
-    EdgeIndex: BuildIndex,
+    NodeIndex: LayoutIndex,
+    EdgeIndex: LayoutIndex,
 {
     let slot = node_slot(node);
     let start = topology.offsets[slot]
@@ -1129,8 +1123,8 @@ pub fn export_csr_snapshot<NodeIndex, EdgeIndex>(
     graph: &FrozenGraph<NodeIndex, EdgeIndex>,
 ) -> Result<Vec<u8>, GraphBuildError<NodeIndex, EdgeIndex>>
 where
-    NodeIndex: BuildIndex + CsrSnapshotIndex,
-    EdgeIndex: BuildIndex + CsrSnapshotIndex,
+    NodeIndex: LayoutIndex + CsrSnapshotIndex,
+    EdgeIndex: LayoutIndex + CsrSnapshotIndex,
 {
     export_topology_snapshot(&graph.topology)
 }
@@ -1152,8 +1146,8 @@ pub fn export_weighted_csr_snapshot<NodeIndex, EdgeIndex, EW, RW>(
     graph: &FrozenWeightedGraph<NodeIndex, EdgeIndex, EW, RW>,
 ) -> Result<Vec<u8>, GraphBuildError<NodeIndex, EdgeIndex>>
 where
-    NodeIndex: BuildIndex + CsrSnapshotIndex,
-    EdgeIndex: BuildIndex + CsrSnapshotIndex,
+    NodeIndex: LayoutIndex + CsrSnapshotIndex,
+    EdgeIndex: LayoutIndex + CsrSnapshotIndex,
 {
     export_topology_snapshot(&graph.topology)
 }
@@ -1174,8 +1168,8 @@ pub fn export_csr_snapshot_with_properties<NodeIndex, EdgeIndex, Id>(
     layers: GraphPropertyLayers<'_, Id, NodeIndex, EdgeIndex>,
 ) -> Result<Vec<u8>, GraphBuildError<NodeIndex, EdgeIndex>>
 where
-    NodeIndex: BuildIndex + CsrSnapshotIndex + oxgraph_property::PropertyIndex,
-    EdgeIndex: BuildIndex + CsrSnapshotIndex + PropertySnapshotMetaWord,
+    NodeIndex: LayoutIndex + CsrSnapshotIndex + oxgraph_property::PropertyIndex,
+    EdgeIndex: LayoutIndex + CsrSnapshotIndex + PropertySnapshotMetaWord,
     Id: Clone + Copy + Into<u64> + Ord + TryInto<EdgeIndex>,
 {
     let property = encode_graph_properties(&graph.topology, layers)?;
@@ -1198,8 +1192,8 @@ pub fn export_weighted_csr_snapshot_with_properties<NodeIndex, EdgeIndex, EW, RW
     layers: GraphPropertyLayers<'_, Id, NodeIndex, EdgeIndex>,
 ) -> Result<Vec<u8>, GraphBuildError<NodeIndex, EdgeIndex>>
 where
-    NodeIndex: BuildIndex + CsrSnapshotIndex + oxgraph_property::PropertyIndex,
-    EdgeIndex: BuildIndex + CsrSnapshotIndex + PropertySnapshotMetaWord,
+    NodeIndex: LayoutIndex + CsrSnapshotIndex + oxgraph_property::PropertyIndex,
+    EdgeIndex: LayoutIndex + CsrSnapshotIndex + PropertySnapshotMetaWord,
     Id: Clone + Copy + Into<u64> + Ord + TryInto<EdgeIndex>,
 {
     let property = encode_graph_properties(&graph.topology, layers)?;
@@ -1213,8 +1207,8 @@ fn encode_graph_properties<NodeIndex, EdgeIndex, Id>(
     layers: GraphPropertyLayers<'_, Id, NodeIndex, EdgeIndex>,
 ) -> Result<EncodedPropertySnapshot, GraphBuildError<NodeIndex, EdgeIndex>>
 where
-    NodeIndex: BuildIndex + CsrSnapshotIndex + oxgraph_property::PropertyIndex,
-    EdgeIndex: BuildIndex + CsrSnapshotIndex + PropertySnapshotMetaWord,
+    NodeIndex: LayoutIndex + CsrSnapshotIndex + oxgraph_property::PropertyIndex,
+    EdgeIndex: LayoutIndex + CsrSnapshotIndex + PropertySnapshotMetaWord,
     Id: Clone + Copy + Into<u64> + Ord + TryInto<EdgeIndex>,
 {
     validate_property_lengths(topology, layers.element, IdFamily::Element)?;
@@ -1248,8 +1242,8 @@ fn validate_property_lengths<Id, I, NodeIndex, EdgeIndex>(
 ) -> Result<(), GraphBuildError<NodeIndex, EdgeIndex>>
 where
     I: oxgraph_property::PropertyIndex,
-    NodeIndex: BuildIndex,
-    EdgeIndex: BuildIndex,
+    NodeIndex: LayoutIndex,
+    EdgeIndex: LayoutIndex,
 {
     let required = match id_family {
         IdFamily::Element => topology.node_count,
@@ -1274,8 +1268,8 @@ fn export_topology_snapshot<NodeIndex, EdgeIndex>(
     topology: &FrozenTopology<NodeIndex, EdgeIndex>,
 ) -> Result<Vec<u8>, GraphBuildError<NodeIndex, EdgeIndex>>
 where
-    NodeIndex: BuildIndex + CsrSnapshotIndex,
-    EdgeIndex: BuildIndex + CsrSnapshotIndex,
+    NodeIndex: LayoutIndex + CsrSnapshotIndex,
+    EdgeIndex: LayoutIndex + CsrSnapshotIndex,
 {
     let mut builder = SnapshotBuilder::new();
     builder.add_section_widths(
@@ -1298,8 +1292,8 @@ fn export_topology_property_snapshot<NodeIndex, EdgeIndex>(
     property: EncodedPropertySnapshot,
 ) -> Result<Vec<u8>, GraphBuildError<NodeIndex, EdgeIndex>>
 where
-    NodeIndex: BuildIndex + CsrSnapshotIndex,
-    EdgeIndex: BuildIndex + CsrSnapshotIndex + PropertySnapshotMetaWord,
+    NodeIndex: LayoutIndex + CsrSnapshotIndex,
+    EdgeIndex: LayoutIndex + CsrSnapshotIndex + PropertySnapshotMetaWord,
 {
     let identity_modes = [
         IdentityModeRecord::<EdgeIndex>::local_equals_canonical(

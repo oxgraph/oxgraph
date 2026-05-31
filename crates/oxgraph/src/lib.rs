@@ -8,6 +8,25 @@
 #[cfg(kani)]
 extern crate kani;
 
+/// Shared layout index/word vocabulary.
+///
+/// Re-exports the canonical dense-index, storage-word, and local-handle
+/// vocabulary every concrete layout and build crate is parameterized over.
+/// Concrete layout features (`csr`, `hyper-bcsr`, `graph-build`, `hyper-build`,
+/// `topology`) enable this feature transitively, so the index/word traits stay
+/// reachable wherever a layout type is.
+///
+/// # Performance
+///
+/// `perf: unspecified`; this module re-exports another crate.
+#[cfg(feature = "layout")]
+pub mod layout {
+    pub use oxgraph_layout_util::{
+        Axis, EdgeAxis, HyperedgeAxis, IdSlice, IncidenceAxis, LayoutIndex, LayoutSnapshotWord,
+        LayoutWord, LocalId, NodeAxis, SnapshotWidth, VertexAxis, ZerocopyWord,
+    };
+}
+
 /// Substrate-neutral topology capability traits.
 ///
 /// # Performance
@@ -79,10 +98,13 @@ pub mod csc {
 /// `perf: unspecified`; this module re-exports another crate.
 #[cfg(feature = "csr")]
 pub mod csr {
+    // The shared index/word vocabulary (`LayoutIndex`, `LayoutWord`,
+    // `LayoutSnapshotWord`) lives at [`crate::layout`]; the `csr` feature enables
+    // it. This module re-exports only CSR-specific items.
     pub use oxgraph_csr::{
-        CsrEdgeId, CsrError, CsrGraph, CsrIndex, CsrNativeGraph, CsrNodeId, CsrOutEdges,
-        CsrSnapshotError, CsrSnapshotGraph, CsrSnapshotIndex, CsrSnapshotWord, CsrWord,
-        SNAPSHOT_CSR_SECTION_VERSION, SNAPSHOT_KIND_CSR_OFFSETS_U16, SNAPSHOT_KIND_CSR_OFFSETS_U32,
+        CsrEdgeId, CsrError, CsrGraph, CsrNativeGraph, CsrNodeId, CsrOutEdges, CsrSnapshotError,
+        CsrSnapshotGraph, CsrSnapshotIndex, SNAPSHOT_CSR_SECTION_VERSION,
+        SNAPSHOT_KIND_CSR_OFFSETS_U16, SNAPSHOT_KIND_CSR_OFFSETS_U32,
         SNAPSHOT_KIND_CSR_OFFSETS_U64, SNAPSHOT_KIND_CSR_TARGETS_U16,
         SNAPSHOT_KIND_CSR_TARGETS_U32, SNAPSHOT_KIND_CSR_TARGETS_U64,
     };
@@ -95,19 +117,22 @@ pub mod csr {
 /// `perf: unspecified`; this module re-exports another crate.
 #[cfg(feature = "hyper-bcsr")]
 pub mod hyper_bcsr {
+    // The shared index/word vocabulary (`LayoutIndex`, `LayoutWord`,
+    // `LayoutSnapshotWord`) lives at [`crate::layout`]; the `hyper-bcsr` feature
+    // enables it. This module re-exports only BCSR-specific items.
     pub use oxgraph_hyper_bcsr::{
         BcsrChainedHyperedges, BcsrChainedParticipants, BcsrChainedRelationIncidences,
         BcsrElementIncidences, BcsrError, BcsrHyperedgeId, BcsrHyperedgeSlice, BcsrHypergraph,
-        BcsrIndex, BcsrNativeHypergraph, BcsrParticipantId, BcsrParticipantSlice,
-        BcsrPredecessorVertices, BcsrRole, BcsrRoleSide, BcsrSection, BcsrSections,
-        BcsrSnapshotError, BcsrSnapshotHypergraph, BcsrSnapshotIndex, BcsrSnapshotWord,
-        BcsrSuccessorVertices, BcsrValidation, BcsrVertexId, BcsrVertexSlice, BcsrWord,
-        SNAPSHOT_KIND_BCSR_HEAD_OFFSETS_U16, SNAPSHOT_KIND_BCSR_HEAD_OFFSETS_U32,
-        SNAPSHOT_KIND_BCSR_HEAD_OFFSETS_U64, SNAPSHOT_KIND_BCSR_HEAD_PARTICIPANTS_U16,
-        SNAPSHOT_KIND_BCSR_HEAD_PARTICIPANTS_U32, SNAPSHOT_KIND_BCSR_HEAD_PARTICIPANTS_U64,
-        SNAPSHOT_KIND_BCSR_TAIL_OFFSETS_U16, SNAPSHOT_KIND_BCSR_TAIL_OFFSETS_U32,
-        SNAPSHOT_KIND_BCSR_TAIL_OFFSETS_U64, SNAPSHOT_KIND_BCSR_TAIL_PARTICIPANTS_U16,
-        SNAPSHOT_KIND_BCSR_TAIL_PARTICIPANTS_U32, SNAPSHOT_KIND_BCSR_TAIL_PARTICIPANTS_U64,
+        BcsrNativeHypergraph, BcsrParticipantId, BcsrParticipantSlice, BcsrPredecessorVertices,
+        BcsrRole, BcsrRoleSide, BcsrSection, BcsrSections, BcsrSnapshotError,
+        BcsrSnapshotHypergraph, BcsrSnapshotIndex, BcsrSuccessorVertices, BcsrValidation,
+        BcsrVertexId, BcsrVertexSlice, SNAPSHOT_KIND_BCSR_HEAD_OFFSETS_U16,
+        SNAPSHOT_KIND_BCSR_HEAD_OFFSETS_U32, SNAPSHOT_KIND_BCSR_HEAD_OFFSETS_U64,
+        SNAPSHOT_KIND_BCSR_HEAD_PARTICIPANTS_U16, SNAPSHOT_KIND_BCSR_HEAD_PARTICIPANTS_U32,
+        SNAPSHOT_KIND_BCSR_HEAD_PARTICIPANTS_U64, SNAPSHOT_KIND_BCSR_TAIL_OFFSETS_U16,
+        SNAPSHOT_KIND_BCSR_TAIL_OFFSETS_U32, SNAPSHOT_KIND_BCSR_TAIL_OFFSETS_U64,
+        SNAPSHOT_KIND_BCSR_TAIL_PARTICIPANTS_U16, SNAPSHOT_KIND_BCSR_TAIL_PARTICIPANTS_U32,
+        SNAPSHOT_KIND_BCSR_TAIL_PARTICIPANTS_U64,
         SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_HYPEREDGES_U16,
         SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_HYPEREDGES_U32,
         SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_HYPEREDGES_U64,
@@ -250,10 +275,12 @@ pub mod db {
 /// `perf: unspecified`; this module re-exports another crate.
 #[cfg(feature = "graph-build")]
 pub mod graph_build {
+    // The builder index-width contract is the shared `LayoutIndex`, re-exported
+    // at [`crate::layout`]; the `graph-build` feature enables it.
     pub use oxgraph_csr::build::{
-        BuildIndex, FrozenGraph, FrozenOutEdges, FrozenSuccessors, FrozenWeightedGraph,
-        GraphBuildError, GraphBuilder, GraphEdgeId, GraphNodeId, WeightedGraphBuilder,
-        csr_slice_to_le, export_csr_snapshot, export_weighted_csr_snapshot, identity_slice_to_le,
+        FrozenGraph, FrozenOutEdges, FrozenSuccessors, FrozenWeightedGraph, GraphBuildError,
+        GraphBuilder, GraphEdgeId, GraphNodeId, WeightedGraphBuilder, csr_slice_to_le,
+        export_csr_snapshot, export_weighted_csr_snapshot, identity_slice_to_le,
     };
     #[cfg(feature = "graph-property-arrow")]
     pub use oxgraph_csr::build::{
@@ -268,12 +295,14 @@ pub mod graph_build {
 /// `perf: unspecified`; this module re-exports another crate.
 #[cfg(feature = "hyper-build")]
 pub mod hyper_build {
+    // The builder index-width contract is the shared `LayoutIndex`, re-exported
+    // at [`crate::layout`]; the `hyper-build` feature enables it.
     pub use oxgraph_hyper_bcsr::build::{
-        BuildIndex, FrozenHypergraph, FrozenWeightedHypergraph, HyperBuildError,
-        HyperParticipantId, HyperParticipantRole, HyperVertexId, HyperedgeId, HyperedgeSliceIter,
-        HypergraphBuilder, IncidentHyperedgeIter, ParticipantRangeIter, ParticipantSliceIter,
-        PredecessorIter, SuccessorIter, VertexSliceIter, WeightedHypergraphBuilder,
-        export_bcsr_snapshot, export_weighted_bcsr_snapshot,
+        FrozenHypergraph, FrozenWeightedHypergraph, HyperBuildError, HyperParticipantId,
+        HyperParticipantRole, HyperVertexId, HyperedgeId, HyperedgeSliceIter, HypergraphBuilder,
+        IncidentHyperedgeIter, ParticipantRangeIter, ParticipantSliceIter, PredecessorIter,
+        SuccessorIter, VertexSliceIter, WeightedHypergraphBuilder, export_bcsr_snapshot,
+        export_weighted_bcsr_snapshot,
     };
     #[cfg(feature = "hyper-property-arrow")]
     pub use oxgraph_hyper_bcsr::build::{

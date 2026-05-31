@@ -87,7 +87,8 @@ pub use crate::{
         SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_OFFSETS_U64,
     },
     word::{
-        BcsrIndex, BcsrSnapshotIndex, BcsrSnapshotWord, BcsrWord, SNAPSHOT_BCSR_SECTION_VERSION,
+        BcsrSnapshotIndex, LayoutIndex, LayoutSnapshotWord, LayoutWord,
+        SNAPSHOT_BCSR_SECTION_VERSION,
     },
 };
 

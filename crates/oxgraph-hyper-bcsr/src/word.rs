@@ -1,9 +1,7 @@
 //! Borrowed-section word abstraction for bipartite-CSR payloads.
 
 use oxgraph_layout_util::SnapshotWidth;
-pub use oxgraph_layout_util::{
-    LayoutIndex as BcsrIndex, LayoutSnapshotWord as BcsrSnapshotWord, LayoutWord as BcsrWord,
-};
+pub use oxgraph_layout_util::{LayoutIndex, LayoutSnapshotWord, LayoutWord};
 
 use crate::snapshot::{
     SNAPSHOT_KIND_BCSR_HEAD_OFFSETS_U16, SNAPSHOT_KIND_BCSR_HEAD_OFFSETS_U32,
