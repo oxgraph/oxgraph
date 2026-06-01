@@ -49,7 +49,7 @@ proptest! {
         }
         for (source, target) in pairs {
             if source < vertex_count && target < vertex_count && source != target {
-                prop_hyper(builder.add_hyperedge(&[HyperVertexId(source)], &[HyperVertexId(target)]))?;
+                prop_hyper(builder.add_hyperedge(&[HyperVertexId::new(source)], &[HyperVertexId::new(target)]))?;
             }
         }
         let descriptor = prop_property(PropertyLayerDescriptor::<u32, u32>::try_new(
@@ -66,14 +66,14 @@ proptest! {
         ))?;
         let frozen = prop_hyper(builder.freeze())?;
         for vertex in 0..vertex_count {
-            let id = HyperVertexId(vertex);
+            let id = HyperVertexId::new(vertex);
             prop_assert!(frozen.contains_element(id));
             prop_assert_eq!(frozen.local_element_id(id), Some(id));
         }
         let relation_count = u32::try_from(frozen.hyperedge_count())
             .map_err(|error| TestCaseError::fail(error.to_string()))?;
         for relation in 0..relation_count {
-            prop_assert!(frozen.contains_relation(HyperedgeId(relation)));
+            prop_assert!(frozen.contains_relation(HyperedgeId::new(relation)));
         }
         let element_layers = [layer];
         let bytes = prop_hyper(export_bcsr_snapshot_with_properties(

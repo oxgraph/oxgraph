@@ -1,6 +1,11 @@
 //! Embedded `OxGraph` database engine API.
 
-use std::path::{Path, PathBuf};
+use std::{
+    cell::RefCell,
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+    rc::Rc,
+};
 
 use crate::{
     Catalog, CommitSeq, DbError, ElementId, ElementRecord, GraphProjection, HypergraphProjection,
@@ -179,6 +184,8 @@ impl Database {
                 last_transaction_id: self.last_transaction_id,
             },
             state: self.state.clone(),
+            graph_projections: RefCell::new(BTreeMap::new()),
+            hypergraph_projections: RefCell::new(BTreeMap::new()),
         }
     }
 
@@ -334,7 +341,23 @@ pub struct ReadTransaction {
     pin: ReadPin,
     /// Cloned visible state.
     state: DatabaseState,
+    /// Materialized graph projections cached for the pinned commit, keyed by
+    /// projection ID. The stored [`CommitSeq`] guards against reuse across a
+    /// commit-sequence advance; within one read it is always the pin's seq.
+    graph_projections: ProjectionCache<GraphProjection>,
+    /// Materialized hypergraph projections cached for the pinned commit.
+    hypergraph_projections: ProjectionCache<HypergraphProjection>,
 }
+
+/// Per-read materialized-projection cache keyed by projection ID.
+///
+/// Each entry carries the [`CommitSeq`] it was built against so a stale entry
+/// is discarded when the visible commit sequence advances.
+///
+/// # Performance
+///
+/// Lookups and inserts are `O(log projection count)`.
+type ProjectionCache<P> = RefCell<BTreeMap<ProjectionId, (CommitSeq, Rc<P>)>>;
 
 impl ReadTransaction {
     /// Returns this transaction's reader pin.
@@ -582,19 +605,51 @@ impl ReadTransaction {
     ///
     /// This method is `O(relation count * incidence count)`.
     pub fn graph_projection(&self, id: ProjectionId) -> Result<GraphProjection, DbError> {
+        self.cached_graph_projection(id)
+            .map(|graph| (*graph).clone())
+    }
+
+    /// Returns a cached graph projection, materializing it on first use.
+    ///
+    /// The projection is keyed by ID and tagged with the pinned commit
+    /// sequence, so repeated traverse/query/index calls within one read reuse
+    /// one materialization instead of rebuilding it `O(relation * incidence)`
+    /// each time. A stale-seq entry is discarded and rebuilt.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError`] when the projection is unknown, is not a graph, or
+    /// fails validation against current topology.
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(1)` on a cache hit and
+    /// `O(relation count * incidence count)` on a miss.
+    fn cached_graph_projection(&self, id: ProjectionId) -> Result<Rc<GraphProjection>, DbError> {
+        let seq = self.pin.visible_commit_seq;
+        if let Some((cached_seq, graph)) = self.graph_projections.borrow().get(&id)
+            && *cached_seq == seq
+        {
+            return Ok(Rc::clone(graph));
+        }
         let entry = self
             .state
             .catalog()
             .projection(id)
             .ok_or(DbError::UnknownProjection { id })?;
-        match &entry.definition {
+        let graph = match &entry.definition {
             ProjectionDefinition::Graph(definition) => {
-                projection::GraphProjection::from_state(&self.state, definition.clone())
+                projection::GraphProjection::from_state(&self.state, definition.clone())?
             }
             ProjectionDefinition::Hypergraph(_definition) => {
-                Err(DbError::invalid_projection("projection is not a graph"))
+                return Err(DbError::invalid_projection("projection is not a graph"));
             }
-        }
+        };
+        let graph = Rc::new(graph);
+        self.graph_projections
+            .borrow_mut()
+            .insert(id, (seq, Rc::clone(&graph)));
+        Ok(graph)
     }
 
     /// Materializes a graph projection by catalog name.
@@ -638,7 +693,7 @@ impl ReadTransaction {
         if seeds.is_empty() || options.limit == 0 {
             return Ok(TraversalResult::new(Vec::new()));
         }
-        let graph = self.graph_projection(projection)?;
+        let graph = self.cached_graph_projection(projection)?;
         traversal::traverse_graph_projection(&graph, seeds, options)
     }
 
@@ -653,19 +708,54 @@ impl ReadTransaction {
     ///
     /// This method is `O(relation count * incidence count)`.
     pub fn hypergraph_projection(&self, id: ProjectionId) -> Result<HypergraphProjection, DbError> {
+        self.cached_hypergraph_projection(id)
+            .map(|hyper| (*hyper).clone())
+    }
+
+    /// Returns a cached hypergraph projection, materializing it on first use.
+    ///
+    /// Mirrors [`Self::cached_graph_projection`]: keyed by ID, tagged with the
+    /// pinned commit sequence, and rebuilt only on a miss or stale seq.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError`] when the projection is unknown, is not a hypergraph,
+    /// or fails validation against current topology.
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(1)` on a cache hit and
+    /// `O(relation count * incidence count)` on a miss.
+    fn cached_hypergraph_projection(
+        &self,
+        id: ProjectionId,
+    ) -> Result<Rc<HypergraphProjection>, DbError> {
+        let seq = self.pin.visible_commit_seq;
+        if let Some((cached_seq, hyper)) = self.hypergraph_projections.borrow().get(&id)
+            && *cached_seq == seq
+        {
+            return Ok(Rc::clone(hyper));
+        }
         let entry = self
             .state
             .catalog()
             .projection(id)
             .ok_or(DbError::UnknownProjection { id })?;
-        match &entry.definition {
+        let hyper = match &entry.definition {
             ProjectionDefinition::Hypergraph(definition) => {
-                projection::HypergraphProjection::from_state(&self.state, definition.clone())
+                projection::HypergraphProjection::from_state(&self.state, definition.clone())?
             }
-            ProjectionDefinition::Graph(_definition) => Err(DbError::invalid_projection(
-                "projection is not a hypergraph",
-            )),
-        }
+            ProjectionDefinition::Graph(_definition) => {
+                return Err(DbError::invalid_projection(
+                    "projection is not a hypergraph",
+                ));
+            }
+        };
+        let hyper = Rc::new(hyper);
+        self.hypergraph_projections
+            .borrow_mut()
+            .insert(id, (seq, Rc::clone(&hyper)));
+        Ok(hyper)
     }
 
     /// Executes a prepared query.
@@ -703,15 +793,12 @@ impl ReadTransaction {
             .projection(projection)
             .ok_or(DbError::UnknownProjection { id: projection })?;
         match &entry.definition {
-            ProjectionDefinition::Graph(definition) => Ok(projection::GraphProjection::from_state(
-                &self.state,
-                definition.clone(),
-            )?
-            .subjects()),
-            ProjectionDefinition::Hypergraph(definition) => Ok(
-                projection::HypergraphProjection::from_state(&self.state, definition.clone())?
-                    .subjects(),
-            ),
+            ProjectionDefinition::Graph(_definition) => {
+                Ok(self.cached_graph_projection(projection)?.subjects())
+            }
+            ProjectionDefinition::Hypergraph(_definition) => {
+                Ok(self.cached_hypergraph_projection(projection)?.subjects())
+            }
         }
     }
 }

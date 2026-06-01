@@ -13,31 +13,38 @@ repository.workspace = true
 
 [features]
 default = []
-topology = ["dep:oxgraph-topology"]
+# Shared layout index/word vocabulary re-exported at `oxgraph::layout`. Enabled
+# transitively by every concrete layout/build feature so consumers reach the
+# index/word traits through the umbrella.
+layout = ["dep:oxgraph-layout-util"]
+topology = ["layout", "dep:oxgraph-topology"]
 graph = ["topology", "dep:oxgraph-graph"]
 hyper = ["topology", "dep:oxgraph-hyper"]
-csr = ["graph", "dep:oxgraph-csr"]
-hyper-bcsr = ["hyper", "dep:oxgraph-hyper-bcsr"]
+csr = ["graph", "layout", "dep:oxgraph-csr"]
+hyper-bcsr = ["hyper", "layout", "dep:oxgraph-hyper-bcsr"]
 snapshot = ["dep:oxgraph-snapshot"]
 snapshot-alloc = ["snapshot", "oxgraph-snapshot?/alloc"]
 algo = ["topology", "dep:oxgraph-algo"]
 algo-alloc = ["algo", "oxgraph-algo?/alloc"]
 algo-std = ["algo-alloc", "oxgraph-algo?/std"]
 property-arrow = ["topology", "dep:oxgraph-property"]
-graph-build = ["graph", "csr", "snapshot-alloc", "oxgraph-csr/build"]
+graph-build = ["graph", "csr", "layout", "snapshot-alloc", "oxgraph-csr/build"]
 graph-snapshot = ["graph-build"]
 graph-property-arrow = ["graph-snapshot", "property-arrow", "oxgraph-csr/build-property-arrow"]
-hyper-build = ["hyper", "hyper-bcsr", "snapshot-alloc", "oxgraph-hyper-bcsr/build"]
+hyper-build = ["hyper", "hyper-bcsr", "layout", "snapshot-alloc", "oxgraph-hyper-bcsr/build"]
 hyper-snapshot = ["hyper-build"]
 hyper-property-arrow = [
   "hyper-snapshot",
   "property-arrow",
   "oxgraph-hyper-bcsr/build-property-arrow",
 ]
-postgres = ["dep:oxgraph-postgres", "dep:oxgraph-csc"]
+# `postgres` enables the `csc` feature (not just the dep) so the borrowed
+# inbound CSC view is reachable at the single canonical path `oxgraph::csc`.
+postgres = ["dep:oxgraph-postgres", "csc"]
 csc = ["dep:oxgraph-csc"]
-db = ["dep:oxgraph-db", "graph", "hyper", "algo-std"]
-postgres-extension = ["postgres"]
+# `db` activates only the embedded engine; consumers select graph/hyper/algo
+# facade modules explicitly if they want them.
+db = ["dep:oxgraph-db"]
 full = [
   "algo-std",
   "csr",
@@ -57,6 +64,7 @@ oxgraph-db = { version = "0.1.0", path = "../oxgraph-db", optional = true }
 oxgraph-graph = { version = "0.1.0", path = "../oxgraph-graph", optional = true }
 oxgraph-hyper = { version = "0.1.0", path = "../oxgraph-hyper", optional = true }
 oxgraph-hyper-bcsr = { version = "0.1.0", path = "../oxgraph-hyper-bcsr", optional = true }
+oxgraph-layout-util = { version = "0.1.0", path = "../oxgraph-layout-util", optional = true, default-features = false }
 oxgraph-postgres = { version = "0.1.0", path = "../oxgraph-postgres", optional = true }
 oxgraph-property = { version = "0.1.0", path = "../oxgraph-property", optional = true }
 oxgraph-snapshot = { version = "0.1.0", path = "../oxgraph-snapshot", optional = true, default-features = false }

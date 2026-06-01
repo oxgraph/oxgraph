@@ -15,21 +15,101 @@ pub struct OverlayEdge {
 }
 
 /// Mutable overlay state for sync replay and query freshness.
+///
+/// All collections are private so the `by_source`/`by_target` adjacency indexes
+/// cannot desync from `added_edges`: callers mutate exclusively through
+/// [`push_edge`](Self::push_edge), [`remove_edge`](Self::remove_edge),
+/// [`tombstone_edge`](Self::tombstone_edge), [`tombstone_node`](Self::tombstone_node),
+/// [`clear`](Self::clear), and the [`from_edges`](Self::from_edges) constructor,
+/// each of which keeps the indexes consistent.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct OverlayState {
     /// Edges inserted after the base artifact was published.
-    pub added_edges: Vec<OverlayEdge>,
+    added_edges: Vec<OverlayEdge>,
     /// Overlay targets grouped by source for `O(1)` forward expansion lookup.
     by_source: BTreeMap<u32, Vec<u32>>,
     /// Overlay sources grouped by target for `O(1)` inbound expansion lookup.
     by_target: BTreeMap<u32, Vec<u32>>,
     /// Base edge ids tombstoned by sync events.
-    pub tombstoned_edges: BTreeSet<u32>,
+    tombstoned_edges: BTreeSet<u32>,
     /// Node ids hidden from traversal results.
-    pub tombstoned_nodes: BTreeSet<u32>,
+    tombstoned_nodes: BTreeSet<u32>,
 }
 
 impl OverlayState {
+    /// Builds an overlay from a sequence of inserted edges, with the adjacency
+    /// indexes constructed once up front.
+    ///
+    /// # Performance
+    ///
+    /// This function is `O(a log a)` for `a` edges.
+    #[must_use]
+    pub fn from_edges(edges: impl IntoIterator<Item = OverlayEdge>) -> Self {
+        let mut overlay = Self::default();
+        for edge in edges {
+            overlay.push_edge(edge);
+        }
+        overlay
+    }
+
+    /// Returns the inserted overlay edges in insertion order.
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(1)`.
+    #[must_use]
+    pub fn added_edges(&self) -> &[OverlayEdge] {
+        &self.added_edges
+    }
+
+    /// Returns the number of inserted overlay edges.
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(1)`.
+    #[must_use]
+    pub const fn overlay_edge_count(&self) -> usize {
+        self.added_edges.len()
+    }
+
+    /// Returns the number of tombstoned base edges.
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(1)`.
+    #[must_use]
+    pub fn tombstoned_edge_count(&self) -> usize {
+        self.tombstoned_edges.len()
+    }
+
+    /// Returns the number of tombstoned nodes.
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(1)`.
+    #[must_use]
+    pub fn tombstoned_node_count(&self) -> usize {
+        self.tombstoned_nodes.len()
+    }
+
+    /// Records a base edge tombstone.
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(log t)` for `t` tombstoned edge ids.
+    pub fn tombstone_edge(&mut self, edge_id: u32) {
+        self.tombstoned_edges.insert(edge_id);
+    }
+
+    /// Records a node tombstone.
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(log t)` for `t` tombstoned node ids.
+    pub fn tombstone_node(&mut self, node_id: u32) {
+        self.tombstoned_nodes.insert(node_id);
+    }
+
     /// Clears all overlay buffers and adjacency indexes.
     pub fn clear(&mut self) {
         self.added_edges.clear();
@@ -125,10 +205,13 @@ impl OverlayState {
 
     /// Rebuilds `by_source` / `by_target` from `added_edges`.
     ///
+    /// Crate-internal: external callers cannot desync the indexes because the
+    /// edge buffers are private, so this is only reached by [`remove_edge`].
+    ///
     /// # Performance
     ///
     /// This method is `O(a)` for `a` overlay edges.
-    pub fn rebuild_indexes(&mut self) {
+    pub(crate) fn rebuild_indexes(&mut self) {
         self.by_source.clear();
         self.by_target.clear();
         for edge in &self.added_edges {
@@ -170,21 +253,17 @@ mod tests {
     }
 
     #[test]
-    fn rebuild_indexes_after_manual_edges() {
-        let mut overlay = OverlayState {
-            added_edges: vec![
-                OverlayEdge {
-                    source: 0,
-                    target: 1,
-                },
-                OverlayEdge {
-                    source: 2,
-                    target: 0,
-                },
-            ],
-            ..OverlayState::default()
-        };
-        overlay.rebuild_indexes();
+    fn from_edges_builds_indexes() {
+        let overlay = OverlayState::from_edges([
+            OverlayEdge {
+                source: 0,
+                target: 1,
+            },
+            OverlayEdge {
+                source: 2,
+                target: 0,
+            },
+        ]);
         assert_eq!(overlay.overlay_targets(0), &[1]);
         assert_eq!(overlay.overlay_sources(0), &[2]);
     }

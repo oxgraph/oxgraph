@@ -6,13 +6,61 @@ use alloc::{
 };
 
 use oxgraph_csr::build::{GraphBuilder, GraphNodeId, export_csr_snapshot};
-use oxgraph_graph::OutgoingNeighborsGraph;
 
 use crate::{
     artifact::{PostgresMetadata, attach_postgres_sections},
     catalog::{NodeKey, RegisteredEdge},
     error::{BuildError, PostgresGraphError},
 };
+
+/// Collects the distinct endpoint [`NodeKey`]s referenced by `edges`.
+///
+/// Shared by [`dense_node_map_from_edges`], [`DualTopologySnapshot::from_edge_rows`],
+/// and [`estimate_build`] so the endpoint-collection step lives in one place.
+///
+/// # Performance
+///
+/// This function is `O(m log n)` for `m` edges and `n` distinct keys.
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "shared build/sync helper in a private module"
+)]
+pub(crate) fn distinct_node_keys(edges: &[EdgeRow]) -> BTreeSet<NodeKey> {
+    let mut keys = BTreeSet::new();
+    for edge in edges {
+        keys.insert(edge.source);
+        keys.insert(edge.target);
+    }
+    keys
+}
+
+/// Assigns dense `0..key_count` ids to a sorted set of distinct node keys.
+///
+/// This is the single dense-assignment primitive: [`dense_node_map_from_edges`]
+/// and [`crate::sync::dense_node_map_for_sync_resolution`] both funnel their key
+/// sets through it (the sync path seeds extra keys from keyed sync rows first).
+///
+/// # Errors
+///
+/// Returns [`BuildError::NodeCountOverflow`] when the distinct key count does not fit in `u32`.
+///
+/// # Performance
+///
+/// This function is `O(n)` for `n` distinct keys.
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "shared build/sync dense-assignment primitive in a private module"
+)]
+pub(crate) fn dense_node_map_from_keys(
+    keys: BTreeSet<NodeKey>,
+) -> Result<BTreeMap<NodeKey, u32>, BuildError> {
+    let mut map = BTreeMap::new();
+    for (index, key) in keys.into_iter().enumerate() {
+        let dense = u32::try_from(index).map_err(|_| BuildError::NodeCountOverflow)?;
+        map.insert(key, dense);
+    }
+    Ok(map)
+}
 
 /// Builds the dense node-id assignment used by [`DualTopologySnapshot::from_edge_rows`].
 ///
@@ -26,17 +74,7 @@ use crate::{
 ///
 /// This function is `O(n log n + m)` for `n` distinct keys and `m` edges.
 pub fn dense_node_map_from_edges(edges: &[EdgeRow]) -> Result<BTreeMap<NodeKey, u32>, BuildError> {
-    let mut keys = BTreeSet::new();
-    for edge in edges {
-        keys.insert(edge.source);
-        keys.insert(edge.target);
-    }
-    let mut map = BTreeMap::new();
-    for (index, key) in keys.into_iter().enumerate() {
-        let dense = u32::try_from(index).map_err(|_| BuildError::NodeCountOverflow)?;
-        map.insert(key, dense);
-    }
-    Ok(map)
+    dense_node_map_from_keys(distinct_node_keys(edges))
 }
 
 /// Maps scanned SQL primary-key values to an [`EdgeRow`] for one registered edge mapping.
@@ -87,49 +125,29 @@ impl DualTopologySnapshot {
             return Err(BuildError::EmptyEdges.into());
         }
 
-        let mut keys: BTreeSet<NodeKey> = BTreeSet::new();
-        for edge in edges {
-            keys.insert(edge.source);
-            keys.insert(edge.target);
-        }
+        let key_to_dense = dense_node_map_from_keys(distinct_node_keys(edges))?;
+        let key_count = key_to_dense.len();
 
         let mut builder = GraphBuilder::<u32, u32>::new();
-        let mut key_to_node: BTreeMap<NodeKey, GraphNodeId<u32>> = BTreeMap::new();
-        for key in &keys {
-            let node = builder.add_node()?;
-            key_to_node.insert(*key, node);
+        for _ in 0..key_count {
+            builder.add_node()?;
         }
         for edge in edges {
-            let source = *key_to_node
+            let source = *key_to_dense
                 .get(&edge.source)
                 .ok_or(BuildError::MissingNodeKey)?;
-            let target = *key_to_node
+            let target = *key_to_dense
                 .get(&edge.target)
                 .ok_or(BuildError::MissingNodeKey)?;
-            builder.add_edge(source, target)?;
+            builder.add_edge(GraphNodeId::new(source), GraphNodeId::new(target))?;
         }
 
         let frozen = builder.freeze()?;
-        let node_count = u32::try_from(keys.len()).map_err(|_| BuildError::NodeCountOverflow)?;
+        let node_count = u32::try_from(key_count).map_err(|_| BuildError::NodeCountOverflow)?;
         let edge_count =
             u32::try_from(frozen.edge_ids().len()).map_err(|_| BuildError::EdgeCountOverflow)?;
 
-        let mut inbound_builder = GraphBuilder::<u32, u32>::new();
-        for _ in 0..keys.len() {
-            inbound_builder.add_node()?;
-        }
-        for source in 0..keys.len() {
-            let source_id =
-                GraphNodeId(u32::try_from(source).map_err(|_| BuildError::NodeCountOverflow)?);
-            for target in frozen.outgoing_neighbors(source_id) {
-                inbound_builder.add_edge(target, source_id)?;
-            }
-        }
-        let inbound_frozen = inbound_builder.freeze()?;
-        if inbound_frozen.edge_ids().len() != frozen.edge_ids().len() {
-            return Err(BuildError::EdgeCountMismatch.into());
-        }
-
+        let inbound_frozen = frozen.transpose()?;
         let forward_bytes = export_csr_snapshot(&frozen)?;
         let inbound_bytes = export_csr_snapshot(&inbound_frozen)?;
         let metadata =
@@ -158,7 +176,10 @@ impl DualTopologySnapshot {
             .flat_map(|(source, target)| [*source, *target])
             .max()
             .unwrap_or(0);
-        Self::from_dense_u32_edges_with_node_count(max_index + 1, edges, built_at_unix)
+        let node_count = max_index
+            .checked_add(1)
+            .ok_or(BuildError::NodeCountOverflow)?;
+        Self::from_dense_u32_edges_with_node_count(node_count, edges, built_at_unix)
     }
 
     /// Builds OXGTOPO bytes with an explicit node count (tests with isolated vertices).
@@ -191,24 +212,13 @@ impl DualTopologySnapshot {
             forward_builder.add_node()?;
         }
         for &(source, target) in edges {
-            forward_builder.add_edge(GraphNodeId(source), GraphNodeId(target))?;
+            forward_builder.add_edge(GraphNodeId::new(source), GraphNodeId::new(target))?;
         }
         let forward_frozen = forward_builder.freeze()?;
         let edge_count = u32::try_from(forward_frozen.edge_ids().len())
             .map_err(|_| BuildError::EdgeCountOverflow)?;
 
-        let mut inbound_builder = GraphBuilder::<u32, u32>::new();
-        for _ in 0..node_count_usize {
-            inbound_builder.add_node()?;
-        }
-        for &(source, target) in edges {
-            inbound_builder.add_edge(GraphNodeId(target), GraphNodeId(source))?;
-        }
-        let inbound_frozen = inbound_builder.freeze()?;
-        if inbound_frozen.edge_ids().len() != forward_frozen.edge_ids().len() {
-            return Err(BuildError::EdgeCountMismatch.into());
-        }
-
+        let inbound_frozen = forward_frozen.transpose()?;
         let forward_bytes = export_csr_snapshot(&forward_frozen)?;
         let inbound_bytes = export_csr_snapshot(&inbound_frozen)?;
         let metadata =
@@ -224,13 +234,8 @@ impl DualTopologySnapshot {
 /// This function is `O(m)`.
 #[must_use]
 pub fn estimate_build(edges: &[EdgeRow]) -> BuildEstimate {
-    let mut keys = BTreeSet::new();
-    for edge in edges {
-        keys.insert(edge.source);
-        keys.insert(edge.target);
-    }
     BuildEstimate {
-        node_count: keys.len(),
+        node_count: distinct_node_keys(edges).len(),
         edge_count: edges.len(),
     }
 }

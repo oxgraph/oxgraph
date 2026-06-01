@@ -3,11 +3,12 @@
 use oxgraph_hyper::{
     ContainsElement, ContainsHyperedge, ContainsIncidence, ContainsParticipant, ContainsRelation,
     ContainsVertex, DirectedHyperedgeParticipants, DirectedVertexPredecessors,
-    DirectedVertexSuccessors, ElementIncidences, ElementIndex, ElementPredecessors,
-    ElementSuccessors, HyperedgeIndex, HyperedgeParticipantCount, HyperedgeParticipants,
-    Hypergraph, HypergraphCounts, IncidenceBase, IncidenceElement, IncidenceIndex,
-    IncidenceRelation, IncidentHyperedgeCount, IncidentHyperedges, ParticipantIndex,
-    RelationIncidences, RelationIndex, TopologyBase, TopologyCounts, VertexIndex,
+    DirectedVertexSuccessors, ElementIncidenceCount, ElementIncidences, ElementIndex,
+    ElementPredecessors, ElementSuccessors, HyperedgeIndex, HyperedgeParticipantCount,
+    HyperedgeParticipants, Hypergraph, HypergraphCounts, IncidenceBase, IncidenceElement,
+    IncidenceIndex, IncidenceRelation, IncidentHyperedgeCount, IncidentHyperedges,
+    ParticipantIndex, RelationIncidenceCount, RelationIncidences, RelationIndex, TopologyBase,
+    TopologyCounts, VertexIndex,
 };
 use proptest::prelude::*;
 
@@ -194,14 +195,14 @@ impl IncidentHyperedges for FixtureHypergraph {
     }
 }
 
-impl HyperedgeParticipantCount for FixtureHypergraph {
-    fn hyperedge_participant_count(&self, hyperedge: Hyperedge) -> usize {
+impl RelationIncidenceCount for FixtureHypergraph {
+    fn relation_incidence_count(&self, hyperedge: Hyperedge) -> usize {
         self.hyperedge_offsets[hyperedge.0 + 1] - self.hyperedge_offsets[hyperedge.0]
     }
 }
 
-impl IncidentHyperedgeCount for FixtureHypergraph {
-    fn incident_hyperedge_count(&self, vertex: Vertex) -> usize {
+impl ElementIncidenceCount for FixtureHypergraph {
+    fn element_incidence_count(&self, vertex: Vertex) -> usize {
         self.vertex_index[vertex.0].len()
     }
 }

@@ -9,6 +9,18 @@ use zerocopy::{
 /// Section kind for serialized catalog blobs owned by Postgres.
 pub const SNAPSHOT_KIND_PG_CATALOG: u32 = 0x0200;
 
+/// Postgres-owned inbound CSC offsets section (`0x0201`).
+///
+/// The inbound (reverse) adjacency is persisted in the Postgres band rather
+/// than the CSR band so that forward and inbound views never collide on a
+/// section kind. The physical layout is CSR-on-transposed-edges; the storage-
+/// agnostic [`CscSnapshotGraph`](oxgraph_csc::CscSnapshotGraph) reads it through
+/// `from_snapshot_with_kinds` using these kinds.
+pub const SNAPSHOT_KIND_PG_INBOUND_OFFSETS_U32: u32 = 0x0201;
+
+/// Postgres-owned inbound CSC targets section (`0x0202`).
+pub const SNAPSHOT_KIND_PG_INBOUND_TARGETS_U32: u32 = 0x0202;
+
 /// Section kind for Postgres engine metadata (`0x0200` reserved range).
 pub const SNAPSHOT_KIND_PG_METADATA: u32 = 0x0203;
 

@@ -25,7 +25,7 @@ proptest! {
         let applied = SyncRow::apply_in_order(&rows, &mut overlay)
             .map_err(|error| TestCaseError::fail(error.to_string()))?;
         prop_assert_eq!(applied, rows.len());
-        prop_assert_eq!(overlay.added_edges.len(), rows.len());
+        prop_assert_eq!(overlay.overlay_edge_count(), rows.len());
     }
 
     #[test]
@@ -72,7 +72,7 @@ proptest! {
         ];
         SyncRow::apply_in_order(&rows, &mut overlay)
             .map_err(|error| TestCaseError::fail(error.to_string()))?;
-        prop_assert!(overlay.added_edges.is_empty());
+        prop_assert!(overlay.added_edges().is_empty());
     }
 
     #[test]

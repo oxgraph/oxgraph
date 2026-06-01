@@ -91,16 +91,16 @@ impl PropertySubject {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub(crate) struct DatabaseState {
     /// Visible elements keyed by ID.
-    #[serde(with = "serde_btree_map_vec")]
+    #[serde(with = "crate::serde_map")]
     elements: BTreeMap<ElementId, ElementRecord>,
     /// Visible relations keyed by ID.
-    #[serde(with = "serde_btree_map_vec")]
+    #[serde(with = "crate::serde_map")]
     relations: BTreeMap<RelationId, RelationRecord>,
     /// Visible incidences keyed by ID.
-    #[serde(with = "serde_btree_map_vec")]
+    #[serde(with = "crate::serde_map")]
     incidences: BTreeMap<IncidenceId, IncidenceRecord>,
     /// Property values keyed by subject and property key.
-    #[serde(with = "serde_properties_vec")]
+    #[serde(with = "crate::serde_map::nested")]
     properties: BTreeMap<PropertySubject, BTreeMap<PropertyKeyId, PropertyValue>>,
     /// Catalog metadata.
     catalog: Catalog,
@@ -122,80 +122,6 @@ pub(crate) struct DatabaseState {
     next_projection: ProjectionId,
     /// Next index ID candidate.
     next_index: IndexId,
-}
-
-/// Serde helper for `BTreeMap` values keyed by non-string IDs.
-mod serde_btree_map_vec {
-    /// Serializes a map as an ordered entry array.
-    pub(super) fn serialize<S, K, V>(
-        map: &std::collections::BTreeMap<K, V>,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-        K: serde::Serialize,
-        V: serde::Serialize,
-    {
-        serde::Serialize::serialize(&map.iter().collect::<Vec<_>>(), serializer)
-    }
-
-    /// Deserializes a map from an ordered entry array.
-    pub(super) fn deserialize<'de, D, K, V>(
-        deserializer: D,
-    ) -> Result<std::collections::BTreeMap<K, V>, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-        K: Ord + serde::de::DeserializeOwned,
-        V: serde::de::DeserializeOwned,
-    {
-        <Vec<(K, V)> as serde::Deserialize>::deserialize(deserializer)
-            .map(|entries| entries.into_iter().collect())
-    }
-}
-
-/// Serde helper for nested property maps.
-mod serde_properties_vec {
-    use super::{PropertyKeyId, PropertySubject, PropertyValue};
-
-    /// Property entry array shape.
-    type PropertyEntries = Vec<(PropertySubject, Vec<(PropertyKeyId, PropertyValue)>)>;
-    /// Nested property value map.
-    type PropertyValueMap = std::collections::BTreeMap<PropertyKeyId, PropertyValue>;
-    /// Property map keyed by subject.
-    type PropertyMap = std::collections::BTreeMap<PropertySubject, PropertyValueMap>;
-
-    /// Serializes nested property maps as ordered entry arrays.
-    pub(super) fn serialize<S>(map: &PropertyMap, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        let entries = map
-            .iter()
-            .map(|(subject, values)| {
-                (
-                    *subject,
-                    values
-                        .iter()
-                        .map(|(key, value)| (*key, value.clone()))
-                        .collect::<Vec<_>>(),
-                )
-            })
-            .collect::<Vec<_>>();
-        serde::Serialize::serialize(&entries, serializer)
-    }
-
-    /// Deserializes nested property maps from ordered entry arrays.
-    pub(super) fn deserialize<'de, D>(deserializer: D) -> Result<PropertyMap, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        <PropertyEntries as serde::Deserialize>::deserialize(deserializer).map(|entries| {
-            entries
-                .into_iter()
-                .map(|(subject, values)| (subject, values.into_iter().collect()))
-                .collect()
-        })
-    }
 }
 
 impl DatabaseState {

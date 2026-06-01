@@ -64,10 +64,20 @@ fn build_csr_snapshot_from_bytes(
     targets_bytes: Vec<u8>,
 ) -> Vec<u8> {
     let mut builder = SnapshotBuilder::new();
-    if let Err(error) = builder.add_section(offsets_kind, 0, 0, offsets_bytes) {
+    if let Err(error) = builder.add_section(
+        offsets_kind,
+        oxgraph_csr::SNAPSHOT_CSR_SECTION_VERSION,
+        0,
+        offsets_bytes,
+    ) {
         panic!("offsets section: {error:?}");
     }
-    if let Err(error) = builder.add_section(targets_kind, 0, 0, targets_bytes) {
+    if let Err(error) = builder.add_section(
+        targets_kind,
+        oxgraph_csr::SNAPSHOT_CSR_SECTION_VERSION,
+        0,
+        targets_bytes,
+    ) {
         panic!("targets section: {error:?}");
     }
     match builder.finish() {
@@ -96,10 +106,10 @@ fn opens_valid_snapshot_as_csr_graph() -> Result<(), FixtureError> {
     assert_eq!(graph.edge_count(), 4);
     assert_eq!(
         graph
-            .outgoing_edges(CsrNodeId(0))
+            .outgoing_edges(CsrNodeId::new(0))
             .map(|edge| graph.target(edge))
             .collect::<Vec<_>>(),
-        [CsrNodeId(1), CsrNodeId(2)]
+        [CsrNodeId::new(1), CsrNodeId::new(2)]
     );
 
     Ok(())
@@ -122,10 +132,10 @@ fn opens_u16_snapshot_as_csr_graph() -> Result<(), CsrSnapshotError<u16, u16>> {
     assert_eq!(graph.node_count(), 2);
     assert_eq!(
         graph
-            .outgoing_edges(CsrNodeId(0u16))
+            .outgoing_edges(CsrNodeId::new(0u16))
             .map(|edge| graph.target(edge))
             .collect::<Vec<_>>(),
-        [CsrNodeId(1u16), CsrNodeId(0u16)]
+        [CsrNodeId::new(1u16), CsrNodeId::new(0u16)]
     );
 
     Ok(())
@@ -146,7 +156,7 @@ fn opens_u64_snapshot_as_csr_graph() -> Result<(), CsrSnapshotError<u64, u64>> {
     let graph = CsrSnapshotGraph::<u64, u64>::from_snapshot(&snapshot)?;
 
     assert_eq!(graph.node_count(), 2);
-    assert_eq!(graph.target(CsrEdgeId(0u64)), CsrNodeId(1u64));
+    assert_eq!(graph.target(CsrEdgeId::new(0u64)), CsrNodeId::new(1u64));
 
     Ok(())
 }
@@ -166,7 +176,7 @@ fn opens_mixed_u32_targets_u64_offsets() -> Result<(), CsrSnapshotError<u32, u64
     let graph = CsrSnapshotGraph::<u32, u64>::from_snapshot(&snapshot)?;
 
     assert_eq!(graph.node_count(), 2);
-    assert_eq!(graph.target(CsrEdgeId(0u64)), CsrNodeId(1u32));
+    assert_eq!(graph.target(CsrEdgeId::new(0u64)), CsrNodeId::new(1u32));
 
     Ok(())
 }
@@ -177,13 +187,18 @@ fn bfs_runs_over_snapshot_csr_graph() -> Result<(), FixtureError> {
     let snapshot = Snapshot::open(&bytes)?;
     let graph = CsrSnapshotGraph::<u32, u32>::from_snapshot(&snapshot)?;
 
-    let order: Vec<CsrNodeId<u32>> = match breadth_first_search(&graph, CsrNodeId(0)) {
+    let order: Vec<CsrNodeId<u32>> = match breadth_first_search(&graph, CsrNodeId::new(0)) {
         Ok(walk) => walk.collect(),
         Err(error) => panic!("bfs failed: {error:?}"),
     };
     assert_eq!(
         order,
-        [CsrNodeId(0), CsrNodeId(1), CsrNodeId(2), CsrNodeId(3)]
+        [
+            CsrNodeId::new(0),
+            CsrNodeId::new(1),
+            CsrNodeId::new(2),
+            CsrNodeId::new(3)
+        ]
     );
 
     Ok(())

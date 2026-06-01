@@ -2,6 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use oxgraph_csr::build::GraphBuilder;
 use oxgraph_graph::{
     EdgeSourceGraph, EdgeTargetGraph, ElementIndex, ElementPredecessors, ElementSuccessors,
     GraphCounts, IncomingEdgeCount, IncomingGraph, LocalElementIdentity, LocalRelationIdentity,
@@ -9,10 +10,11 @@ use oxgraph_graph::{
 };
 use oxgraph_hyper::{
     DirectedHyperedgeIncidences, DirectedHyperedgeParticipants, DirectedVertexHyperedges,
-    ElementIncidenceCount, HyperedgeParticipantCount, HypergraphCounts, IncidenceBase,
-    IncidenceCounts, IncidenceElement, IncidenceIndex, IncidenceRelation, IncidenceRole,
-    IncidentHyperedgeCount, IncidentHyperedges, RelationIncidenceCount, RelationIncidences,
+    ElementIncidenceCount, HypergraphCounts, IncidenceBase, IncidenceCounts, IncidenceElement,
+    IncidenceIndex, IncidenceRelation, IncidenceRole, IncidentHyperedges, RelationIncidenceCount,
+    RelationIncidences,
 };
+use oxgraph_hyper_bcsr::build::{HyperVertexId, HypergraphBuilder};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -245,18 +247,37 @@ impl GraphProjectionBuilder {
     }
 
     /// Finishes the graph projection.
+    ///
+    /// The CSR forward adjacency and its CSC transpose are constructed by the
+    /// `oxgraph-csr` substrate builder rather than re-implementing the
+    /// counting-sort/offset pass here. Parallel edges are preserved: every
+    /// interned endpoint becomes one builder edge, so an element with `k`
+    /// outgoing edges to the same target yields `k` successor entries.
     fn finish(self) -> Result<GraphProjection, DbError> {
-        let mut out_edges = vec![Vec::new(); self.elements.len()];
-        let mut in_edges = vec![Vec::new(); self.elements.len()];
-        let mut successors = vec![Vec::new(); self.elements.len()];
-        let mut predecessors = vec![Vec::new(); self.elements.len()];
-        for (index, (source, target)) in self.endpoints.iter().copied().enumerate() {
-            let edge = projection_relation_id(index)?;
-            out_edges[local_index(source)].push(edge);
-            in_edges[local_index(target)].push(edge);
-            successors[local_index(source)].push(target);
-            predecessors[local_index(target)].push(source);
+        let node_count = self.elements.len();
+        let mut builder = GraphBuilder::<u32, u32>::new();
+        let mut nodes = Vec::with_capacity(node_count);
+        for _element in &self.elements {
+            nodes.push(builder.add_node().map_err(|_error| DbError::IdOverflow)?);
         }
+        for (source, target) in self.endpoints.iter().copied() {
+            builder
+                .add_edge(nodes[local_index(source)], nodes[local_index(target)])
+                .map_err(|_error| DbError::IdOverflow)?;
+        }
+        let forward = builder.freeze().map_err(|_error| DbError::IdOverflow)?;
+        let reverse = forward.transpose().map_err(|_error| DbError::IdOverflow)?;
+
+        // Forward freeze: `targets`/`edge_ids` are grouped by source node, so
+        // outgoing successors and outgoing edge IDs read straight off its CSR
+        // arrays. The transpose groups the original edge IDs and original
+        // sources by target node, giving the incoming edge IDs and predecessor
+        // successors with original edge identity preserved.
+        let successors = grouped_elements(forward.offsets(), forward.targets(), node_count)?;
+        let out_edges = grouped_relations(forward.offsets(), forward.edge_ids(), node_count)?;
+        let predecessors = grouped_elements(reverse.offsets(), reverse.targets(), node_count)?;
+        let in_edges = grouped_relations(reverse.offsets(), reverse.edge_ids(), node_count)?;
+
         Ok(GraphProjection {
             definition: self.definition,
             elements: self.elements,
@@ -270,6 +291,68 @@ impl GraphProjectionBuilder {
             predecessors,
         })
     }
+}
+
+/// Splits a flat CSR target array into per-node projection element lists.
+///
+/// `offsets` has `node_count + 1` entries; `flat[offsets[n]..offsets[n + 1]]`
+/// holds the grouped target node indices for node `n`.
+///
+/// # Performance
+///
+/// This function is `O(node_count + flat.len())`.
+fn grouped_elements(
+    offsets: &[u32],
+    flat: &[u32],
+    node_count: usize,
+) -> Result<Vec<Vec<ProjectionElementId>>, DbError> {
+    grouped(offsets, flat, node_count, |raw| {
+        Ok(ProjectionElementId(raw))
+    })
+}
+
+/// Splits a flat CSR edge-ID array into per-node projection relation lists.
+///
+/// # Performance
+///
+/// This function is `O(node_count + flat.len())`.
+fn grouped_relations(
+    offsets: &[u32],
+    flat: &[u32],
+    node_count: usize,
+) -> Result<Vec<Vec<ProjectionRelationId>>, DbError> {
+    grouped(offsets, flat, node_count, |raw| {
+        Ok(ProjectionRelationId(raw))
+    })
+}
+
+/// Splits a flat CSR payload array into `node_count` grouped, mapped lists.
+///
+/// # Performance
+///
+/// This function is `O(node_count + flat.len())`.
+fn grouped<T>(
+    offsets: &[u32],
+    flat: &[u32],
+    node_count: usize,
+    map: impl Fn(u32) -> Result<T, DbError>,
+) -> Result<Vec<Vec<T>>, DbError> {
+    let mut rows = Vec::with_capacity(node_count);
+    for node in 0..node_count {
+        let start = usize::try_from(offsets[node]).map_err(|_error| DbError::IdOverflow)?;
+        let end = usize::try_from(offsets[node + 1]).map_err(|_error| DbError::IdOverflow)?;
+        let slice = flat
+            .get(start..end)
+            .ok_or_else(|| DbError::invalid_projection("csr offset range out of bounds"))?;
+        rows.push(
+            slice
+                .iter()
+                .copied()
+                .map(&map)
+                .collect::<Result<Vec<T>, DbError>>()?,
+        );
+    }
+    Ok(rows)
 }
 
 impl TopologyBase for GraphProjection {
@@ -869,17 +952,9 @@ impl IncidentHyperedges for HypergraphProjection {
     }
 }
 
-impl HyperedgeParticipantCount for HypergraphProjection {
-    fn hyperedge_participant_count(&self, hyperedge: Self::RelationId) -> usize {
-        self.relation_incidences[local_relation_index(hyperedge)].len()
-    }
-}
-
-impl IncidentHyperedgeCount for HypergraphProjection {
-    fn incident_hyperedge_count(&self, vertex: Self::ElementId) -> usize {
-        self.element_incidences[local_index(vertex)].len()
-    }
-}
+// `HyperedgeParticipantCount` / `IncidentHyperedgeCount` are provided by the
+// blanket impls in `oxgraph-hyper` over the `RelationIncidenceCount` /
+// `ElementIncidenceCount` impls above.
 
 impl DirectedHyperedgeParticipants for HypergraphProjection {
     type SourceParticipants<'view>
@@ -1091,42 +1166,95 @@ fn build_element_incidences(
     Ok(rows)
 }
 
-/// Builds directed vertex-major hypergraph arrays.
+/// Builds directed vertex-major hypergraph arrays on the substrate BCSR builder.
+///
+/// The vertex→hyperedge adjacency (`outgoing`/`incoming`) and the directed
+/// vertex successor/predecessor sets are produced by freezing an
+/// [`HypergraphBuilder`] rather than re-implementing the BCSR offset pass. The
+/// builder requires unique participants per side, so each hyperedge's source
+/// and target vertex lists are deduplicated (first-occurrence order) before
+/// being added; this matches the directed-adjacency semantic, where a vertex
+/// incident to one hyperedge in a given role contributes that hyperedge once.
+/// Vertex successors/predecessors are deduplicated and ordered to preserve the
+/// projection's prior set-valued adjacency contract.
 fn build_directed_vertex_arrays(
     element_count: usize,
     source_vertices: &[Vec<ProjectionElementId>],
     target_vertices: &[Vec<ProjectionElementId>],
 ) -> Result<DirectedVertexArrays, DbError> {
-    let mut outgoing = vec![Vec::new(); element_count];
-    let mut incoming = vec![Vec::new(); element_count];
-    let mut successor_sets = vec![BTreeSet::new(); element_count];
-    let mut predecessor_sets = vec![BTreeSet::new(); element_count];
-    for (relation_index, (sources, targets)) in
-        source_vertices.iter().zip(target_vertices).enumerate()
-    {
-        let relation = projection_relation_id(relation_index)?;
-        for source in sources {
-            outgoing[local_index(*source)].push(relation);
-            for target in targets {
-                successor_sets[local_index(*source)].insert(*target);
-            }
-        }
-        for target in targets {
-            incoming[local_index(*target)].push(relation);
-            for source in sources {
-                predecessor_sets[local_index(*target)].insert(*source);
-            }
-        }
+    let mut builder = HypergraphBuilder::<u32, u32, u32>::new();
+    let mut vertices = Vec::with_capacity(element_count);
+    for _element in 0..element_count {
+        vertices.push(builder.add_vertex().map_err(|_error| DbError::IdOverflow)?);
     }
-    let successors = successor_sets
-        .into_iter()
-        .map(|set| set.into_iter().collect())
-        .collect();
-    let predecessors = predecessor_sets
-        .into_iter()
-        .map(|set| set.into_iter().collect())
-        .collect();
+    for (sources, targets) in source_vertices.iter().zip(target_vertices) {
+        let source_vertices = unique_vertices(&vertices, sources);
+        let target_vertices = unique_vertices(&vertices, targets);
+        builder
+            .add_hyperedge(&source_vertices, &target_vertices)
+            .map_err(|_error| {
+                DbError::invalid_projection("hyperedge participants are not directed-unique")
+            })?;
+    }
+    let frozen = builder.freeze().map_err(|_error| DbError::IdOverflow)?;
+
+    let mut outgoing = Vec::with_capacity(element_count);
+    let mut incoming = Vec::with_capacity(element_count);
+    let mut successors = Vec::with_capacity(element_count);
+    let mut predecessors = Vec::with_capacity(element_count);
+    for vertex in vertices.iter().copied() {
+        outgoing.push(
+            DirectedVertexHyperedges::outgoing_hyperedges(&frozen, vertex)
+                .map(|hyperedge| ProjectionRelationId(hyperedge.get()))
+                .collect(),
+        );
+        incoming.push(
+            DirectedVertexHyperedges::incoming_hyperedges(&frozen, vertex)
+                .map(|hyperedge| ProjectionRelationId(hyperedge.get()))
+                .collect(),
+        );
+        successors.push(unique_sorted(
+            frozen
+                .element_successors(vertex)
+                .map(|target| ProjectionElementId(target.get())),
+        ));
+        predecessors.push(unique_sorted(
+            frozen
+                .element_predecessors(vertex)
+                .map(|source| ProjectionElementId(source.get())),
+        ));
+    }
     Ok((outgoing, incoming, successors, predecessors))
+}
+
+/// Maps interned local element IDs to builder vertex handles, dropping repeats.
+///
+/// The substrate hypergraph builder rejects a participant side that repeats a
+/// vertex, so first-occurrence order is preserved while later duplicates are
+/// elided.
+///
+/// # Performance
+///
+/// This function is `O(n log n)` for `n` participants.
+fn unique_vertices(
+    vertices: &[HyperVertexId<u32>],
+    locals: &[ProjectionElementId],
+) -> Vec<HyperVertexId<u32>> {
+    let mut seen = BTreeSet::new();
+    locals
+        .iter()
+        .filter(|local| seen.insert(**local))
+        .map(|local| vertices[local_index(*local)])
+        .collect()
+}
+
+/// Collects an element iterator into a deduplicated, sorted vector.
+///
+/// # Performance
+///
+/// This function is `O(n log n)` for `n` yielded elements.
+fn unique_sorted(elements: impl Iterator<Item = ProjectionElementId>) -> Vec<ProjectionElementId> {
+    elements.collect::<BTreeSet<_>>().into_iter().collect()
 }
 
 /// Directed vertex-array build result.

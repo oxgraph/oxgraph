@@ -35,7 +35,7 @@ fn main() -> Result<(), BcsrError> {
     println!("vertices={}", view.vertex_count());
     println!("hyperedges={}", view.hyperedge_count());
 
-    let h0 = BcsrHyperedgeId(0);
+    let h0 = BcsrHyperedgeId::new(0);
     let heads: Vec<_> = view.source_participants(h0).collect();
     let tails: Vec<_> = view.target_participants(h0).collect();
     println!("h0 head={heads:?} tail={tails:?}");
@@ -43,11 +43,11 @@ fn main() -> Result<(), BcsrError> {
     let participants: Vec<_> = view.hyperedge_participants(h0).collect();
     println!("h0 participants (head ++ tail)={participants:?}");
 
-    let v2 = BcsrVertexId(2);
+    let v2 = BcsrVertexId::new(2);
     let incident: Vec<_> = view.incident_hyperedges(v2).collect();
     println!("v2 incident hyperedges={incident:?}");
 
-    let successors: Vec<_> = view.successor_vertices(BcsrVertexId(0)).collect();
+    let successors: Vec<_> = view.successor_vertices(BcsrVertexId::new(0)).collect();
     println!("successors of v0 (through h0's tail)={successors:?}");
 
     Ok(())

@@ -11,13 +11,15 @@
 
 #[cfg(feature = "alloc")]
 use alloc::{vec, vec::Vec};
+use core::fmt;
 
+use oxgraph_layout_util::SnapshotWidth;
 use zerocopy::{
     FromBytes, Immutable, IntoBytes, KnownLayout,
     byteorder::{LE, U32, U64},
 };
 
-use crate::container_error::{PlanError, SectionViewError, SnapshotError};
+use crate::container_error::{PlanError, SectionBindError, SectionViewError, SnapshotError};
 
 /// Magic bytes identifying the topology snapshot container format.
 ///
@@ -96,6 +98,95 @@ pub const MAX_SECTION_COUNT: u32 = 1024;
 
 /// `HEADER_SIZE` rendered as a `u32` for header-field comparisons.
 const HEADER_SIZE_U32: u32 = 32;
+
+/// Typed wrapper over a section's opaque `u32` kind tag.
+///
+/// The container still treats the value opaquely, but [`SectionKind`] plus the
+/// [`kinds`] band registry give the wire format a single documented authority
+/// over the kind namespace. Layout crates declare their kind constants inside
+/// the band the registry reserves for them so that distinct subsystems cannot
+/// silently collide on a value.
+///
+/// # Performance
+///
+/// All methods are `O(1)`.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct SectionKind(u32);
+
+impl SectionKind {
+    /// Wraps a raw kind tag.
+    ///
+    /// # Performance
+    ///
+    /// This function is `O(1)`.
+    #[must_use]
+    pub const fn new(value: u32) -> Self {
+        Self(value)
+    }
+
+    /// Returns the raw kind tag.
+    ///
+    /// # Performance
+    ///
+    /// This function is `O(1)`.
+    #[must_use]
+    pub const fn get(self) -> u32 {
+        self.0
+    }
+}
+
+impl From<u32> for SectionKind {
+    fn from(value: u32) -> Self {
+        Self(value)
+    }
+}
+
+impl fmt::Display for SectionKind {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{:#06x}", self.0)
+    }
+}
+
+/// Section-kind band allocation registry: the single documented authority for
+/// who owns which range of the opaque `u32` kind namespace.
+///
+/// The container assigns no semantics to kinds, but every in-tree layer
+/// declares its `SNAPSHOT_KIND_*` constants inside the band reserved here, and
+/// the bands are mutually exclusive, so distinct subsystems cannot collide.
+/// Each band is a half-open `[start, end)` range of raw kind values.
+///
+/// # Performance
+///
+/// `perf: unspecified`; these are compile-time constants.
+pub mod kinds {
+    use core::ops::Range;
+
+    /// CSR graph layout sections (offsets/targets, all widths).
+    pub const CSR_BAND: Range<u32> = 0x0001..0x0020;
+    /// Bipartite-CSR hypergraph layout sections (all widths).
+    pub const BCSR_BAND: Range<u32> = 0x0020..0x0100;
+    /// Property and identity-map sections (all widths).
+    pub const PROPERTY_BAND: Range<u32> = 0x0100..0x0200;
+    /// `PostgreSQL` engine sections, including the inbound CSC layout.
+    pub const POSTGRES_BAND: Range<u32> = 0x0200..0x0300;
+    /// Embedded `OxGraph` database state sections.
+    pub const DATABASE_BAND: Range<u32> = 0x0300..0x0400;
+    /// Application/custom sections; the container reserves nothing here.
+    pub const CUSTOM_BASE: u32 = 0x0400;
+
+    /// Returns whether `kind` falls within the half-open `band`.
+    ///
+    /// Layout crates use this in `const`-checked tests to prove their kind
+    /// constants stay inside their reserved band.
+    ///
+    /// # Performance
+    ///
+    /// This function is `O(1)`.
+    #[must_use]
+    pub const fn in_band(kind: u32, band: Range<u32>) -> bool {
+        kind >= band.start && kind < band.end
+    }
+}
 
 /// Converts a checked `u64` into `usize`, asserting in debug mode that the
 /// value already fits because validation enforced an earlier bound.
@@ -348,7 +439,7 @@ impl<'view> Section<'view> {
         let length = self.payload.len();
 
         if elem_size == 0 {
-            return Err(SectionViewError::LengthNotMultipleOfSize { length, elem_size });
+            return Err(SectionViewError::ZeroSizedType);
         }
 
         if !length.is_multiple_of(elem_size) {
@@ -398,25 +489,54 @@ pub enum ValidationLevel {
     Layout,
 }
 
+/// Returns the first `kind` value that appears more than once in `items`.
+///
+/// Shared by the reader's duplicate-kind walk and [`SnapshotPlan::new`] so the
+/// two paths cannot drift. `kind_of` projects each item to its kind tag.
+///
+/// # Performance
+///
+/// This function is `O(items.len()^2)`.
+fn first_duplicate_kind<T>(items: &[T], kind_of: impl Fn(&T) -> u32) -> Option<u32> {
+    for (index, item) in items.iter().enumerate() {
+        let kind = kind_of(item);
+        if items[..index].iter().any(|prior| kind_of(prior) == kind) {
+            return Some(kind);
+        }
+    }
+    None
+}
+
 /// Walks the section table once and checks all v1 invariants.
 ///
 /// `bytes` is the entire snapshot byte slice; `entries` is the parsed
 /// section table; `level` controls how deep the walk goes. Header-level
 /// invariants are presumed already validated by the caller.
 ///
+/// Per-entry self-consistency **and** payload bounds (`offset + length` does
+/// not overflow and stays within the snapshot) are enforced at every level, so
+/// every [`Section`] a [`Snapshot`] hands out is bounds-safe regardless of the
+/// requested [`ValidationLevel`]. [`ValidationLevel::Layout`] additionally
+/// enforces non-overlapping monotonic ordering and unique kinds.
+///
 /// # Errors
 ///
-/// Returns [`SnapshotError`] for any per-entry or layout violation.
+/// Returns [`SnapshotError`] for any per-entry, bounds, or layout violation.
 ///
 /// # Performance
 ///
-/// This function is `O(s)` for the per-entry self-consistency walk and
-/// `O(s^2)` for the duplicate-kind walk at [`ValidationLevel::Layout`].
+/// This function is `O(s)` for the always-run self-consistency and bounds walk
+/// and `O(s^2)` for the duplicate-kind walk at [`ValidationLevel::Layout`].
 fn validate_section_table(
     bytes: &[u8],
     entries: &[RawSectionEntry],
     level: ValidationLevel,
 ) -> Result<(), SnapshotError> {
+    let snapshot_len = bytes.len() as u64;
+
+    // Always-run: per-entry self-consistency plus payload-bounds safety. The
+    // bounds check guarantees `Section::from_entry`'s `bytes[offset..end]`
+    // slice is in range, so accessors are panic-free at SectionTable level too.
     for entry in entries {
         let kind = entry.kind.get();
         if entry.reserved_checksum != [0; 4] {
@@ -437,20 +557,6 @@ fn validate_section_table(
                 alignment_log2: entry.alignment_log2,
             });
         }
-    }
-
-    if matches!(level, ValidationLevel::SectionTable) {
-        return Ok(());
-    }
-
-    let snapshot_len = bytes.len() as u64;
-    let header_plus_table = (HEADER_SIZE as u64)
-        .checked_add((entries.len() as u64).saturating_mul(SECTION_ENTRY_SIZE as u64))
-        .ok_or(SnapshotError::SectionRangeOverflow { kind: 0 })?;
-    let mut prev_end = header_plus_table;
-
-    for (index, entry) in entries.iter().enumerate() {
-        let kind = entry.kind.get();
         let offset = entry.offset.get();
         let length = entry.length.get();
         let end = offset
@@ -464,16 +570,31 @@ fn validate_section_table(
                 snapshot_len,
             });
         }
+    }
+
+    if matches!(level, ValidationLevel::SectionTable) {
+        return Ok(());
+    }
+
+    // Layout-only: non-overlapping monotonic ordering (sections start at or
+    // after the end of the header+table and never overlap a predecessor).
+    let header_plus_table = (HEADER_SIZE as u64)
+        .checked_add((entries.len() as u64).saturating_mul(SECTION_ENTRY_SIZE as u64))
+        .ok_or(SnapshotError::SectionRangeOverflow { kind: 0 })?;
+    let mut prev_end = header_plus_table;
+    for (index, entry) in entries.iter().enumerate() {
+        let offset = entry.offset.get();
+        // `end` cannot overflow: the always-run walk above already proved it.
+        let end = offset.saturating_add(entry.length.get());
         if offset < prev_end {
             return Err(SnapshotError::UnsortedSectionTable { index });
         }
         prev_end = end;
+    }
 
-        for prior in &entries[..index] {
-            if prior.kind.get() == kind {
-                return Err(SnapshotError::DuplicateKind { kind });
-            }
-        }
+    // Layout-only: duplicate-kind detection, shared with the writer.
+    if let Some(kind) = first_duplicate_kind(entries, |entry| entry.kind.get()) {
+        return Err(SnapshotError::DuplicateKind { kind });
     }
 
     Ok(())
@@ -724,6 +845,48 @@ impl<'view> Snapshot<'view> {
             }
         })
     }
+
+    /// Binds a width-typed section by kind and version in one step.
+    ///
+    /// Looks up the section, checks its version against `expected_version`, and
+    /// borrows the payload as `&[W::LittleEndianWord]`. This is the single
+    /// section-open primitive every layout crate reuses instead of
+    /// re-implementing the lookup/version/typed-view sequence with its own error
+    /// variants; callers map [`SectionBindError`] into their own typed error at
+    /// the boundary.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SectionBindError::Missing`] when no section has `kind`,
+    /// [`SectionBindError::VersionMismatch`] when the recorded version differs,
+    /// and [`SectionBindError::View`] when the payload cannot be borrowed as the
+    /// requested little-endian word.
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(s)` for `s` section entries plus the typed-view checks.
+    pub fn typed_section<W>(
+        &self,
+        kind: u32,
+        expected_version: u32,
+    ) -> Result<&'view [W::LittleEndianWord], SectionBindError>
+    where
+        W: SnapshotWidth,
+    {
+        let section = self
+            .section(kind)
+            .ok_or(SectionBindError::Missing { kind })?;
+        if section.version() != expected_version {
+            return Err(SectionBindError::VersionMismatch {
+                kind,
+                expected: expected_version,
+                actual: section.version(),
+            });
+        }
+        section
+            .try_as_slice::<W::LittleEndianWord>()
+            .map_err(|error| SectionBindError::View { kind, error })
+    }
 }
 
 /// Iterator over a snapshot's validated sections.
@@ -819,18 +982,15 @@ impl<'a> SnapshotPlan<'a> {
             });
         }
 
-        for (index, section) in sections.iter().enumerate() {
+        for section in sections {
             if section.alignment_log2 > MAX_ALIGNMENT_LOG2 {
                 return Err(PlanError::AlignmentTooLarge {
                     alignment_log2: section.alignment_log2,
                 });
             }
-            if sections[..index]
-                .iter()
-                .any(|prior| prior.kind == section.kind)
-            {
-                return Err(PlanError::DuplicateKind { kind: section.kind });
-            }
+        }
+        if let Some(kind) = first_duplicate_kind(sections, |section| section.kind) {
+            return Err(PlanError::DuplicateKind { kind });
         }
 
         Ok(Self { sections })
@@ -1112,9 +1272,11 @@ impl SnapshotBuilder {
 
     /// Appends a section containing explicit little-endian typed words.
     ///
-    /// This is a naming-level guardrail for snapshot exporters: callers should
-    /// pass portable byteorder words such as `zerocopy::byteorder::U32<LE>`,
-    /// not native integer slices. The payload is copied via
+    /// Prefer [`add_section_widths`](Self::add_section_widths), which takes a
+    /// native index slice and lowers it through `slice_to_le`, enforcing the
+    /// little-endian guarantee in the type system. This method exists for
+    /// callers that already hold portable byteorder words such as
+    /// `zerocopy::byteorder::U32<LE>`; the payload is copied via
     /// [`zerocopy::IntoBytes`] and the alignment is derived from `T`.
     ///
     /// # Errors
@@ -1135,6 +1297,36 @@ impl SnapshotBuilder {
         T: zerocopy::IntoBytes + zerocopy::Immutable,
     {
         self.add_section_typed(kind, version, payload)
+    }
+
+    /// Appends a section from a native-width index slice, lowering it to its
+    /// explicit little-endian storage words first.
+    ///
+    /// Convenience wrapper that calls `oxgraph_layout_util::slice_to_le` and
+    /// then [`add_section_little_endian`](Self::add_section_little_endian), so
+    /// exporters can pass native `&[u32]`-style slices without converting by
+    /// hand. Requires the `alloc` feature (it allocates the converted words).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PlanError`] for the same reasons as
+    /// [`add_section_typed`](Self::add_section_typed).
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(s + payload.len())` plus one allocation for the
+    /// converted words.
+    pub fn add_section_widths<W>(
+        &mut self,
+        kind: u32,
+        version: u32,
+        values: &[W],
+    ) -> Result<&mut Self, PlanError>
+    where
+        W: SnapshotWidth,
+    {
+        let words = oxgraph_layout_util::slice_to_le(values);
+        self.add_section_little_endian(kind, version, &words)
     }
 
     /// Returns the number of pending sections.

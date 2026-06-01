@@ -1,7 +1,6 @@
 //! Engine construction: validate artifact once and attach typed topology views.
 
 use alloc::{boxed::Box, vec::Vec};
-use core::cell::{Cell, RefCell};
 
 use oxgraph_snapshot::Snapshot;
 use yoke::Yoke;
@@ -12,7 +11,7 @@ use crate::{
     engine::{Engine, EngineCart, EngineState},
     error::{BuildError, PostgresGraphError},
     overlay::OverlayState,
-    topology::{GraphTopology, UniqueAdjacency},
+    topology::GraphTopology,
     traverse::TraverseScratch,
 };
 
@@ -85,10 +84,9 @@ impl EngineBuilder {
             let topology = GraphTopology::open(&snapshot)?;
             Ok::<EngineState<'_>, PostgresGraphError>(EngineState { topology })
         })?;
-        let mut overlay = self.overlay;
-        if !overlay.added_edges.is_empty() {
-            overlay.rebuild_indexes();
-        }
+        // `OverlayState` keeps its adjacency indexes synced through its mutation
+        // methods, so a builder-supplied overlay is already consistent.
+        let overlay = self.overlay;
         let node_count = inner.backing_cart().metadata.node_count.get() as usize;
         let mut traverse_scratch = TraverseScratch::default();
         traverse_scratch.resize_for_nodes(node_count);
@@ -97,8 +95,6 @@ impl EngineBuilder {
             overlay,
             self.config,
             traverse_scratch,
-            RefCell::new(UniqueAdjacency::default()),
-            Cell::new(false),
         ))
     }
 }

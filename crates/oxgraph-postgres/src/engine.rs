@@ -1,10 +1,7 @@
 //! Active graph engine: snapshot backing, dual topology, overlays, and config.
 
 use alloc::{boxed::Box, vec::Vec};
-use core::{
-    cell::{Cell, RefCell},
-    num::NonZeroUsize,
-};
+use core::num::NonZeroUsize;
 
 use yoke::Yoke;
 
@@ -19,7 +16,7 @@ use crate::{
     rebuild::SnapshotRebuild,
     search::SearchPredicate,
     sync::{SyncHealth, SyncRow},
-    topology::{GraphTopology, TopologyHot, UniqueAdjacency},
+    topology::{GraphTopology, UniqueAdjacency},
     traverse::{TraversalDirection, TraverseLimits, traverse_core_collect, traverse_core_count},
 };
 
@@ -70,36 +67,29 @@ pub struct Engine {
     overlay: OverlayState,
     /// Operational config mirrored from extension GUCs.
     config: Config,
-    /// Reused BFS scratch (epoch marks, dual frontier waves, collect buffer).
+    /// Reused BFS scratch (dense epoch marks and frontier queue).
     traverse_scratch: crate::traverse::TraverseScratch,
-    /// Node-unique adjacency (placeholder until first traverse builds it).
-    unique_adjacency: RefCell<UniqueAdjacency>,
+    /// Node-unique adjacency (empty until the first unique-profile traverse builds it).
+    unique_adjacency: UniqueAdjacency,
     /// Whether [`Self::unique_adjacency`] has been populated from topology.
-    unique_cache_built: Cell<bool>,
+    unique_cache_built: bool,
 }
 
 impl Engine {
     /// Constructs an engine from validated yoke state and runtime buffers.
-    #[expect(clippy::missing_const_for_fn, reason = "Yoke attachment is not const")]
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "constructs the validated Engine field set without intermediate mutation"
-    )]
     pub(crate) fn from_parts(
         inner: Yoke<EngineState<'static>, Box<EngineCart>>,
         overlay: OverlayState,
         config: Config,
         traverse_scratch: crate::traverse::TraverseScratch,
-        unique_adjacency: RefCell<UniqueAdjacency>,
-        unique_cache_built: Cell<bool>,
     ) -> Self {
         Self {
             inner,
             overlay,
             config,
             traverse_scratch,
-            unique_adjacency,
-            unique_cache_built,
+            unique_adjacency: UniqueAdjacency::default(),
+            unique_cache_built: false,
         }
     }
 
@@ -109,29 +99,38 @@ impl Engine {
         self.inner.backing_cart().metadata.node_count.get()
     }
 
-    /// Disjoint hot topology, unique cache, overlay, and scratch for one BFS query.
+    /// Disjoint topology views, unique cache, overlay, and scratch for one BFS query.
     ///
-    /// Unique adjacency is built lazily on the first traverse (`O(n + m log d)`); engine open
-    /// stays `O(n + m)` for topology attach only.
+    /// When `needs_unique` is set the node-unique adjacency is built lazily on
+    /// first use (`O(n + m log d)`) and cached for the snapshot's lifetime; engine
+    /// open stays `O(n + m)` for topology attach only. The parallel profile never
+    /// touches the unique cache.
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(1)` once the cache is built, `O(n + m log d)` on the
+    /// first unique-profile query after a snapshot replacement.
     pub(crate) fn traverse_workspace_mut(
         &mut self,
+        needs_unique: bool,
     ) -> (
-        TopologyHot<'_>,
-        core::cell::Ref<'_, UniqueAdjacency>,
+        &GraphTopology<'_>,
+        &UniqueAdjacency,
         &OverlayState,
         &mut crate::traverse::TraverseScratch,
     ) {
-        if !self.unique_cache_built.get() {
+        if needs_unique && !self.unique_cache_built {
             let forward = self.inner.get().topology.forward;
             let inbound = self.inner.get().topology.inbound;
-            *self.unique_adjacency.borrow_mut() =
-                UniqueAdjacency::from_topology(&forward, &inbound);
-            self.unique_cache_built.set(true);
+            self.unique_adjacency = UniqueAdjacency::from_topology(&forward, &inbound);
+            self.unique_cache_built = true;
         }
-        let unique = self.unique_adjacency.borrow();
-        let topology = &self.inner.get().topology;
-        let hot = TopologyHot::from_topology(topology);
-        (hot, unique, &self.overlay, &mut self.traverse_scratch)
+        (
+            &self.inner.get().topology,
+            &self.unique_adjacency,
+            &self.overlay,
+            &mut self.traverse_scratch,
+        )
     }
 
     /// Loads an engine via [`EngineBuilder`].
@@ -151,8 +150,8 @@ impl Engine {
             node_count: metadata.node_count.get(),
             edge_count: metadata.edge_count.get(),
             read_only: metadata.is_read_only(),
-            overlay_edge_count: self.overlay.added_edges.len(),
-            tombstoned_edges: self.overlay.tombstoned_edges.len(),
+            overlay_edge_count: self.overlay.overlay_edge_count(),
+            tombstoned_edges: self.overlay.tombstoned_edge_count(),
         }
     }
 
@@ -221,8 +220,8 @@ impl Engine {
             .build()?;
         self.inner = engine.inner;
         self.overlay.clear();
-        *self.unique_adjacency.borrow_mut() = UniqueAdjacency::default();
-        self.unique_cache_built.set(false);
+        self.unique_adjacency = UniqueAdjacency::default();
+        self.unique_cache_built = false;
         self.traverse_scratch
             .reset_after_snapshot(self.node_count() as usize);
         Ok(())
@@ -333,7 +332,7 @@ impl Engine {
         SyncHealth {
             overlay_edges: status.overlay_edge_count,
             tombstoned_edges: status.tombstoned_edges,
-            tombstoned_nodes: self.overlay().tombstoned_nodes.len(),
+            tombstoned_nodes: self.overlay().tombstoned_node_count(),
         }
     }
 

@@ -74,8 +74,8 @@ fn main() -> Result<(), DemoError> {
         graph.edge_count()
     );
 
-    let order: Vec<u32> = match breadth_first_search(&graph, CsrNodeId(0)) {
-        Ok(walk) => walk.map(|node| node.0).collect(),
+    let order: Vec<u32> = match breadth_first_search(&graph, CsrNodeId::new(0)) {
+        Ok(walk) => walk.map(CsrNodeId::get).collect(),
         Err(error) => panic!("bfs failed: {error:?}"),
     };
     println!("bfs from node 0: {order:?}");

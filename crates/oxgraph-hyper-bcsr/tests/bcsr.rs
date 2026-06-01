@@ -71,68 +71,85 @@ fn validates_mixed_u32_vertices_relations_u64_incidences() -> Result<(), BcsrErr
 
     assert_eq!(view.vertex_count(), 3);
     assert_eq!(view.hyperedge_count(), 2);
-    assert!(view.contains_incidence(BcsrParticipantId(4_u64)));
-    assert!(!view.contains_incidence(BcsrParticipantId(5_u64)));
+    assert!(view.contains_incidence(BcsrParticipantId::new(4_u64)));
+    assert!(!view.contains_incidence(BcsrParticipantId::new(5_u64)));
     Ok(())
 }
 
 #[test]
 fn directed_hyperedge_participants_split_head_and_tail() -> Result<(), BcsrError> {
     let view = BcsrHypergraph::open(canonical_sections())?;
-    let h0_heads: Vec<_> = view.source_participants(BcsrHyperedgeId(0)).collect();
-    let h0_tails: Vec<_> = view.target_participants(BcsrHyperedgeId(0)).collect();
-    assert_eq!(h0_heads, vec![BcsrVertexId(0)]);
-    assert_eq!(h0_tails, vec![BcsrVertexId(1), BcsrVertexId(2)]);
+    let h0_heads: Vec<_> = view.source_participants(BcsrHyperedgeId::new(0)).collect();
+    let h0_tails: Vec<_> = view.target_participants(BcsrHyperedgeId::new(0)).collect();
+    assert_eq!(h0_heads, vec![BcsrVertexId::new(0)]);
+    assert_eq!(h0_tails, vec![BcsrVertexId::new(1), BcsrVertexId::new(2)]);
 
-    let h1_heads: Vec<_> = view.source_participants(BcsrHyperedgeId(1)).collect();
-    let h1_tails: Vec<_> = view.target_participants(BcsrHyperedgeId(1)).collect();
-    assert_eq!(h1_heads, vec![BcsrVertexId(1)]);
-    assert_eq!(h1_tails, vec![BcsrVertexId(2)]);
+    let h1_heads: Vec<_> = view.source_participants(BcsrHyperedgeId::new(1)).collect();
+    let h1_tails: Vec<_> = view.target_participants(BcsrHyperedgeId::new(1)).collect();
+    assert_eq!(h1_heads, vec![BcsrVertexId::new(1)]);
+    assert_eq!(h1_tails, vec![BcsrVertexId::new(2)]);
     Ok(())
 }
 
 #[test]
 fn hyperedge_participants_concatenates_head_then_tail() -> Result<(), BcsrError> {
     let view = BcsrHypergraph::open(canonical_sections())?;
-    let h0: Vec<_> = view.hyperedge_participants(BcsrHyperedgeId(0)).collect();
-    assert_eq!(h0, vec![BcsrVertexId(0), BcsrVertexId(1), BcsrVertexId(2)]);
+    let h0: Vec<_> = view
+        .hyperedge_participants(BcsrHyperedgeId::new(0))
+        .collect();
+    assert_eq!(
+        h0,
+        vec![
+            BcsrVertexId::new(0),
+            BcsrVertexId::new(1),
+            BcsrVertexId::new(2)
+        ]
+    );
     Ok(())
 }
 
 #[test]
 fn incident_hyperedges_yields_outgoing_then_incoming() -> Result<(), BcsrError> {
     let view = BcsrHypergraph::open(canonical_sections())?;
-    let v0: Vec<_> = view.incident_hyperedges(BcsrVertexId(0)).collect();
-    assert_eq!(v0, vec![BcsrHyperedgeId(0)]);
+    let v0: Vec<_> = view.incident_hyperedges(BcsrVertexId::new(0)).collect();
+    assert_eq!(v0, vec![BcsrHyperedgeId::new(0)]);
 
-    let v1: Vec<_> = view.incident_hyperedges(BcsrVertexId(1)).collect();
-    assert_eq!(v1, vec![BcsrHyperedgeId(1), BcsrHyperedgeId(0)]);
+    let v1: Vec<_> = view.incident_hyperedges(BcsrVertexId::new(1)).collect();
+    assert_eq!(v1, vec![BcsrHyperedgeId::new(1), BcsrHyperedgeId::new(0)]);
 
-    let v2: Vec<_> = view.incident_hyperedges(BcsrVertexId(2)).collect();
-    assert_eq!(v2, vec![BcsrHyperedgeId(0), BcsrHyperedgeId(1)]);
+    let v2: Vec<_> = view.incident_hyperedges(BcsrVertexId::new(2)).collect();
+    assert_eq!(v2, vec![BcsrHyperedgeId::new(0), BcsrHyperedgeId::new(1)]);
     Ok(())
 }
 
 #[test]
 fn directed_successors_expand_through_tail_sets() -> Result<(), BcsrError> {
     let view = BcsrHypergraph::open(canonical_sections())?;
-    let from_v0: Vec<_> = view.successor_vertices(BcsrVertexId(0)).collect();
-    assert_eq!(from_v0, vec![BcsrVertexId(1), BcsrVertexId(2)]);
+    let from_v0: Vec<_> = view.successor_vertices(BcsrVertexId::new(0)).collect();
+    assert_eq!(from_v0, vec![BcsrVertexId::new(1), BcsrVertexId::new(2)]);
 
-    let from_v1: Vec<_> = view.successor_vertices(BcsrVertexId(1)).collect();
-    assert_eq!(from_v1, vec![BcsrVertexId(2)]);
+    let from_v1: Vec<_> = view.successor_vertices(BcsrVertexId::new(1)).collect();
+    assert_eq!(from_v1, vec![BcsrVertexId::new(2)]);
 
-    assert!(view.successor_vertices(BcsrVertexId(2)).next().is_none());
+    assert!(
+        view.successor_vertices(BcsrVertexId::new(2))
+            .next()
+            .is_none()
+    );
     Ok(())
 }
 
 #[test]
 fn directed_predecessors_expand_through_head_sets() -> Result<(), BcsrError> {
     let view = BcsrHypergraph::open(canonical_sections())?;
-    let to_v2: Vec<_> = view.predecessor_vertices(BcsrVertexId(2)).collect();
-    assert_eq!(to_v2, vec![BcsrVertexId(0), BcsrVertexId(1)]);
+    let to_v2: Vec<_> = view.predecessor_vertices(BcsrVertexId::new(2)).collect();
+    assert_eq!(to_v2, vec![BcsrVertexId::new(0), BcsrVertexId::new(1)]);
 
-    assert!(view.predecessor_vertices(BcsrVertexId(0)).next().is_none());
+    assert!(
+        view.predecessor_vertices(BcsrVertexId::new(0))
+            .next()
+            .is_none()
+    );
     Ok(())
 }
 
@@ -140,31 +157,34 @@ fn directed_predecessors_expand_through_head_sets() -> Result<(), BcsrError> {
 fn incidence_resolution_round_trips() -> Result<(), BcsrError> {
     let view = BcsrHypergraph::open(canonical_sections())?;
 
-    let i0 = BcsrParticipantId(0);
-    assert_eq!(view.incidence_element(i0), BcsrVertexId(0));
-    assert_eq!(view.incidence_relation(i0), BcsrHyperedgeId(0));
+    let i0 = BcsrParticipantId::new(0);
+    assert_eq!(view.incidence_element(i0), BcsrVertexId::new(0));
+    assert_eq!(view.incidence_relation(i0), BcsrHyperedgeId::new(0));
     assert_eq!(view.incidence_role(i0), BcsrRole::Head);
 
     let p_head = match u32::try_from(view.outgoing_incidence_count()) {
         Ok(value) => value,
         Err(error) => panic!("outgoing count overflow: {error:?}"),
     };
-    let i_first_tail = BcsrParticipantId(p_head);
+    let i_first_tail = BcsrParticipantId::new(p_head);
     assert_eq!(view.incidence_role(i_first_tail), BcsrRole::Tail);
-    assert_eq!(view.incidence_relation(i_first_tail), BcsrHyperedgeId(0));
+    assert_eq!(
+        view.incidence_relation(i_first_tail),
+        BcsrHyperedgeId::new(0)
+    );
     Ok(())
 }
 
 #[test]
 fn containment_reports_in_range_ids() -> Result<(), BcsrError> {
     let view = BcsrHypergraph::open(canonical_sections())?;
-    assert!(view.contains_element(BcsrVertexId(0)));
-    assert!(view.contains_element(BcsrVertexId(2)));
-    assert!(!view.contains_element(BcsrVertexId(3)));
-    assert!(view.contains_relation(BcsrHyperedgeId(1)));
-    assert!(!view.contains_relation(BcsrHyperedgeId(2)));
-    assert!(view.contains_incidence(BcsrParticipantId(4)));
-    assert!(!view.contains_incidence(BcsrParticipantId(5)));
+    assert!(view.contains_element(BcsrVertexId::new(0)));
+    assert!(view.contains_element(BcsrVertexId::new(2)));
+    assert!(!view.contains_element(BcsrVertexId::new(3)));
+    assert!(view.contains_relation(BcsrHyperedgeId::new(1)));
+    assert!(!view.contains_relation(BcsrHyperedgeId::new(2)));
+    assert!(view.contains_incidence(BcsrParticipantId::new(4)));
+    assert!(!view.contains_incidence(BcsrParticipantId::new(5)));
     Ok(())
 }
 

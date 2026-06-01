@@ -60,7 +60,7 @@ fn validated_traversal_in_bounds_n2_m2() {
     // calling `element_successors` exercises `targets[start..end]`; if any
     // index were out of bounds, the slice would panic and kani would catch it.
     for node_index in 0..2u32 {
-        let node = CsrNodeId(node_index);
+        let node = CsrNodeId::new(node_index);
         let mut count = 0u32;
         for _target in graph.element_successors(node) {
             count = count.wrapping_add(1);

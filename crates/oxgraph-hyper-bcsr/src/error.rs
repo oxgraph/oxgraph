@@ -216,153 +216,117 @@ impl fmt::Display for BcsrRoleSide {
 }
 
 impl fmt::Display for BcsrError {
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one flat exhaustive Display match over every BcsrError variant; splitting it reintroduces the silent _ => Ok(()) wildcards this consolidation removed"
+    )]
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // One flat, exhaustive match: a new variant forces a Display arm at
+        // compile time, and there is no `_ => Ok(())` wildcard that could
+        // silently format nothing for a mis-routed variant.
         match self {
-            Self::OffsetLengthOverflow { .. }
-            | Self::OffsetLength { .. }
-            | Self::HyperedgeOffsetLengthMismatch { .. }
-            | Self::VertexOffsetLengthMismatch { .. } => fmt_length_variant(self, formatter),
-            Self::FirstOffset { .. }
-            | Self::NonMonotonicOffset { .. }
-            | Self::FinalOffset { .. } => fmt_offset_variant(self, formatter),
-            Self::VertexOutOfRange { .. }
-            | Self::HyperedgeOutOfRange { .. }
-            | Self::NotStrictlyAscending { .. } => fmt_value_variant(self, formatter),
-            Self::OutgoingTotalMismatch { .. }
-            | Self::IncomingTotalMismatch { .. }
-            | Self::UsizeOverflow { .. }
-            | Self::TotalIncidenceCountOverflow { .. }
-            | Self::CrossDirectionMismatch { .. } => fmt_total_variant(self, formatter),
+            Self::OffsetLengthOverflow { count } => {
+                write!(formatter, "offset length overflow for count {count}")
+            }
+            Self::OffsetLength {
+                section,
+                expected,
+                actual,
+            } => write!(
+                formatter,
+                "{section} has wrong length: expected {expected}, got {actual}"
+            ),
+            Self::HyperedgeOffsetLengthMismatch {
+                head_offsets_len,
+                tail_offsets_len,
+            } => write!(
+                formatter,
+                "head_offsets length {head_offsets_len} disagrees with tail_offsets length {tail_offsets_len}"
+            ),
+            Self::VertexOffsetLengthMismatch {
+                outgoing_offsets_len,
+                incoming_offsets_len,
+            } => write!(
+                formatter,
+                "vertex_outgoing_offsets length {outgoing_offsets_len} disagrees with vertex_incoming_offsets length {incoming_offsets_len}"
+            ),
+            Self::FirstOffset { section, actual } => {
+                write!(formatter, "{section} first offset must be 0, got {actual}")
+            }
+            Self::NonMonotonicOffset {
+                section,
+                index,
+                previous,
+                actual,
+            } => write!(
+                formatter,
+                "{section} offset at index {index} is not monotonic: previous {previous}, got {actual}"
+            ),
+            Self::FinalOffset {
+                section,
+                final_offset,
+                value_len,
+            } => write!(
+                formatter,
+                "{section} final offset {final_offset} does not match value length {value_len}"
+            ),
+            Self::VertexOutOfRange {
+                section,
+                index,
+                vertex,
+                vertex_count,
+            } => write!(
+                formatter,
+                "{section} vertex {vertex} at index {index} is out of range (vertex count {vertex_count})"
+            ),
+            Self::HyperedgeOutOfRange {
+                section,
+                index,
+                hyperedge,
+                hyperedge_count,
+            } => write!(
+                formatter,
+                "{section} hyperedge {hyperedge} at index {index} is out of range (hyperedge count {hyperedge_count})"
+            ),
+            Self::NotStrictlyAscending {
+                section,
+                index,
+                previous,
+                actual,
+            } => write!(
+                formatter,
+                "{section} value at index {index} is not strictly ascending: previous {previous}, got {actual}"
+            ),
+            Self::OutgoingTotalMismatch {
+                head_participants_len,
+                outgoing_hyperedges_len,
+            } => write!(
+                formatter,
+                "head_participants length {head_participants_len} disagrees with vertex_outgoing_hyperedges length {outgoing_hyperedges_len}"
+            ),
+            Self::IncomingTotalMismatch {
+                tail_participants_len,
+                incoming_hyperedges_len,
+            } => write!(
+                formatter,
+                "tail_participants length {tail_participants_len} disagrees with vertex_incoming_hyperedges length {incoming_hyperedges_len}"
+            ),
+            Self::UsizeOverflow { value } => {
+                write!(formatter, "BCSR index value {value} does not fit usize")
+            }
+            Self::TotalIncidenceCountOverflow { p_head, p_tail } => write!(
+                formatter,
+                "incidence ID space P_head ({p_head}) + P_tail ({p_tail}) overflows usize"
+            ),
+            Self::CrossDirectionMismatch {
+                side,
+                hyperedge,
+                vertex,
+            } => write!(
+                formatter,
+                "cross-direction mismatch on {side}: hyperedge {hyperedge} and vertex {vertex} disagree"
+            ),
         }
-    }
-}
-
-/// Formats the length-shape variants of [`BcsrError`].
-fn fmt_length_variant(error: &BcsrError, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-    match error {
-        BcsrError::OffsetLengthOverflow { count } => {
-            write!(formatter, "offset length overflow for count {count}")
-        }
-        BcsrError::OffsetLength {
-            section,
-            expected,
-            actual,
-        } => write!(
-            formatter,
-            "{section} has wrong length: expected {expected}, got {actual}"
-        ),
-        BcsrError::HyperedgeOffsetLengthMismatch {
-            head_offsets_len,
-            tail_offsets_len,
-        } => write!(
-            formatter,
-            "head_offsets length {head_offsets_len} disagrees with tail_offsets length {tail_offsets_len}"
-        ),
-        BcsrError::VertexOffsetLengthMismatch {
-            outgoing_offsets_len,
-            incoming_offsets_len,
-        } => write!(
-            formatter,
-            "vertex_outgoing_offsets length {outgoing_offsets_len} disagrees with vertex_incoming_offsets length {incoming_offsets_len}"
-        ),
-        _ => Ok(()),
-    }
-}
-
-/// Formats the offset-shape variants of [`BcsrError`].
-fn fmt_offset_variant(error: &BcsrError, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-    match error {
-        BcsrError::FirstOffset { section, actual } => {
-            write!(formatter, "{section} first offset must be 0, got {actual}")
-        }
-        BcsrError::NonMonotonicOffset {
-            section,
-            index,
-            previous,
-            actual,
-        } => write!(
-            formatter,
-            "{section} offset at index {index} is not monotonic: previous {previous}, got {actual}"
-        ),
-        BcsrError::FinalOffset {
-            section,
-            final_offset,
-            value_len,
-        } => write!(
-            formatter,
-            "{section} final offset {final_offset} does not match value length {value_len}"
-        ),
-        _ => Ok(()),
-    }
-}
-
-/// Formats the in-range-value and ascending-order variants of [`BcsrError`].
-fn fmt_value_variant(error: &BcsrError, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-    match error {
-        BcsrError::VertexOutOfRange {
-            section,
-            index,
-            vertex,
-            vertex_count,
-        } => write!(
-            formatter,
-            "{section} vertex {vertex} at index {index} is out of range (vertex count {vertex_count})"
-        ),
-        BcsrError::HyperedgeOutOfRange {
-            section,
-            index,
-            hyperedge,
-            hyperedge_count,
-        } => write!(
-            formatter,
-            "{section} hyperedge {hyperedge} at index {index} is out of range (hyperedge count {hyperedge_count})"
-        ),
-        BcsrError::NotStrictlyAscending {
-            section,
-            index,
-            previous,
-            actual,
-        } => write!(
-            formatter,
-            "{section} value at index {index} is not strictly ascending: previous {previous}, got {actual}"
-        ),
-        _ => Ok(()),
-    }
-}
-
-/// Formats the cross-section total / overflow / consistency variants.
-fn fmt_total_variant(error: &BcsrError, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-    match error {
-        BcsrError::OutgoingTotalMismatch {
-            head_participants_len,
-            outgoing_hyperedges_len,
-        } => write!(
-            formatter,
-            "head_participants length {head_participants_len} disagrees with vertex_outgoing_hyperedges length {outgoing_hyperedges_len}"
-        ),
-        BcsrError::IncomingTotalMismatch {
-            tail_participants_len,
-            incoming_hyperedges_len,
-        } => write!(
-            formatter,
-            "tail_participants length {tail_participants_len} disagrees with vertex_incoming_hyperedges length {incoming_hyperedges_len}"
-        ),
-        BcsrError::UsizeOverflow { value } => {
-            write!(formatter, "BCSR index value {value} does not fit usize")
-        }
-        BcsrError::TotalIncidenceCountOverflow { p_head, p_tail } => write!(
-            formatter,
-            "incidence ID space P_head ({p_head}) + P_tail ({p_tail}) overflows usize"
-        ),
-        BcsrError::CrossDirectionMismatch {
-            side,
-            hyperedge,
-            vertex,
-        } => write!(
-            formatter,
-            "cross-direction mismatch on {side}: hyperedge {hyperedge} and vertex {vertex} disagree"
-        ),
-        _ => Ok(()),
     }
 }
 
@@ -382,6 +346,17 @@ pub enum BcsrSnapshotError {
         section: BcsrSection,
         /// The kind constant the lookup used.
         kind: u32,
+    },
+    /// A required section was present but its version did not match.
+    VersionMismatch {
+        /// Which section had the wrong version.
+        section: BcsrSection,
+        /// The kind constant the lookup used.
+        kind: u32,
+        /// Version the reader required.
+        expected: u32,
+        /// Version recorded in the snapshot.
+        actual: u32,
     },
     /// A required section payload could not be borrowed as `[U32<LE>]`.
     SectionView {
@@ -413,6 +388,15 @@ impl fmt::Display for BcsrSnapshotError {
             Self::MissingSection { section, kind } => write!(
                 formatter,
                 "snapshot has no {section} section (kind 0x{kind:04x})"
+            ),
+            Self::VersionMismatch {
+                section,
+                kind,
+                expected,
+                actual,
+            } => write!(
+                formatter,
+                "{section} section (kind 0x{kind:04x}) version {actual} does not match expected {expected}"
             ),
             Self::SectionView { section, error } => write!(
                 formatter,

@@ -10,7 +10,7 @@ use crate::{
         validation::{index_to_usize_validated, usize_to_index_validated},
         view::BcsrSections,
     },
-    word::{BcsrIndex, BcsrWord},
+    word::{LayoutIndex, LayoutWord},
 };
 
 /// Iterator over a borrowed slice of words, mapping each word's decoded
@@ -23,7 +23,7 @@ use crate::{
 ///
 /// Advancing the iterator is `O(1)` and performs no allocation.
 #[derive(Clone, Debug)]
-pub struct BcsrIdSlice<'view, Word: BcsrWord, Id> {
+pub struct BcsrIdSlice<'view, Word: LayoutWord, Id> {
     /// Remaining words for this slice.
     inner: core::slice::Iter<'view, Word>,
     /// Brands the iterator to the destination ID newtype without coupling
@@ -31,7 +31,7 @@ pub struct BcsrIdSlice<'view, Word: BcsrWord, Id> {
     _id: PhantomData<fn() -> Id>,
 }
 
-impl<'view, Word: BcsrWord, Id> BcsrIdSlice<'view, Word, Id> {
+impl<'view, Word: LayoutWord, Id> BcsrIdSlice<'view, Word, Id> {
     /// Constructs a slice iterator from a borrowed `Word` slice.
     pub(in crate::internal) fn new(slice: &'view [Word]) -> Self {
         Self {
@@ -41,7 +41,7 @@ impl<'view, Word: BcsrWord, Id> BcsrIdSlice<'view, Word, Id> {
     }
 }
 
-impl<Word: BcsrWord, Id> Iterator for BcsrIdSlice<'_, Word, Id>
+impl<Word: LayoutWord, Id> Iterator for BcsrIdSlice<'_, Word, Id>
 where
     Id: From<Word::Index>,
 {
@@ -56,7 +56,7 @@ where
     }
 }
 
-impl<Word: BcsrWord, Id> ExactSizeIterator for BcsrIdSlice<'_, Word, Id>
+impl<Word: LayoutWord, Id> ExactSizeIterator for BcsrIdSlice<'_, Word, Id>
 where
     Id: From<Word::Index>,
 {
@@ -65,7 +65,7 @@ where
     }
 }
 
-impl<Word: BcsrWord, Id> DoubleEndedIterator for BcsrIdSlice<'_, Word, Id>
+impl<Word: LayoutWord, Id> DoubleEndedIterator for BcsrIdSlice<'_, Word, Id>
 where
     Id: From<Word::Index>,
 {
@@ -80,7 +80,7 @@ where
 ///
 /// Advancing the iterator is `O(1)` and performs no allocation.
 pub type BcsrVertexSlice<'view, Word> =
-    BcsrIdSlice<'view, Word, BcsrVertexId<<Word as BcsrWord>::Index>>;
+    BcsrIdSlice<'view, Word, BcsrVertexId<<Word as LayoutWord>::Index>>;
 
 /// Iterator over a borrowed slice of hyperedge words.
 ///
@@ -88,7 +88,7 @@ pub type BcsrVertexSlice<'view, Word> =
 ///
 /// Advancing the iterator is `O(1)` and performs no allocation.
 pub type BcsrHyperedgeSlice<'view, Word> =
-    BcsrIdSlice<'view, Word, BcsrHyperedgeId<<Word as BcsrWord>::Index>>;
+    BcsrIdSlice<'view, Word, BcsrHyperedgeId<<Word as LayoutWord>::Index>>;
 
 /// Chained vertex iterator yielding head participants then tail participants.
 ///
@@ -135,7 +135,7 @@ impl<IncidenceIndex> BcsrParticipantSlice<IncidenceIndex> {
     }
 }
 
-impl<IncidenceIndex: BcsrIndex> Iterator for BcsrParticipantSlice<IncidenceIndex> {
+impl<IncidenceIndex: LayoutIndex> Iterator for BcsrParticipantSlice<IncidenceIndex> {
     type Item = BcsrParticipantId<IncidenceIndex>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -144,7 +144,7 @@ impl<IncidenceIndex: BcsrIndex> Iterator for BcsrParticipantSlice<IncidenceIndex
         }
         let id = self.base.checked_add(self.cursor)?;
         self.cursor += 1;
-        Some(BcsrParticipantId(usize_to_index_validated(id)))
+        Some(BcsrParticipantId::new(usize_to_index_validated(id)))
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
@@ -153,20 +153,20 @@ impl<IncidenceIndex: BcsrIndex> Iterator for BcsrParticipantSlice<IncidenceIndex
     }
 }
 
-impl<IncidenceIndex: BcsrIndex> ExactSizeIterator for BcsrParticipantSlice<IncidenceIndex> {
+impl<IncidenceIndex: LayoutIndex> ExactSizeIterator for BcsrParticipantSlice<IncidenceIndex> {
     fn len(&self) -> usize {
         self.end - self.cursor
     }
 }
 
-impl<IncidenceIndex: BcsrIndex> DoubleEndedIterator for BcsrParticipantSlice<IncidenceIndex> {
+impl<IncidenceIndex: LayoutIndex> DoubleEndedIterator for BcsrParticipantSlice<IncidenceIndex> {
     fn next_back(&mut self) -> Option<Self::Item> {
         if self.cursor == self.end {
             return None;
         }
         self.end -= 1;
         let id = self.base.checked_add(self.end)?;
-        Some(BcsrParticipantId(usize_to_index_validated(id)))
+        Some(BcsrParticipantId::new(usize_to_index_validated(id)))
     }
 }
 
@@ -187,9 +187,9 @@ pub type BcsrChainedRelationIncidences<IncidenceIndex> =
 #[derive(Clone, Debug)]
 pub struct BcsrElementIncidences<'view, OffsetWord, VertexWord, RelationWord>
 where
-    OffsetWord: BcsrWord,
-    VertexWord: BcsrWord,
-    RelationWord: BcsrWord,
+    OffsetWord: LayoutWord,
+    VertexWord: LayoutWord,
+    RelationWord: LayoutWord,
 {
     /// The vertex whose incidences we are listing.
     vertex: usize,
@@ -212,9 +212,9 @@ where
 impl<'view, OffsetWord, VertexWord, RelationWord>
     BcsrElementIncidences<'view, OffsetWord, VertexWord, RelationWord>
 where
-    OffsetWord: BcsrWord,
-    VertexWord: BcsrWord,
-    RelationWord: BcsrWord,
+    OffsetWord: LayoutWord,
+    VertexWord: LayoutWord,
+    RelationWord: LayoutWord,
 {
     /// Constructs an element-incidences iterator for `vertex`.
     pub(in crate::internal) fn new(
@@ -246,7 +246,7 @@ where
                 hyperedge,
                 self.vertex,
             ) {
-                return Some(BcsrParticipantId(usize_to_index_validated(position)));
+                return Some(BcsrParticipantId::new(usize_to_index_validated(position)));
             }
         }
         None
@@ -263,7 +263,7 @@ where
                 self.vertex,
             ) {
                 let id = self.p_head.checked_add(position)?;
-                return Some(BcsrParticipantId(usize_to_index_validated(id)));
+                return Some(BcsrParticipantId::new(usize_to_index_validated(id)));
             }
         }
         None
@@ -273,9 +273,9 @@ where
 impl<OffsetWord, VertexWord, RelationWord> Iterator
     for BcsrElementIncidences<'_, OffsetWord, VertexWord, RelationWord>
 where
-    OffsetWord: BcsrWord,
-    VertexWord: BcsrWord,
-    RelationWord: BcsrWord,
+    OffsetWord: LayoutWord,
+    VertexWord: LayoutWord,
+    RelationWord: LayoutWord,
 {
     type Item = BcsrParticipantId<OffsetWord::Index>;
 
@@ -295,8 +295,8 @@ fn locate_in_bucket<OffsetWord, VertexWord>(
     vertex: usize,
 ) -> Option<usize>
 where
-    OffsetWord: BcsrWord,
-    VertexWord: BcsrWord,
+    OffsetWord: LayoutWord,
+    VertexWord: LayoutWord,
 {
     let bucket_start = index_to_usize_validated(offsets[hyperedge].get());
     let bucket_end = index_to_usize_validated(offsets[hyperedge + 1].get());
@@ -321,9 +321,9 @@ where
 #[derive(Clone, Debug)]
 pub struct BcsrNeighborVertices<'view, RelationWord, OffsetWord, VertexWord>
 where
-    RelationWord: BcsrWord,
-    OffsetWord: BcsrWord,
-    VertexWord: BcsrWord,
+    RelationWord: LayoutWord,
+    OffsetWord: LayoutWord,
+    VertexWord: LayoutWord,
 {
     /// Remaining hyperedges along this traversal direction.
     relations: core::slice::Iter<'view, RelationWord>,
@@ -339,9 +339,9 @@ where
 impl<'view, RelationWord, OffsetWord, VertexWord>
     BcsrNeighborVertices<'view, RelationWord, OffsetWord, VertexWord>
 where
-    RelationWord: BcsrWord,
-    OffsetWord: BcsrWord,
-    VertexWord: BcsrWord,
+    RelationWord: LayoutWord,
+    OffsetWord: LayoutWord,
+    VertexWord: LayoutWord,
 {
     /// Constructs a neighbor iterator from a relation slice and the
     /// (offsets, participants) pair for the desired direction. Use the
@@ -378,16 +378,16 @@ where
 impl<RelationWord, OffsetWord, VertexWord> Iterator
     for BcsrNeighborVertices<'_, RelationWord, OffsetWord, VertexWord>
 where
-    RelationWord: BcsrWord,
-    OffsetWord: BcsrWord,
-    VertexWord: BcsrWord,
+    RelationWord: LayoutWord,
+    OffsetWord: LayoutWord,
+    VertexWord: LayoutWord,
 {
     type Item = BcsrVertexId<VertexWord::Index>;
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
             if let Some(word) = self.current_bucket.next() {
-                return Some(BcsrVertexId(word.get()));
+                return Some(BcsrVertexId::new(word.get()));
             }
             if !self.advance_outer() {
                 return None;

@@ -86,7 +86,10 @@ pub use crate::{
         SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_OFFSETS_U32,
         SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_OFFSETS_U64,
     },
-    word::{BcsrIndex, BcsrSnapshotIndex, BcsrSnapshotWord, BcsrWord},
+    word::{
+        BcsrSnapshotIndex, LayoutIndex, LayoutSnapshotWord, LayoutWord,
+        SNAPSHOT_BCSR_SECTION_VERSION,
+    },
 };
 
 /// Native borrowed BCSR hypergraph alias.
@@ -114,7 +117,7 @@ pub type BcsrSnapshotHypergraph<'view, VertexIndex, RelationIndex, IncidenceInde
     VertexIndex,
     RelationIndex,
     IncidenceIndex,
-    <IncidenceIndex as BcsrSnapshotIndex>::LittleEndianWord,
-    <VertexIndex as BcsrSnapshotIndex>::LittleEndianWord,
-    <RelationIndex as BcsrSnapshotIndex>::LittleEndianWord,
+    <IncidenceIndex as oxgraph_layout_util::SnapshotWidth>::LittleEndianWord,
+    <VertexIndex as oxgraph_layout_util::SnapshotWidth>::LittleEndianWord,
+    <RelationIndex as oxgraph_layout_util::SnapshotWidth>::LittleEndianWord,
 >;

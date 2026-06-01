@@ -24,9 +24,10 @@ mod topology;
 mod traverse;
 
 pub use artifact::{
-    PostgresMetadata, PostgresSectionError, SNAPSHOT_KIND_PG_CATALOG, SNAPSHOT_KIND_PG_METADATA,
-    attach_metadata, attach_postgres_sections, load_snapshot_bytes, read_metadata,
-    validate_snapshot_bytes, write_snapshot_bytes,
+    PostgresMetadata, PostgresSectionError, SNAPSHOT_KIND_PG_CATALOG,
+    SNAPSHOT_KIND_PG_INBOUND_OFFSETS_U32, SNAPSHOT_KIND_PG_INBOUND_TARGETS_U32,
+    SNAPSHOT_KIND_PG_METADATA, attach_metadata, attach_postgres_sections, load_snapshot_bytes,
+    read_metadata, validate_snapshot_bytes, write_snapshot_bytes,
 };
 pub use build::{
     BuildEstimate, DualTopologySnapshot, EdgeRow, dense_node_map_from_edges, edge_row_from_scan,
@@ -41,10 +42,7 @@ pub use config::{Config, QueryFreshness};
 pub use engine::{Engine, EngineStatus};
 pub use error::{BuildError, ConfigError, PostgresGraphError, QueryError, SyncError};
 pub use overlay::{OverlayEdge, OverlayState};
-pub use oxgraph_csc::{
-    CscNodeId, CscSnapshotError, CscSnapshotGraph, SNAPSHOT_KIND_PG_INBOUND_OFFSETS_U32,
-    SNAPSHOT_KIND_PG_INBOUND_TARGETS_U32,
-};
+pub use oxgraph_csc::{CscNodeId, CscSnapshotError, CscSnapshotGraph};
 pub use rebuild::SnapshotRebuild;
 pub use role::GraphRole;
 pub use search::SearchPredicate;

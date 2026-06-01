@@ -160,11 +160,11 @@ fn walk_hyperedges(view: &BcsrNativeHypergraph<'_, u32, u32, u32>) -> u64 {
         Err(error) => panic!("benchmark hyperedge count overflow: {error:?}"),
     };
     for h in 0..h_count {
-        for vertex in view.source_participants(BcsrHyperedgeId(h)) {
-            checksum ^= u64::from(vertex.0);
+        for vertex in view.source_participants(BcsrHyperedgeId::new(h)) {
+            checksum ^= u64::from(vertex.get());
         }
-        for vertex in view.target_participants(BcsrHyperedgeId(h)) {
-            checksum ^= u64::from(vertex.0).rotate_left(1);
+        for vertex in view.target_participants(BcsrHyperedgeId::new(h)) {
+            checksum ^= u64::from(vertex.get()).rotate_left(1);
         }
     }
     checksum
@@ -178,8 +178,8 @@ fn walk_incident(view: &BcsrNativeHypergraph<'_, u32, u32, u32>) -> u64 {
         Err(error) => panic!("benchmark vertex count overflow: {error:?}"),
     };
     for v in 0..v_count {
-        for hyperedge in view.incident_hyperedges(BcsrVertexId(v)) {
-            checksum ^= u64::from(hyperedge.0);
+        for hyperedge in view.incident_hyperedges(BcsrVertexId::new(v)) {
+            checksum ^= u64::from(hyperedge.get());
         }
     }
     checksum
@@ -193,8 +193,8 @@ fn walk_successors(view: &BcsrNativeHypergraph<'_, u32, u32, u32>) -> u64 {
         Err(error) => panic!("benchmark vertex count overflow: {error:?}"),
     };
     for v in 0..v_count {
-        for vertex in view.successor_vertices(BcsrVertexId(v)) {
-            checksum ^= u64::from(vertex.0);
+        for vertex in view.successor_vertices(BcsrVertexId::new(v)) {
+            checksum ^= u64::from(vertex.get());
         }
     }
     checksum

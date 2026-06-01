@@ -5,6 +5,7 @@ use std::{
     io::{Read, Write},
     net::{TcpListener, TcpStream},
     path::Path,
+    time::Duration,
 };
 
 use oxgraph_db::{Database, DbError, PreparedQuery, QueryLanguage};
@@ -143,12 +144,29 @@ pub fn run_server(path: impl AsRef<Path>, address: &str) -> Result<(), OxgraphdE
     let listener = TcpListener::bind(address)
         .map_err(|source| OxgraphdError::io("bind http listener", source))?;
     for stream in listener.incoming() {
-        let stream =
-            stream.map_err(|source| OxgraphdError::io("accept http connection", source))?;
-        handle_stream(path.as_ref(), stream)?;
+        // Per-connection failures (accept errors, read/write IO, malformed
+        // framing) are logged and skipped; one bad client must never bring
+        // down the daemon. Only the initial bind failure above is fatal.
+        match stream {
+            Ok(stream) => {
+                if let Err(error) = handle_stream(path.as_ref(), stream) {
+                    eprintln!("oxgraphd: dropping connection: {error}");
+                }
+            }
+            Err(error) => {
+                eprintln!("oxgraphd: accept failed: {error}");
+            }
+        }
     }
     Ok(())
 }
+
+/// Default per-connection read timeout, so a stalled client cannot pin a
+/// server thread indefinitely.
+const READ_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Maximum bytes accepted for one request (headers plus body).
+const MAX_REQUEST_BYTES: usize = 8 * 1024 * 1024;
 
 /// Serves one raw HTTP request and returns a raw HTTP response.
 ///
@@ -175,15 +193,103 @@ impl OxgraphdError {
 
 /// Handles one TCP stream.
 fn handle_stream(path: &Path, mut stream: TcpStream) -> Result<(), OxgraphdError> {
-    let mut request = String::new();
     stream
-        .read_to_string(&mut request)
-        .map_err(|source| OxgraphdError::io("read http request", source))?;
+        .set_read_timeout(Some(READ_TIMEOUT))
+        .map_err(|source| OxgraphdError::io("set read timeout", source))?;
+    let request = read_http_request(&mut stream)?;
     let response = serve_http_request(path, &request);
     stream
         .write_all(response.as_bytes())
         .map_err(|source| OxgraphdError::io("write http response", source))?;
     Ok(())
+}
+
+/// Reads one HTTP/1.1 request using `Content-Length` framing.
+///
+/// Reads headers up to the `\r\n\r\n` terminator, parses `Content-Length`, then
+/// reads exactly that many body bytes. This does not depend on the client
+/// half-closing the socket (so persistent connections work) and bounds the
+/// request at [`MAX_REQUEST_BYTES`].
+///
+/// # Errors
+///
+/// Returns [`OxgraphdError`] on IO failure, when the request exceeds the size
+/// bound, or when the bytes are not valid UTF-8.
+///
+/// # Performance
+///
+/// This function is `O(request bytes)`.
+fn read_http_request<R: Read>(stream: &mut R) -> Result<String, OxgraphdError> {
+    let mut buffer = Vec::new();
+    let mut chunk = [0u8; 4096];
+
+    // Phase 1: read until the end-of-headers marker (or EOF).
+    let header_end = loop {
+        if let Some(position) = find_subsequence(&buffer, b"\r\n\r\n") {
+            break position + 4;
+        }
+        if buffer.len() > MAX_REQUEST_BYTES {
+            return Err(OxgraphdError::Usage {
+                message: "request headers exceed the size limit".to_owned(),
+            });
+        }
+        let read = stream
+            .read(&mut chunk)
+            .map_err(|source| OxgraphdError::io("read http request", source))?;
+        if read == 0 {
+            // Connection closed before a full header block; serve what we have.
+            break buffer.len();
+        }
+        buffer.extend_from_slice(&chunk[..read]);
+    };
+
+    // Phase 2: read exactly Content-Length body bytes when declared.
+    if let Some(content_length) = parse_content_length(&buffer[..header_end]) {
+        let target = header_end.saturating_add(content_length);
+        if target > MAX_REQUEST_BYTES {
+            return Err(OxgraphdError::Usage {
+                message: "request body exceeds the size limit".to_owned(),
+            });
+        }
+        while buffer.len() < target {
+            let read = stream
+                .read(&mut chunk)
+                .map_err(|source| OxgraphdError::io("read http body", source))?;
+            if read == 0 {
+                break;
+            }
+            buffer.extend_from_slice(&chunk[..read]);
+        }
+        // Drop anything read past the framed body (e.g. a pipelined request);
+        // this server handles one request per connection.
+        buffer.truncate(target);
+    }
+
+    String::from_utf8(buffer).map_err(|_error| OxgraphdError::Usage {
+        message: "request bytes are not valid UTF-8".to_owned(),
+    })
+}
+
+/// Returns the start index of the first occurrence of `needle` in `haystack`.
+fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() || haystack.len() < needle.len() {
+        return None;
+    }
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
+}
+
+/// Parses the `Content-Length` header value from a header byte block.
+///
+/// Header names are matched case-insensitively. Returns `None` when the header
+/// is absent or unparseable (the request is then treated as bodyless).
+fn parse_content_length(headers: &[u8]) -> Option<usize> {
+    let text = core::str::from_utf8(headers).ok()?;
+    text.lines()
+        .filter_map(|line| line.split_once(':'))
+        .find(|(name, _value)| name.trim().eq_ignore_ascii_case("content-length"))
+        .and_then(|(_name, value)| value.trim().parse::<usize>().ok())
 }
 
 /// Dispatches one HTTP request.
@@ -467,4 +573,52 @@ struct QueryRequest {
     language: String,
     /// Query text.
     query: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::Cursor;
+
+    use super::{find_subsequence, parse_content_length, read_http_request};
+
+    #[test]
+    fn parses_content_length_case_insensitively() {
+        let headers = b"POST /v1/query HTTP/1.1\r\nContent-Length: 42\r\n\r\n";
+        assert_eq!(parse_content_length(headers), Some(42));
+        let lower = b"POST / HTTP/1.1\r\ncontent-length: 7\r\n\r\n";
+        assert_eq!(parse_content_length(lower), Some(7));
+        let absent = b"GET /v1/status HTTP/1.1\r\n\r\n";
+        assert_eq!(parse_content_length(absent), None);
+    }
+
+    #[test]
+    fn finds_header_terminator() {
+        assert_eq!(find_subsequence(b"ab\r\n\r\ncd", b"\r\n\r\n"), Some(2));
+        assert_eq!(find_subsequence(b"no terminator", b"\r\n\r\n"), None);
+    }
+
+    #[test]
+    fn reads_exactly_content_length_body_without_eof() -> Result<(), super::OxgraphdError> {
+        // A persistent client sends the request then trailing bytes it has not
+        // framed; the reader must stop at Content-Length and not consume them.
+        let body = "{\"language\":\"oxql\",\"query\":\"MATCH ELEMENTS\"}";
+        let request = format!(
+            "POST /v1/query HTTP/1.1\r\ncontent-length: {}\r\n\r\n{body}TRAILING",
+            body.len()
+        );
+        let mut cursor = Cursor::new(request.into_bytes());
+        let parsed = read_http_request(&mut cursor)?;
+        assert!(parsed.ends_with(body), "body must end the parsed request");
+        assert!(!parsed.contains("TRAILING"), "must not read past body");
+        Ok(())
+    }
+
+    #[test]
+    fn reads_bodyless_request() -> Result<(), super::OxgraphdError> {
+        let request = b"GET /v1/status HTTP/1.1\r\n\r\n".to_vec();
+        let mut cursor = Cursor::new(request);
+        let parsed = read_http_request(&mut cursor)?;
+        assert!(parsed.starts_with("GET /v1/status"));
+        Ok(())
+    }
 }

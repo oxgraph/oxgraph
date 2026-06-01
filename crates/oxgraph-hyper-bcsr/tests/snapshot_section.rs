@@ -114,7 +114,12 @@ fn build_snapshot(fixture: &Fixture) -> Vec<u8> {
         ),
     ];
     for (kind, words) in entries {
-        if let Err(error) = builder.add_section(kind, 0, 2, words_to_bytes(words)) {
+        if let Err(error) = builder.add_section(
+            kind,
+            oxgraph_hyper_bcsr::SNAPSHOT_BCSR_SECTION_VERSION,
+            2,
+            words_to_bytes(words),
+        ) {
             panic!("section 0x{kind:04x}: {error:?}");
         }
     }
@@ -133,12 +138,16 @@ fn from_snapshot_round_trips_canonical_fixture() -> Result<(), FixtureError> {
 
     assert_eq!(view.vertex_count(), 3);
     assert_eq!(view.hyperedge_count(), 2);
-    let h0_heads: Vec<_> = view.source_participants(BcsrHyperedgeId(0)).collect();
-    assert_eq!(h0_heads, vec![BcsrVertexId(0)]);
+    let h0_heads: Vec<_> = view.source_participants(BcsrHyperedgeId::new(0)).collect();
+    assert_eq!(h0_heads, vec![BcsrVertexId::new(0)]);
     Ok(())
 }
 
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "fixture builds all eight width-mixed BCSR sections inline for one round-trip"
+)]
 fn opens_mixed_u32_vertices_relations_u64_incidences() -> Result<(), FixtureError> {
     let fixture = Fixture::canonical();
     let head_offsets: Vec<u64> = fixture
@@ -180,7 +189,12 @@ fn opens_mixed_u32_vertices_relations_u64_incidences() -> Result<(), FixtureErro
         ),
     ];
     for (kind, words) in offset_entries {
-        if let Err(error) = builder.add_section(kind, 0, 3, words64_to_bytes(words)) {
+        if let Err(error) = builder.add_section(
+            kind,
+            oxgraph_hyper_bcsr::SNAPSHOT_BCSR_SECTION_VERSION,
+            3,
+            words64_to_bytes(words),
+        ) {
             panic!("section 0x{kind:04x}: {error:?}");
         }
     }
@@ -203,7 +217,12 @@ fn opens_mixed_u32_vertices_relations_u64_incidences() -> Result<(), FixtureErro
         ),
     ];
     for (kind, words) in value_entries {
-        if let Err(error) = builder.add_section(kind, 0, 2, words_to_bytes(words)) {
+        if let Err(error) = builder.add_section(
+            kind,
+            oxgraph_hyper_bcsr::SNAPSHOT_BCSR_SECTION_VERSION,
+            2,
+            words_to_bytes(words),
+        ) {
             panic!("section 0x{kind:04x}: {error:?}");
         }
     }
@@ -217,9 +236,9 @@ fn opens_mixed_u32_vertices_relations_u64_incidences() -> Result<(), FixtureErro
     assert_eq!(view.vertex_count(), 3);
     assert_eq!(view.hyperedge_count(), 2);
     assert_eq!(
-        view.target_participants(BcsrHyperedgeId(0))
+        view.target_participants(BcsrHyperedgeId::new(0))
             .collect::<Vec<_>>(),
-        vec![BcsrVertexId(1), BcsrVertexId(2)]
+        vec![BcsrVertexId::new(1), BcsrVertexId::new(2)]
     );
     Ok(())
 }
@@ -256,7 +275,12 @@ fn rejects_missing_head_offsets_section() -> Result<(), FixtureError> {
         ),
     ];
     for (kind, words) in entries {
-        if let Err(error) = builder.add_section(kind, 0, 2, words_to_bytes(words)) {
+        if let Err(error) = builder.add_section(
+            kind,
+            oxgraph_hyper_bcsr::SNAPSHOT_BCSR_SECTION_VERSION,
+            2,
+            words_to_bytes(words),
+        ) {
             panic!("section 0x{kind:04x}: {error:?}");
         }
     }
@@ -321,7 +345,12 @@ fn rejects_wrong_participant_width() -> Result<(), FixtureError> {
         ),
     ];
     for (kind, words) in entries {
-        if let Err(error) = builder.add_section(kind, 0, 2, words_to_bytes(words)) {
+        if let Err(error) = builder.add_section(
+            kind,
+            oxgraph_hyper_bcsr::SNAPSHOT_BCSR_SECTION_VERSION,
+            2,
+            words_to_bytes(words),
+        ) {
             panic!("section 0x{kind:04x}: {error:?}");
         }
     }

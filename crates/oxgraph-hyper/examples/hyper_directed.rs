@@ -1,12 +1,11 @@
 //! Demonstrates implementing `oxgraph-hyper` for a tiny directed hypergraph.
 
 use oxgraph_hyper::{
-    DirectedHyperedgeParticipants, HyperedgeParticipantCount, HyperedgeParticipants,
-    HypergraphCounts, IncidentHyperedgeCount, IncidentHyperedges,
+    DirectedHyperedgeParticipants, HyperedgeParticipants, HypergraphCounts, IncidentHyperedges,
 };
 use oxgraph_topology::{
-    ElementIncidences, IncidenceBase, IncidenceElement, IncidenceRelation, RelationIncidences,
-    TopologyBase, TopologyCounts,
+    ElementIncidenceCount, ElementIncidences, IncidenceBase, IncidenceElement, IncidenceRelation,
+    RelationIncidenceCount, RelationIncidences, TopologyBase, TopologyCounts,
 };
 
 /// Local vertex handle for the example hypergraph.
@@ -142,14 +141,14 @@ impl IncidentHyperedges for TinyHypergraph {
     }
 }
 
-impl HyperedgeParticipantCount for TinyHypergraph {
-    fn hyperedge_participant_count(&self, hyperedge: HyperedgeId) -> usize {
+impl RelationIncidenceCount for TinyHypergraph {
+    fn relation_incidence_count(&self, hyperedge: HyperedgeId) -> usize {
         self.hyperedge_offsets[hyperedge.0 + 1] - self.hyperedge_offsets[hyperedge.0]
     }
 }
 
-impl IncidentHyperedgeCount for TinyHypergraph {
-    fn incident_hyperedge_count(&self, vertex: VertexId) -> usize {
+impl ElementIncidenceCount for TinyHypergraph {
+    fn element_incidence_count(&self, vertex: VertexId) -> usize {
         self.vertex_incidence_index[vertex.0].len()
     }
 }

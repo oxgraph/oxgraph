@@ -44,8 +44,8 @@ fn build_regular_csr(node_count: u32, degree: u32) -> (Vec<u32>, Vec<u32>) {
 fn traverse_targets(graph: &CsrNativeGraph<'_, u32, u32>, node_count: u32) -> u64 {
     let mut checksum = 0u64;
     for node in 0..node_count {
-        for edge in graph.outgoing_edges(CsrNodeId(node)) {
-            checksum ^= u64::from(graph.target(edge).0);
+        for edge in graph.outgoing_edges(CsrNodeId::new(node)) {
+            checksum ^= u64::from(graph.target(edge).get());
         }
     }
     checksum

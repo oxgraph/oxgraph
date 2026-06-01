@@ -11,6 +11,14 @@ authors.workspace = true
 edition.workspace = true
 repository.workspace = true
 
+[features]
+# `alloc` gates the build-time primitives that allocate (`build_offset_index`,
+# `slice_to_le`). The index/word vocabulary, `LocalId`, `IdSlice`, and the
+# offset-integrity checks are available without it, so `oxgraph-snapshot` can
+# depend on this crate with `default-features = false` and stay no-alloc.
+default = ["alloc"]
+alloc = []
+
 [dependencies]
 zerocopy = { workspace = true }
 

@@ -11,7 +11,7 @@
 use alloc::{vec, vec::Vec};
 
 use crate::{
-    BuildIndex, IdOutOfBounds, OffsetIntegrityIssue, OffsetOverflow, build_offset_index,
+    IdOutOfBounds, LayoutIndex, OffsetIntegrityIssue, OffsetOverflow, build_offset_index,
     check_offset_section, check_offsets_monotonic, check_value_range, id_to_slot, index_from_usize,
     slot_or_max,
 };
@@ -147,15 +147,15 @@ fn build_offset_index_empty() {
     }
 }
 
-/// `BuildIndex` round-trip on `u16`: any `usize` that fits in `u16` round-trips
+/// `LayoutIndex` round-trip on `u16`: any `usize` that fits in `u16` round-trips
 /// back to itself through `from_usize` ∘ `to_usize`.
 #[kani::proof]
 fn build_index_roundtrip_u16() {
     let value: usize = kani::any();
-    let Some(index) = <u16 as BuildIndex>::from_usize(value) else {
+    let Some(index) = <u16 as LayoutIndex>::from_usize(value) else {
         return;
     };
-    match <u16 as BuildIndex>::to_usize(index) {
+    match <u16 as LayoutIndex>::to_usize(index) {
         Some(back) => assert_eq!(back, value),
         None => kani::cover!(false, "u16 always fits in usize"),
     }
@@ -255,7 +255,28 @@ fn check_offset_section_predicate_u32_n3() {
             assert!(slice[index - 1] <= slice[index]);
         }
         assert_eq!(slice[slice.len() - 1] as usize, value_len);
+        // Every interior offset is within the values array. CSR/BCSR borrowed
+        // views slice `values[offsets[i]..offsets[i+1]]`, which requires every
+        // offset to be `<= value_len`; pin that bound directly rather than
+        // leaving it as an emergent consequence of monotonic + final-equals.
+        for &offset in slice {
+            assert!(offset as usize <= value_len);
+        }
     }
+}
+
+/// `check_offset_section` reports [`OffsetIntegrityIssue::CountOverflow`] (and
+/// never panics) when `expected_count + 1` overflows `usize`, regardless of the
+/// offsets or backing length.
+#[kani::proof]
+fn check_offset_section_count_overflow() {
+    let offsets: [u32; 1] = kani::any();
+    let value_len: usize = kani::any();
+    let result = check_offset_section(&offsets, usize::MAX, value_len);
+    assert!(matches!(
+        result,
+        Err(OffsetIntegrityIssue::CountOverflow { count }) if count == usize::MAX
+    ));
 }
 
 /// `OffsetIntegrityIssue::FirstNonZero` is the rejection reason for offsets

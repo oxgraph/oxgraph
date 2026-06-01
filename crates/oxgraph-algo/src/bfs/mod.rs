@@ -20,6 +20,7 @@
 //! constructed through a variant-specific entry point. The internal storage
 //! policy is shared across variants but is not part of the public API.
 
+mod bounded;
 mod core;
 mod epoch;
 mod error;
@@ -32,6 +33,10 @@ mod indexed;
 #[cfg(feature = "alloc")]
 mod workspace;
 
+pub use bounded::{
+    BfsBounds, BfsVisitor, breadth_first_search_bounded, breadth_first_search_bounded_both,
+    reverse_breadth_first_search_bounded,
+};
 pub use epoch::{
     BfsEpochScratch, BreadthFirstSearchEpochScratch, ReverseBreadthFirstSearchEpochScratch,
     breadth_first_search_with_epoch_scratch, reverse_breadth_first_search_with_epoch_scratch,

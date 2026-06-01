@@ -1314,6 +1314,7 @@ dependencies = [
  "oxgraph-graph",
  "oxgraph-hyper",
  "oxgraph-hyper-bcsr",
+ "oxgraph-layout-util",
  "oxgraph-postgres",
  "oxgraph-property",
  "oxgraph-snapshot",
@@ -1344,7 +1345,7 @@ version = "0.1.0"
 dependencies = [
  "oxgraph-csr",
  "oxgraph-graph",
- "oxgraph-postgres",
+ "oxgraph-layout-util",
  "oxgraph-snapshot",
  "oxgraph-topology",
  "proptest",
@@ -1383,7 +1384,6 @@ dependencies = [
  "proptest",
  "serde",
  "serde_json",
- "zerocopy",
 ]
 
 [[package]]
@@ -1472,6 +1472,7 @@ name = "oxgraph-snapshot"
 version = "0.1.0"
 dependencies = [
  "criterion 0.8.2",
+ "oxgraph-layout-util",
  "proptest",
  "zerocopy",
 ]

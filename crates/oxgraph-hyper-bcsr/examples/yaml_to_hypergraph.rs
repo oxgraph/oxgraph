@@ -328,13 +328,13 @@ impl ServicesModel {
         // order in `to_snapshot`, deps end up alphabetical here.
         let hyperedge_count = u32::try_from(view.hyperedge_count()).unwrap_or(u32::MAX);
         for hyperedge in 0..hyperedge_count {
-            let id = BcsrHyperedgeId(hyperedge);
+            let id = BcsrHyperedgeId::new(hyperedge);
             let targets: Vec<String> = view
                 .target_participants(id)
-                .map(|v| names.value(v.0 as usize).to_owned())
+                .map(|v| names.value(v.get() as usize).to_owned())
                 .collect();
             for source in view.source_participants(id) {
-                let source_name = names.value(source.0 as usize).to_owned();
+                let source_name = names.value(source.get() as usize).to_owned();
                 merge_deps(services.entry(source_name).or_default(), &targets);
             }
         }
@@ -421,7 +421,7 @@ impl ServicesModel {
 
         let mut ordered: Vec<&str> = vec![""; id_by_name.len()];
         for (name, id) in &id_by_name {
-            let slot = id.0 as usize;
+            let slot = id.get() as usize;
             if slot >= ordered.len() {
                 return Err(DemoError::NameLayerLengthMismatch {
                     vertex_count: id_by_name.len(),

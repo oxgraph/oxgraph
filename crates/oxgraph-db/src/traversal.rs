@@ -1,10 +1,12 @@
 //! Graph projection traversal primitives.
 
-use std::collections::{BTreeSet, VecDeque};
+use core::ops::ControlFlow;
 
-use oxgraph_graph::{
-    CanonicalElementIdentity, ElementPredecessors, ElementSuccessors, LocalElementIdentity,
+use oxgraph_algo::{
+    BfsBounds, BfsEpochScratch, breadth_first_search_bounded, breadth_first_search_bounded_both,
+    reverse_breadth_first_search_bounded,
 };
+use oxgraph_graph::{CanonicalElementIdentity, ElementIndex, LocalElementIdentity};
 
 use crate::{
     DbError, ElementId,
@@ -108,7 +110,16 @@ impl TraversalResult {
     }
 }
 
-/// Traverses a materialized graph projection.
+/// Traverses a materialized graph projection over the substrate bounded BFS.
+///
+/// Seeds, depth bound, row limit, and seed inclusion map onto
+/// [`BfsBounds`]; the visitor records each discovered element as one
+/// [`TraversalRow`] in first-discovery order. Outgoing traversal uses
+/// [`breadth_first_search_bounded`], incoming uses
+/// [`reverse_breadth_first_search_bounded`], and both uses
+/// [`breadth_first_search_bounded_both`]. The projection already exposes the
+/// `ContainsElement + ElementIndex + ElementSuccessors + ElementPredecessors`
+/// capabilities these entry points require.
 pub(crate) fn traverse_graph_projection(
     graph: &GraphProjection,
     seeds: &[ElementId],
@@ -118,122 +129,61 @@ pub(crate) fn traverse_graph_projection(
         return Ok(TraversalResult::new(Vec::new()));
     }
 
-    let mut traversal = TraversalState::new(graph, options.limit);
-    for seed in seeds {
-        let local = graph
-            .local_element_id(*seed)
-            .ok_or(DbError::UnknownElement { id: *seed })?;
-        traversal.push_seed(local, *seed, options.include_start);
-        if traversal.at_limit() {
-            return Ok(traversal.finish());
-        }
-    }
+    let local_seeds = seeds
+        .iter()
+        .map(|seed| {
+            graph
+                .local_element_id(*seed)
+                .ok_or(DbError::UnknownElement { id: *seed })
+        })
+        .collect::<Result<Vec<ProjectionElementId>, DbError>>()?;
 
-    while let Some((element, depth)) = traversal.pop_frontier() {
-        if depth >= options.max_depth {
-            continue;
-        }
-        let next_depth = depth + 1;
-        let reached_limit = match options.direction {
-            TraversalDirection::Outgoing => traversal.visit_outgoing(element, next_depth),
-            TraversalDirection::Incoming => traversal.visit_incoming(element, next_depth),
-            TraversalDirection::Both => {
-                traversal.visit_outgoing(element, next_depth)
-                    || traversal.visit_incoming(element, next_depth)
-            }
-        };
-        if reached_limit {
-            return Ok(traversal.finish());
-        }
-    }
-    Ok(traversal.finish())
-}
+    let bounds = BfsBounds {
+        max_depth: Some(u32::try_from(options.max_depth).unwrap_or(u32::MAX)),
+        result_limit: options.limit,
+        include_seeds: options.include_start,
+    };
 
-/// Mutable state for one traversal.
-struct TraversalState<'graph> {
-    /// Graph being traversed.
-    graph: &'graph GraphProjection,
-    /// Maximum emitted rows.
-    limit: usize,
-    /// Projection-local elements already discovered.
-    visited: BTreeSet<ProjectionElementId>,
-    /// FIFO BFS frontier.
-    queue: VecDeque<(ProjectionElementId, usize)>,
-    /// Materialized result rows.
-    rows: Vec<TraversalRow>,
-}
+    let bound = graph.element_bound();
+    let mut marks = vec![0_u32; bound];
+    let mut queue = vec![ProjectionElementId::new(0); bound];
+    let mut scratch = BfsEpochScratch::for_graph(graph, &mut marks, &mut queue);
 
-impl<'graph> TraversalState<'graph> {
-    /// Creates empty traversal state.
-    const fn new(graph: &'graph GraphProjection, limit: usize) -> Self {
-        Self {
-            graph,
-            limit,
-            visited: BTreeSet::new(),
-            queue: VecDeque::new(),
-            rows: Vec::new(),
-        }
-    }
-
-    /// Adds one seed to the BFS roots.
-    fn push_seed(&mut self, local: ProjectionElementId, seed: ElementId, include_start: bool) {
-        if !self.visited.insert(local) {
-            return;
-        }
-        self.queue.push_back((local, 0));
-        if include_start {
-            self.rows.push(TraversalRow {
-                element: seed,
-                depth: 0,
+    let mut rows = Vec::new();
+    {
+        let mut visitor = |element: ProjectionElementId, depth: u32| {
+            rows.push(TraversalRow {
+                element: graph.canonical_element_id(element),
+                depth: usize::try_from(depth).unwrap_or(usize::MAX),
             });
+            ControlFlow::Continue(())
+        };
+
+        match options.direction {
+            TraversalDirection::Outgoing => breadth_first_search_bounded(
+                graph,
+                &local_seeds,
+                bounds,
+                &mut scratch,
+                &mut visitor,
+            ),
+            TraversalDirection::Incoming => reverse_breadth_first_search_bounded(
+                graph,
+                &local_seeds,
+                bounds,
+                &mut scratch,
+                &mut visitor,
+            ),
+            TraversalDirection::Both => breadth_first_search_bounded_both(
+                graph,
+                &local_seeds,
+                bounds,
+                &mut scratch,
+                &mut visitor,
+            ),
         }
+        .map_err(DbError::traversal)?;
     }
 
-    /// Pops one frontier item.
-    fn pop_frontier(&mut self) -> Option<(ProjectionElementId, usize)> {
-        self.queue.pop_front()
-    }
-
-    /// Returns whether the emitted row limit has been reached.
-    const fn at_limit(&self) -> bool {
-        self.rows.len() == self.limit
-    }
-
-    /// Visits outgoing neighbors from one frontier element.
-    fn visit_outgoing(&mut self, element: ProjectionElementId, depth: usize) -> bool {
-        for neighbor in self.graph.element_successors(element) {
-            if self.push_discovered(neighbor, depth) {
-                return true;
-            }
-        }
-        false
-    }
-
-    /// Visits incoming neighbors from one frontier element.
-    fn visit_incoming(&mut self, element: ProjectionElementId, depth: usize) -> bool {
-        for neighbor in self.graph.element_predecessors(element) {
-            if self.push_discovered(neighbor, depth) {
-                return true;
-            }
-        }
-        false
-    }
-
-    /// Adds one newly discovered neighbor.
-    fn push_discovered(&mut self, neighbor: ProjectionElementId, depth: usize) -> bool {
-        if !self.visited.insert(neighbor) {
-            return false;
-        }
-        self.queue.push_back((neighbor, depth));
-        self.rows.push(TraversalRow {
-            element: self.graph.canonical_element_id(neighbor),
-            depth,
-        });
-        self.at_limit()
-    }
-
-    /// Finishes traversal into a result.
-    fn finish(self) -> TraversalResult {
-        TraversalResult::new(self.rows)
-    }
+    Ok(TraversalResult::new(rows))
 }

@@ -120,6 +120,21 @@ where
     pub const fn queue_capacity(&self) -> usize {
         self.queue.len()
     }
+
+    /// Advances to the next epoch and borrows the mark/queue slices for the
+    /// level-synchronous bounded driver in [`crate::bfs::bounded`].
+    ///
+    /// Returns the freshly advanced epoch alongside disjoint mutable borrows of
+    /// the mark and queue storage, so the bounded BFS reuses this scratch with
+    /// the same epoch-overflow discipline as the per-element iterators.
+    ///
+    /// # Performance
+    ///
+    /// `O(1)` except on epoch overflow, which clears `O(marks.len())` marks.
+    pub(in crate::bfs) fn bounded_parts(&mut self) -> (&mut [u32], &mut [ElementId<G>], u32) {
+        let epoch = self.epoch.advance(self.marks);
+        (&mut *self.marks, &mut *self.queue, epoch)
+    }
 }
 
 /// Forward BFS iterator using caller-provided epoch-marked scratch.

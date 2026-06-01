@@ -64,10 +64,11 @@ impl PreparedQuery {
         if trimmed.is_empty() {
             return Err(DbError::EmptyQuery);
         }
-        let plan = match language {
-            QueryLanguage::Oxql => prepare_oxql(trimmed, state)?,
-            QueryLanguage::Cypher => prepare_cypher(trimmed, state)?,
+        let logical = match language {
+            QueryLanguage::Oxql => parse_oxql(trimmed)?,
+            QueryLanguage::Cypher => parse_cypher(trimmed)?,
         };
+        let plan = bind_and_lower(logical, state)?;
         Ok(Self {
             language,
             text: trimmed.to_owned(),
@@ -241,15 +242,6 @@ enum QueryPlan {
         /// Traversal options.
         options: TraversalOptions,
     },
-    /// Cypher property-graph node scan.
-    CypherNodeScan,
-    /// Cypher property-graph node label scan.
-    CypherNodeLabelScan {
-        /// Label name.
-        label: String,
-        /// Label ID.
-        label_id: crate::LabelId,
-    },
     /// Cypher directed edge triple scan.
     CypherDirectedTriples {
         /// Graph projection ID.
@@ -283,10 +275,6 @@ impl QueryPlan {
                 "oxql graph projection {projection} walk from {element} depth {} direction {:?} limit {}",
                 options.max_depth, options.direction, options.limit,
             ),
-            Self::CypherNodeScan => "cypher node scan over property-graph projection".to_owned(),
-            Self::CypherNodeLabelScan { label, .. } => {
-                format!("cypher node label scan label={label}")
-            }
             Self::CypherDirectedTriples { projection } => {
                 format!("cypher directed triple scan projection={projection}")
             }
@@ -297,11 +285,10 @@ impl QueryPlan {
     /// Executes this physical plan.
     fn execute(&self, state: &DatabaseState) -> Result<QueryResult, DbError> {
         match self {
-            Self::ElementScan | Self::CypherNodeScan => Ok(scan_elements(state)),
+            Self::ElementScan => Ok(scan_elements(state)),
             Self::RelationScan => Ok(scan_relations(state)),
             Self::IncidenceScan => Ok(scan_incidences(state)),
-            Self::ElementLabelScan { label_id, .. }
-            | Self::CypherNodeLabelScan { label_id, .. } => {
+            Self::ElementLabelScan { label_id, .. } => {
                 Ok(scan_elements_with_label(state, *label_id))
             }
             Self::ElementPropertyEqual { key_id, value, .. } => {
@@ -323,37 +310,96 @@ impl QueryPlan {
     }
 }
 
-/// Prepares native `OxQL`.
-fn prepare_oxql(query: &str, state: &DatabaseState) -> Result<QueryPlan, DbError> {
+/// Resolved logical operation emitted by parsing, before catalog binding.
+///
+/// The parsers ([`parse_oxql`], [`parse_cypher`]) are purely token/string
+/// driven and never touch the catalog; they produce one of these ops carrying
+/// raw names and literals. [`bind_and_lower`] then resolves names to catalog
+/// IDs, validates value families/types, and produces the physical
+/// [`QueryPlan`]. Cypher node and label scans lower onto the shared element ops
+/// rather than duplicating them.
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum LogicalOp {
+    /// Scan all elements.
+    ElementScan,
+    /// Scan all relations.
+    RelationScan,
+    /// Scan all incidences.
+    IncidenceScan,
+    /// Scan catalog metadata.
+    CatalogScan,
+    /// Scan elements carrying a named label.
+    ElementLabelScan {
+        /// Unresolved label name.
+        label: String,
+    },
+    /// Scan relations of a named relation type.
+    RelationTypeScan {
+        /// Unresolved relation type name.
+        relation_type: String,
+    },
+    /// Scan elements whose named property equals a literal token.
+    ElementPropertyEqual {
+        /// Unresolved property key name.
+        key: String,
+        /// Unparsed property value token.
+        value: String,
+    },
+    /// Walk a named graph projection from a raw element-ID token.
+    GraphWalk {
+        /// Unresolved projection name.
+        projection: String,
+        /// Unparsed element-ID token.
+        element: String,
+        /// Parsed traversal options.
+        options: TraversalOptions,
+    },
+    /// Scan the first graph projection as directed source/relation/target triples.
+    CypherDirectedTriples,
+}
+
+/// Parses native `OxQL` into a logical operation without catalog access.
+fn parse_oxql(query: &str) -> Result<LogicalOp, DbError> {
     let tokens = query.split_whitespace().collect::<Vec<_>>();
     let upper = tokens
         .iter()
         .map(|token| token.to_ascii_uppercase())
         .collect::<Vec<_>>();
     match upper.as_slice() {
-        [command] if command == "CATALOG" => Ok(QueryPlan::CatalogScan),
-        [verb, family] if verb == "MATCH" && family == "ELEMENTS" => Ok(QueryPlan::ElementScan),
-        [verb, family] if verb == "MATCH" && family == "RELATIONS" => Ok(QueryPlan::RelationScan),
-        [verb, family] if verb == "MATCH" && family == "INCIDENCES" => Ok(QueryPlan::IncidenceScan),
+        [command] if command == "CATALOG" => Ok(LogicalOp::CatalogScan),
+        [verb, family] if verb == "MATCH" && family == "ELEMENTS" => Ok(LogicalOp::ElementScan),
+        [verb, family] if verb == "MATCH" && family == "RELATIONS" => Ok(LogicalOp::RelationScan),
+        [verb, family] if verb == "MATCH" && family == "INCIDENCES" => Ok(LogicalOp::IncidenceScan),
         [verb, family, has, object, _name]
             if verb == "MATCH" && family == "ELEMENTS" && has == "HAS" && object == "LABEL" =>
         {
-            prepare_element_label(tokens[4], state)
+            Ok(LogicalOp::ElementLabelScan {
+                label: tokens[4].to_owned(),
+            })
         }
         [verb, family, r#type, _name]
             if verb == "MATCH" && family == "RELATIONS" && r#type == "TYPE" =>
         {
-            prepare_relation_type(tokens[3], state)
+            Ok(LogicalOp::RelationTypeScan {
+                relation_type: tokens[3].to_owned(),
+            })
         }
         [verb, family, r#where, _key, equals, _value]
             if verb == "MATCH" && family == "ELEMENTS" && r#where == "WHERE" && equals == "=" =>
         {
-            prepare_element_property(tokens[3], tokens[5], state)
+            Ok(LogicalOp::ElementPropertyEqual {
+                key: tokens[3].to_owned(),
+                value: tokens[5].to_owned(),
+            })
         }
         [graph, _projection, neighbors, _element]
             if graph == "GRAPH" && neighbors == "NEIGHBORS" =>
         {
-            prepare_graph_walk(tokens[1], tokens[3], TraversalOptions::default(), state)
+            Ok(LogicalOp::GraphWalk {
+                projection: tokens[1].to_owned(),
+                element: tokens[3].to_owned(),
+                options: TraversalOptions::default(),
+            })
         }
         [
             graph,
@@ -365,87 +411,33 @@ fn prepare_oxql(query: &str, state: &DatabaseState) -> Result<QueryPlan, DbError
             _max_depth,
             ..,
         ] if graph == "GRAPH" && walk == "WALK" && from == "FROM" && depth == "DEPTH" => {
-            prepare_graph_walk_query(&tokens, &upper, state)
+            parse_graph_walk(&tokens, &upper)
         }
         _tokens => Err(DbError::unsupported("unsupported OxQL profile query")),
     }
 }
 
-/// Prepares the pinned Cypher language profile.
-fn prepare_cypher(query: &str, state: &DatabaseState) -> Result<QueryPlan, DbError> {
+/// Parses the pinned Cypher language profile into a logical operation.
+fn parse_cypher(query: &str) -> Result<LogicalOp, DbError> {
     if query == "MATCH (n) RETURN n" {
-        return Ok(QueryPlan::CypherNodeScan);
+        return Ok(LogicalOp::ElementScan);
     }
     if query == "MATCH (n)-[r]->(m) RETURN n,r,m" {
-        return Ok(QueryPlan::CypherDirectedTriples {
-            projection: first_graph_projection(state)?,
-        });
+        return Ok(LogicalOp::CypherDirectedTriples);
     }
     if let Some(label) = query
         .strip_prefix("MATCH (n:")
         .and_then(|rest| rest.strip_suffix(") RETURN n"))
     {
-        let label_id = state
-            .catalog()
-            .label_id(label)
-            .ok_or_else(|| DbError::unsupported(format!("unknown Cypher label {label}")))?;
-        return Ok(QueryPlan::CypherNodeLabelScan {
+        return Ok(LogicalOp::ElementLabelScan {
             label: label.to_owned(),
-            label_id,
         });
     }
     Err(DbError::unsupported("unsupported Cypher profile query"))
 }
 
-/// Prepares an `OxQL` element label scan.
-fn prepare_element_label(label: &str, state: &DatabaseState) -> Result<QueryPlan, DbError> {
-    let label_id = state
-        .catalog()
-        .label_id(label)
-        .ok_or_else(|| DbError::unsupported(format!("unknown label {label}")))?;
-    Ok(QueryPlan::ElementLabelScan {
-        label: label.to_owned(),
-        label_id,
-    })
-}
-
-/// Prepares an `OxQL` relation type scan.
-fn prepare_relation_type(relation_type: &str, state: &DatabaseState) -> Result<QueryPlan, DbError> {
-    let relation_type_id = state
-        .catalog()
-        .relation_type_id(relation_type)
-        .ok_or_else(|| DbError::unsupported(format!("unknown relation type {relation_type}")))?;
-    Ok(QueryPlan::RelationTypeScan {
-        relation_type: relation_type.to_owned(),
-        relation_type_id,
-    })
-}
-
-/// Prepares an `OxQL` property equality scan.
-fn prepare_element_property(
-    key: &str,
-    value: &str,
-    state: &DatabaseState,
-) -> Result<QueryPlan, DbError> {
-    let key_id = state
-        .catalog()
-        .property_key_id(key)
-        .ok_or_else(|| DbError::unsupported(format!("unknown property key {key}")))?;
-    let value = parse_value_token(value).map_err(DbError::unsupported)?;
-    state.validate_lookup_value_for_family(key_id, PropertyFamily::Element, &value)?;
-    Ok(QueryPlan::ElementPropertyEqual {
-        key: key.to_owned(),
-        key_id,
-        value,
-    })
-}
-
-/// Prepares an `OxQL` graph walk query.
-fn prepare_graph_walk_query(
-    tokens: &[&str],
-    upper: &[String],
-    state: &DatabaseState,
-) -> Result<QueryPlan, DbError> {
+/// Parses the optional `DIRECTION`/`LIMIT` clauses of an `OxQL` graph walk.
+fn parse_graph_walk(tokens: &[&str], upper: &[String]) -> Result<LogicalOp, DbError> {
     let max_depth = tokens[6]
         .parse::<usize>()
         .map_err(|_error| DbError::unsupported("walk depth must be an integer"))?;
@@ -477,7 +469,11 @@ fn prepare_graph_walk_query(
         }
         index += 2;
     }
-    prepare_graph_walk(tokens[1], tokens[4], options, state)
+    Ok(LogicalOp::GraphWalk {
+        projection: tokens[1].to_owned(),
+        element: tokens[4].to_owned(),
+        options,
+    })
 }
 
 /// Parses one `OxQL` graph walk direction.
@@ -492,8 +488,58 @@ fn parse_walk_direction(direction: &str) -> Result<TraversalDirection, DbError> 
     }
 }
 
-/// Prepares an `OxQL` graph traversal.
-fn prepare_graph_walk(
+/// Binds a logical operation against the catalog and lowers it to a plan.
+///
+/// This is the single seam where names resolve to catalog IDs and where
+/// property literals are parsed and family/type-validated. Parsing above never
+/// touches the catalog; execution below never resolves names.
+fn bind_and_lower(op: LogicalOp, state: &DatabaseState) -> Result<QueryPlan, DbError> {
+    match op {
+        LogicalOp::ElementScan => Ok(QueryPlan::ElementScan),
+        LogicalOp::RelationScan => Ok(QueryPlan::RelationScan),
+        LogicalOp::IncidenceScan => Ok(QueryPlan::IncidenceScan),
+        LogicalOp::CatalogScan => Ok(QueryPlan::CatalogScan),
+        LogicalOp::ElementLabelScan { label } => {
+            let label_id = state
+                .catalog()
+                .label_id(&label)
+                .ok_or_else(|| DbError::unsupported(format!("unknown label {label}")))?;
+            Ok(QueryPlan::ElementLabelScan { label, label_id })
+        }
+        LogicalOp::RelationTypeScan { relation_type } => {
+            let relation_type_id = state
+                .catalog()
+                .relation_type_id(&relation_type)
+                .ok_or_else(|| {
+                    DbError::unsupported(format!("unknown relation type {relation_type}"))
+                })?;
+            Ok(QueryPlan::RelationTypeScan {
+                relation_type,
+                relation_type_id,
+            })
+        }
+        LogicalOp::ElementPropertyEqual { key, value } => {
+            let key_id = state
+                .catalog()
+                .property_key_id(&key)
+                .ok_or_else(|| DbError::unsupported(format!("unknown property key {key}")))?;
+            let value = parse_value_token(&value).map_err(DbError::unsupported)?;
+            state.validate_lookup_value_for_family(key_id, PropertyFamily::Element, &value)?;
+            Ok(QueryPlan::ElementPropertyEqual { key, key_id, value })
+        }
+        LogicalOp::GraphWalk {
+            projection,
+            element,
+            options,
+        } => lower_graph_walk(&projection, &element, options, state),
+        LogicalOp::CypherDirectedTriples => Ok(QueryPlan::CypherDirectedTriples {
+            projection: first_graph_projection(state)?,
+        }),
+    }
+}
+
+/// Resolves and validates an `OxQL` graph traversal into a physical walk.
+fn lower_graph_walk(
     projection: &str,
     element: &str,
     options: TraversalOptions,

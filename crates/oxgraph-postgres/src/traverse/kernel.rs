@@ -1,126 +1,27 @@
-//! Single depth-limited BFS kernel for collect and count modes.
+//! Bounded BFS kernel driving the substrate algo over overlay topology views.
+//!
+//! The engine no longer hand-rolls epoch BFS. Each query resolves a
+//! [`TraverseProfile`](super::profile::TraverseProfile), builds the matching
+//! overlay topology view ([`OverlayOutView`] / [`OverlayInView`]), and calls
+//! [`breadth_first_search_bounded`] / [`reverse_breadth_first_search_bounded`]
+//! with a visitor that collects or counts discoveries.
 
 use alloc::vec::Vec;
+use core::ops::ControlFlow;
 
-use oxgraph_csr::CsrNodeId;
-use oxgraph_graph::{EdgeTargetGraph, OutgoingGraph};
-
-use super::{
-    profile::{TraverseMode, TraverseProfile},
-    scratch::TraverseScratch,
-    session::TraverseSession,
+use oxgraph_algo::{
+    BfsBounds, BfsEpochScratch, breadth_first_search_bounded, reverse_breadth_first_search_bounded,
 };
-use crate::{engine::Engine, overlay::OverlayState, topology::ForwardCsr};
 
-/// Mutable per-query discovery state threaded through neighbor expansion.
-struct DiscoverCtx<'a, 'b> {
-    /// Query parameters.
-    session: &'a TraverseSession,
-    /// Overlay tombstones and inserts.
-    overlay: &'a OverlayState,
-    /// Engine scratch buffers.
-    scratch: &'a mut TraverseScratch,
-    /// Active traversal epoch.
-    epoch: u32,
-    /// Whether node tombstones must be checked.
-    check_nodes: bool,
-    /// Whether discovered nodes may be enqueued on the next wave.
-    enqueue_next: bool,
-    /// Running visited count.
-    visited_count: &'b mut usize,
-    /// Collect output length (collect mode only).
-    output_len: &'b mut usize,
-}
+use super::{profile::TraverseMode, session::TraverseSession};
+use crate::{
+    engine::Engine,
+    error::QueryError,
+    topology::{OverlayInView, OverlayOutView, OverlayViewFlags},
+    traverse::TraversalDirection,
+};
 
-/// Runs the profile-dispatched BFS kernel for the open session.
-///
-/// # Performance
-///
-/// `O(n + m + overlay_touch)` bounded by session limits; scratch reuse is `O(1)` per query
-/// except epoch overflow (`O(n)` mark clear).
-pub(super) fn run_bfs_multi(engine: &mut Engine, session: &TraverseSession) -> KernelOutcome {
-    if session.seeds.is_empty() {
-        return KernelOutcome::empty(session.mode);
-    }
-
-    let (hot, unique, overlay, scratch) = engine.traverse_workspace_mut();
-    let unique = &*unique;
-    let check_nodes = session.check_nodes;
-
-    let epoch = scratch.bump_epoch();
-    scratch.frontier_mut().clear();
-    scratch.clear_next();
-    scratch.output_mut().clear();
-
-    let mut visited_count = 0_usize;
-    let mut output_len = 0_usize;
-
-    for seed in &session.seeds {
-        if visited_count >= session.result_limit {
-            break;
-        }
-        if scratch.try_mark_visited(*seed, epoch) {
-            visited_count += 1;
-            if session.mode == TraverseMode::Collect {
-                scratch.output_mut().push(*seed);
-                output_len = scratch.output_mut().len();
-            }
-            if visited_count < session.result_limit {
-                scratch.frontier_mut().push(*seed);
-            }
-        }
-    }
-
-    if visited_count == 0 {
-        return KernelOutcome::empty(session.mode);
-    }
-
-    if visited_count >= session.result_limit {
-        return finish(session.mode, visited_count, scratch);
-    }
-
-    let max_depth = session.max_depth;
-    let mut wave_depth = 0_u32;
-
-    while !scratch.frontier().is_empty() {
-        if max_depth.is_some_and(|bound| wave_depth >= bound) {
-            break;
-        }
-        let enqueue_next = max_depth.is_none_or(|bound| wave_depth.saturating_add(1) < bound);
-        let frontier_len = scratch.frontier().len();
-        for i in 0..frontier_len {
-            let current = scratch.frontier()[i];
-            if stop_at_limit(
-                session.mode,
-                visited_count,
-                output_len,
-                session.result_limit,
-            ) {
-                return finish(session.mode, visited_count, scratch);
-            }
-            let mut ctx = DiscoverCtx {
-                session,
-                overlay,
-                scratch,
-                epoch,
-                check_nodes,
-                enqueue_next,
-                visited_count: &mut visited_count,
-                output_len: &mut output_len,
-            };
-            if expand_node(&mut ctx, hot, unique, current) {
-                return finish(session.mode, visited_count, scratch);
-            }
-        }
-        wave_depth = wave_depth.saturating_add(1);
-        scratch.swap_frontiers();
-        scratch.clear_next();
-    }
-
-    finish(session.mode, visited_count, scratch)
-}
-
-/// Result of [`run_bfs`].
+/// Result of [`run_bfs_multi`].
 pub(super) enum KernelOutcome {
     /// Collected node ids in BFS first-discovery order.
     Nodes(Vec<u32>),
@@ -138,193 +39,105 @@ impl KernelOutcome {
     }
 }
 
-/// Finalizes kernel output from scratch and running count.
-fn finish(mode: TraverseMode, count: usize, scratch: &mut TraverseScratch) -> KernelOutcome {
-    match mode {
-        TraverseMode::Collect => {
-            let mut out = Vec::new();
-            out.extend_from_slice(scratch.output_mut());
-            KernelOutcome::Nodes(out)
+/// Discovery sink shared by collect and count modes.
+///
+/// Collect pushes each first-discovered node into `nodes`; count tracks the
+/// running cardinality. The substrate BFS enforces `result_limit` and depth
+/// bounds itself, so the visitor never returns early on its own.
+struct OutcomeVisitor {
+    /// Collected node ids (empty in count mode).
+    nodes: Vec<u32>,
+    /// Running discovery count (matches `nodes.len()` in collect mode).
+    count: usize,
+    /// Whether collected node ids are retained.
+    collect: bool,
+}
+
+impl OutcomeVisitor {
+    /// Records one discovered node and continues the traversal.
+    fn observe(&mut self, node: u32) -> ControlFlow<()> {
+        self.count += 1;
+        if self.collect {
+            self.nodes.push(node);
         }
-        TraverseMode::Count => KernelOutcome::Count(count),
+        ControlFlow::Continue(())
     }
-}
 
-/// Returns whether the query hit `result_limit`.
-const fn stop_at_limit(
-    mode: TraverseMode,
-    visited_count: usize,
-    output_len: usize,
-    limit: usize,
-) -> bool {
-    match mode {
-        TraverseMode::Count => visited_count >= limit,
-        TraverseMode::Collect => output_len >= limit,
-    }
-}
-
-/// Expands one frontier node for the active profile; returns `true` when `result_limit` is hit.
-fn expand_node(
-    ctx: &mut DiscoverCtx<'_, '_>,
-    hot: crate::topology::TopologyHot<'_>,
-    unique: &crate::topology::UniqueAdjacency,
-    current: u32,
-) -> bool {
-    match ctx.session.profile {
-        TraverseProfile::OutUnique { overlay } => expand_unique_out(ctx, unique, current, overlay),
-        TraverseProfile::OutParallel { overlay } => {
-            expand_parallel_out(ctx, hot.forward, current, overlay)
-        }
-        TraverseProfile::InUnique { overlay } => expand_unique_in(ctx, unique, current, overlay),
-        TraverseProfile::InParallel { overlay } => expand_parallel_in(ctx, hot, current, overlay),
-    }
-}
-
-/// Outgoing unique-row expansion plus optional overlay targets.
-fn expand_unique_out(
-    ctx: &mut DiscoverCtx<'_, '_>,
-    unique: &crate::topology::UniqueAdjacency,
-    current: u32,
-    merge_overlay: bool,
-) -> bool {
-    if visit_slice(ctx, unique.outgoing(current)) {
-        return true;
-    }
-    merge_overlay && visit_slice(ctx, ctx.overlay.overlay_targets(current))
-}
-
-/// Outgoing parallel CSR expansion plus optional overlay targets.
-fn expand_parallel_out(
-    ctx: &mut DiscoverCtx<'_, '_>,
-    forward: ForwardCsr<'_>,
-    current: u32,
-    merge_overlay: bool,
-) -> bool {
-    if visit_out_parallel(ctx, forward, current) {
-        return true;
-    }
-    merge_overlay && visit_slice(ctx, ctx.overlay.overlay_targets(current))
-}
-
-/// Incoming unique-row expansion plus optional overlay sources.
-fn expand_unique_in(
-    ctx: &mut DiscoverCtx<'_, '_>,
-    unique: &crate::topology::UniqueAdjacency,
-    current: u32,
-    merge_overlay: bool,
-) -> bool {
-    if visit_slice(ctx, unique.incoming(current)) {
-        return true;
-    }
-    merge_overlay && visit_slice(ctx, ctx.overlay.overlay_sources(current))
-}
-
-/// Incoming parallel CSC expansion plus optional overlay sources.
-fn expand_parallel_in(
-    ctx: &mut DiscoverCtx<'_, '_>,
-    hot: crate::topology::TopologyHot<'_>,
-    current: u32,
-    merge_overlay: bool,
-) -> bool {
-    if visit_in_parallel(ctx, hot, current) {
-        return true;
-    }
-    merge_overlay && visit_slice(ctx, ctx.overlay.overlay_sources(current))
-}
-
-/// Visits a neighbor slice; returns `true` when `result_limit` is reached.
-fn visit_slice(ctx: &mut DiscoverCtx<'_, '_>, neighbors: &[u32]) -> bool {
-    for &neighbor in neighbors {
-        if discover_neighbor(ctx, neighbor) {
-            return true;
+    /// Finalizes the visitor into the kernel outcome for `mode`.
+    fn finish(self, mode: TraverseMode) -> KernelOutcome {
+        match mode {
+            TraverseMode::Collect => KernelOutcome::Nodes(self.nodes),
+            TraverseMode::Count => KernelOutcome::Count(self.count),
         }
     }
-    false
 }
 
-/// Outgoing parallel CSR walk with optional edge-tombstone filtering.
-fn visit_out_parallel(
-    ctx: &mut DiscoverCtx<'_, '_>,
-    forward: ForwardCsr<'_>,
-    current: u32,
-) -> bool {
-    let overlay = ctx.overlay;
-    if overlay.has_edge_tombstones() {
-        let visit_edge = |target, edge_id| {
-            if !overlay.edge_visible(edge_id) {
-                return false;
-            }
-            discover_neighbor(ctx, target)
-        };
-        return forward.for_each_out_edge(current, visit_edge);
-    }
-    forward.for_each_out_target(current, |target| discover_neighbor(ctx, target))
-}
-
-/// Inbound parallel profile: filters predecessors by visible forward edge id.
+/// Runs the bounded BFS for the open session through the substrate algo.
+///
+/// # Errors
+///
+/// Returns [`QueryError::InternalInvariant`] only if the substrate BFS rejects
+/// engine-owned scratch or seeds, which the session and scratch sizing
+/// guarantee cannot happen for a validated engine.
 ///
 /// # Performance
 ///
-/// `perf: unspecified` on this path — worst case `O(k × degree)` per predecessor when edge
-/// tombstones are active (documented slow path).
-fn visit_in_parallel(
-    ctx: &mut DiscoverCtx<'_, '_>,
-    hot: crate::topology::TopologyHot<'_>,
-    current: u32,
-) -> bool {
-    let inbound = hot.inbound;
-    let forward = hot.forward;
-    let overlay = ctx.overlay;
-    let visit_pred = |pred: u32| {
-        if !has_visible_forward_edge(forward, overlay, pred, current) {
-            return false;
-        }
-        discover_neighbor(ctx, pred)
+/// `O(n + e)` bounded by session limits over the visited subgraph; per-query
+/// scratch reuse plus a single `O(n)` mark clear when the epoch is rebranded.
+pub(super) fn run_bfs_multi(
+    engine: &mut Engine,
+    session: &TraverseSession,
+) -> Result<KernelOutcome, crate::error::PostgresGraphError> {
+    if session.seeds.is_empty() {
+        return Ok(KernelOutcome::empty(session.mode));
+    }
+
+    let bounds = BfsBounds {
+        max_depth: session.max_depth,
+        result_limit: session.result_limit,
+        include_seeds: true,
     };
-    inbound.for_each_in_source(current, visit_pred)
-}
+    let flags = OverlayViewFlags {
+        use_unique: session.profile.use_unique,
+        merge_overlay: session.profile.merge_overlay,
+        check_nodes: session.check_nodes,
+    };
+    let node_count = session.node_count as usize;
+    let mut visitor = OutcomeVisitor {
+        nodes: Vec::new(),
+        count: 0,
+        collect: session.mode == TraverseMode::Collect,
+    };
 
-/// Marks and records one newly discovered neighbor; returns `true` at `result_limit`.
-fn discover_neighbor(ctx: &mut DiscoverCtx<'_, '_>, neighbor: u32) -> bool {
-    if neighbor >= ctx.session.node_count {
-        return false;
-    }
-    if ctx.check_nodes && !ctx.overlay.node_visible(neighbor) {
-        return false;
-    }
-    if !ctx.scratch.try_mark_visited(neighbor, ctx.epoch) {
-        return false;
-    }
-    *ctx.visited_count += 1;
-    if ctx.session.mode == TraverseMode::Collect {
-        let output = ctx.scratch.output_mut();
-        output.push(neighbor);
-        *ctx.output_len = output.len();
-    }
-    if ctx.enqueue_next {
-        ctx.scratch.next_mut().push(neighbor);
-    }
-    stop_at_limit(
-        ctx.session.mode,
-        *ctx.visited_count,
-        *ctx.output_len,
-        ctx.session.result_limit,
-    )
-}
+    let (topology, unique, overlay, scratch) = engine.traverse_workspace_mut(flags.use_unique);
+    let (marks, queue) = scratch.bounded_slices();
 
-/// Returns whether a forward edge `source -> target` is visible under edge tombstones.
-fn has_visible_forward_edge(
-    forward: ForwardCsr<'_>,
-    overlay: &OverlayState,
-    source: u32,
-    target: u32,
-) -> bool {
-    let graph = &forward.0;
-    let target_id = CsrNodeId(target);
-    for edge in OutgoingGraph::outgoing_edges(graph, CsrNodeId(source)) {
-        if EdgeTargetGraph::target(graph, edge) == target_id && overlay.edge_visible(edge.0) {
-            return true;
+    let result = match session.profile.direction {
+        TraversalDirection::Out => {
+            let view = OverlayOutView::new(topology, overlay, unique, flags, node_count);
+            let mut bfs_scratch = BfsEpochScratch::new(marks, queue);
+            breadth_first_search_bounded(
+                &view,
+                &session.seeds,
+                bounds,
+                &mut bfs_scratch,
+                &mut |node, _depth| visitor.observe(node),
+            )
         }
+        TraversalDirection::In => {
+            let view = OverlayInView::new(topology, overlay, unique, flags, node_count);
+            let mut bfs_scratch = BfsEpochScratch::new(marks, queue);
+            reverse_breadth_first_search_bounded(
+                &view,
+                &session.seeds,
+                bounds,
+                &mut bfs_scratch,
+                &mut |node, _depth| visitor.observe(node),
+            )
+        }
+    };
+    if result.is_err() {
+        return Err(QueryError::InternalInvariant("bounded BFS rejected engine scratch").into());
     }
-    false
+    Ok(visitor.finish(session.mode))
 }

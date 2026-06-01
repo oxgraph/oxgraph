@@ -1,12 +1,18 @@
 //! Unit tests for generic property descriptor and selected weight validation.
 
+use std::{boxed::Box, error::Error, sync::Arc, vec};
+
 use arrow_array::{
     BooleanArray, Float32Array, Float64Array, Int32Array, StringArray, UInt32Array, UInt64Array,
     types::{Float32Type, Int32Type},
 };
+use arrow_schema::{DataType, Field};
 use oxgraph_snapshot::{Snapshot, SnapshotBuilder};
+use oxgraph_topology::{RelationIndex, RelationWeight, TopologyBase};
+use zerocopy::byteorder::{LE, U16, U32, U64};
 
 use super::*;
+use crate::snapshot::PropertySnapshotHeader;
 
 /// Test topology with dense relation IDs.
 #[derive(Clone, Copy)]

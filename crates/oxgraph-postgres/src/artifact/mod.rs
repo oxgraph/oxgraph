@@ -4,7 +4,9 @@ mod metadata;
 mod sections;
 
 pub use metadata::{
-    PostgresMetadata, PostgresSectionError, SNAPSHOT_KIND_PG_CATALOG, SNAPSHOT_KIND_PG_METADATA,
+    PostgresMetadata, PostgresSectionError, SNAPSHOT_KIND_PG_CATALOG,
+    SNAPSHOT_KIND_PG_INBOUND_OFFSETS_U32, SNAPSHOT_KIND_PG_INBOUND_TARGETS_U32,
+    SNAPSHOT_KIND_PG_METADATA,
 };
 use oxgraph_snapshot::Snapshot;
 pub use sections::{attach_metadata, attach_postgres_sections};

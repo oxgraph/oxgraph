@@ -153,7 +153,7 @@ fn build_sparse_reachable_csr(node_count: u32) -> CsrParts {
 
 /// Runs allocating indexed BFS and returns the number of reached nodes.
 fn indexed_alloc_bfs_count(graph: &CsrNativeGraph<'_, u32, u32>) -> usize {
-    match breadth_first_search(graph, CsrNodeId(0)) {
+    match breadth_first_search(graph, CsrNodeId::new(0)) {
         Ok(traversal) => traversal.count(),
         Err(error) => panic!("benchmark BFS start was invalid: {error:?}"),
     }
@@ -165,7 +165,7 @@ fn scratch_bfs_count(
     visited: &mut [u8],
     queue: &mut [CsrNodeId<u32>],
 ) -> usize {
-    match breadth_first_search_with_scratch(graph, CsrNodeId(0), visited, queue) {
+    match breadth_first_search_with_scratch(graph, CsrNodeId::new(0), visited, queue) {
         Ok(traversal) => traversal.count(),
         Err(error) => panic!("benchmark BFS scratch was invalid: {error:?}"),
     }
@@ -176,7 +176,7 @@ fn epoch_bfs_count<'graph>(
     graph: &CsrNativeGraph<'graph, u32, u32>,
     scratch: &mut BfsEpochScratch<'_, CsrNativeGraph<'graph, u32, u32>>,
 ) -> usize {
-    match breadth_first_search_with_epoch_scratch(graph, CsrNodeId(0), scratch) {
+    match breadth_first_search_with_epoch_scratch(graph, CsrNodeId::new(0), scratch) {
         Ok(traversal) => traversal.count(),
         Err(error) => panic!("benchmark epoch scratch was invalid: {error:?}"),
     }
@@ -187,7 +187,7 @@ fn workspace_bfs_count<'graph>(
     graph: &CsrNativeGraph<'graph, u32, u32>,
     workspace: &mut BfsWorkspace<CsrNativeGraph<'graph, u32, u32>>,
 ) -> usize {
-    match breadth_first_search_with_workspace(graph, CsrNodeId(0), workspace) {
+    match breadth_first_search_with_workspace(graph, CsrNodeId::new(0), workspace) {
         Ok(traversal) => traversal.count(),
         Err(error) => panic!("benchmark workspace was invalid: {error:?}"),
     }
@@ -288,9 +288,9 @@ fn bench_csr_fixture(
         };
         let bound = graph.element_bound();
         let mut visited = vec![0; bound];
-        let mut scratch_queue = vec![CsrNodeId(0); bound];
+        let mut scratch_queue = vec![CsrNodeId::new(0); bound];
         let mut marks = vec![0; bound];
-        let mut epoch_queue = vec![CsrNodeId(0); bound];
+        let mut epoch_queue = vec![CsrNodeId::new(0); bound];
         let mut epoch_scratch = BfsEpochScratch::for_graph(&graph, &mut marks, &mut epoch_queue);
         let mut workspace = BfsWorkspace::<CsrNativeGraph<'_, u32, u32>>::with_element_bound(bound);
 
@@ -497,7 +497,7 @@ fn bcsr_forward_scratch_count(
     visited: &mut [u8],
     queue: &mut [BcsrVertexId<u32>],
 ) -> usize {
-    match breadth_first_search_with_scratch(view, BcsrVertexId(0), visited, queue) {
+    match breadth_first_search_with_scratch(view, BcsrVertexId::new(0), visited, queue) {
         Ok(traversal) => traversal.count(),
         Err(error) => panic!("BCSR forward scratch BFS invalid: {error:?}"),
     }
@@ -518,7 +518,7 @@ fn bcsr_reverse_scratch_count(
 
 /// Counts reachable vertices via forward BCSR allocating indexed BFS.
 fn bcsr_forward_allocating_count(view: &BcsrSnapshotHypergraph<'_, u32, u32, u32>) -> usize {
-    match breadth_first_search(view, BcsrVertexId(0)) {
+    match breadth_first_search(view, BcsrVertexId::new(0)) {
         Ok(traversal) => traversal.count(),
         Err(error) => panic!("BCSR forward allocating BFS invalid: {error:?}"),
     }
@@ -540,7 +540,7 @@ fn bcsr_forward_workspace_count<'view>(
     view: &BcsrSnapshotHypergraph<'view, u32, u32, u32>,
     workspace: &mut BfsWorkspace<BcsrSnapshotHypergraph<'view, u32, u32, u32>>,
 ) -> usize {
-    match breadth_first_search_with_workspace(view, BcsrVertexId(0), workspace) {
+    match breadth_first_search_with_workspace(view, BcsrVertexId::new(0), workspace) {
         Ok(traversal) => traversal.count(),
         Err(error) => panic!("BCSR forward workspace BFS invalid: {error:?}"),
     }
@@ -584,7 +584,7 @@ fn register_bcsr_lanes<'view>(
 ) {
     // Reverse BFS starts from the last vertex so chain / sparse fixtures
     // exercise the full reverse reachable set.
-    let reverse_start = BcsrVertexId(node_count.saturating_sub(1));
+    let reverse_start = BcsrVertexId::new(node_count.saturating_sub(1));
 
     group.bench_with_input(
         BenchmarkId::new("forward_scratch_clear_reused", node_count),
@@ -670,9 +670,9 @@ fn bench_bcsr_fixture(
         };
         let bound = view.element_bound();
         let mut forward_visited = vec![0u8; bound];
-        let mut forward_queue = vec![BcsrVertexId(0); bound];
+        let mut forward_queue = vec![BcsrVertexId::new(0); bound];
         let mut reverse_visited = vec![0u8; bound];
-        let mut reverse_queue = vec![BcsrVertexId(0); bound];
+        let mut reverse_queue = vec![BcsrVertexId::new(0); bound];
         let mut forward_workspace =
             BfsWorkspace::<BcsrSnapshotHypergraph<'_, u32, u32, u32>>::with_element_bound(bound);
         let mut reverse_workspace =

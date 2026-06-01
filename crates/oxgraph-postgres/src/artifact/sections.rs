@@ -1,10 +1,12 @@
 //! Postgres-owned snapshot section assembly (inbound CSC + metadata).
 
-use oxgraph_csc::{SNAPSHOT_KIND_PG_INBOUND_OFFSETS_U32, SNAPSHOT_KIND_PG_INBOUND_TARGETS_U32};
 use oxgraph_csr::CsrSnapshotIndex;
 use oxgraph_snapshot::{Snapshot, SnapshotBuilder};
 
-use super::metadata::{PostgresMetadata, write_postgres_metadata_section};
+use super::metadata::{
+    PostgresMetadata, SNAPSHOT_KIND_PG_INBOUND_OFFSETS_U32, SNAPSHOT_KIND_PG_INBOUND_TARGETS_U32,
+    write_postgres_metadata_section,
+};
 use crate::error::{BuildError, PostgresGraphError};
 
 /// Appends or replaces Postgres-owned sections on CSR topology bytes.

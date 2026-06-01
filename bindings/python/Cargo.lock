@@ -22,7 +22,7 @@ checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 
 [[package]]
 name = "oxgraph-algo"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "oxgraph-graph",
  "oxgraph-hyper",
@@ -30,68 +30,44 @@ dependencies = [
 ]
 
 [[package]]
-name = "oxgraph-build-util"
-version = "0.0.0"
-
-[[package]]
 name = "oxgraph-csr"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
- "oxgraph-csr-util",
  "oxgraph-graph",
+ "oxgraph-layout-util",
  "oxgraph-snapshot",
- "zerocopy",
-]
-
-[[package]]
-name = "oxgraph-csr-util"
-version = "0.0.0"
-dependencies = [
  "zerocopy",
 ]
 
 [[package]]
 name = "oxgraph-graph"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "oxgraph-topology",
 ]
 
 [[package]]
-name = "oxgraph-graph-build"
-version = "0.0.0"
-dependencies = [
- "oxgraph-build-util",
- "oxgraph-csr",
- "oxgraph-graph",
- "oxgraph-snapshot",
-]
-
-[[package]]
 name = "oxgraph-hyper"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "oxgraph-topology",
 ]
 
 [[package]]
 name = "oxgraph-hyper-bcsr"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
- "oxgraph-csr-util",
  "oxgraph-hyper",
+ "oxgraph-layout-util",
  "oxgraph-snapshot",
  "zerocopy",
 ]
 
 [[package]]
-name = "oxgraph-hyper-build"
-version = "0.0.0"
+name = "oxgraph-layout-util"
+version = "0.1.0"
 dependencies = [
- "oxgraph-build-util",
- "oxgraph-hyper",
- "oxgraph-hyper-bcsr",
- "oxgraph-snapshot",
+ "zerocopy",
 ]
 
 [[package]]
@@ -101,10 +77,8 @@ dependencies = [
  "oxgraph-algo",
  "oxgraph-csr",
  "oxgraph-graph",
- "oxgraph-graph-build",
  "oxgraph-hyper",
  "oxgraph-hyper-bcsr",
- "oxgraph-hyper-build",
  "oxgraph-snapshot",
  "oxgraph-topology",
  "pyo3",
@@ -113,14 +87,15 @@ dependencies = [
 
 [[package]]
 name = "oxgraph-snapshot"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
+ "oxgraph-layout-util",
  "zerocopy",
 ]
 
 [[package]]
 name = "oxgraph-topology"
-version = "0.0.0"
+version = "0.1.0"
 
 [[package]]
 name = "portable-atomic"

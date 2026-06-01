@@ -1,9 +1,12 @@
 //! Borrowed compressed-sparse-column (inbound) graph views.
 //!
-//! Incoming adjacency is stored in Postgres-owned OXGTOPO sections (`0x0201` /
-//! `0x0202`). The physical layout matches CSR on transposed edges; this crate
-//! is separate from [`oxgraph_csr`] so forward and inbound views cannot be
-//! mixed at the type level.
+//! Incoming adjacency is stored as CSR-on-transposed-edges in OXGTOPO sections.
+//! This crate is separate from [`oxgraph_csr`] so forward and inbound views
+//! cannot be mixed at the type level. The view is storage-agnostic: it does not
+//! own any section-kind constants and reads whatever offsets/targets kinds the
+//! caller supplies through [`CscSnapshotGraph::from_snapshot_with_kinds`]. The
+//! storage layer that persists the inbound index (for example the Postgres
+//! engine) owns the section-kind constants and the section version.
 //!
 //! # Performance
 //!
@@ -14,27 +17,28 @@ use core::fmt;
 
 use oxgraph_csr::{CsrEdgeId, CsrGraph, CsrNodeId, CsrSnapshotError, CsrSnapshotIndex};
 use oxgraph_graph::{ElementPredecessors, OutgoingNeighborsGraph, TopologyCounts};
+use oxgraph_layout_util::{NodeAxis, SnapshotWidth};
 use oxgraph_snapshot::Snapshot;
 use oxgraph_topology::TopologyBase;
 
-/// Postgres-owned inbound offsets section (`0x0201`).
-pub const SNAPSHOT_KIND_PG_INBOUND_OFFSETS_U32: u32 = 0x0201;
-
-/// Postgres-owned inbound targets section (`0x0202`).
-pub const SNAPSHOT_KIND_PG_INBOUND_TARGETS_U32: u32 = 0x0202;
-
 /// Dense node id in an inbound CSC view.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct CscNodeId(pub u32);
+///
+/// Alias of the shared [`LocalId`](oxgraph_layout_util::LocalId) branded by the
+/// node axis, parameterized over the node index width `N`.
+///
+/// # Performance
+///
+/// Copying, comparing, ordering, hashing, and debug-formatting are `O(1)`.
+pub type CscNodeId<N = u32> = oxgraph_layout_util::LocalId<NodeAxis, N>;
 
 /// Errors while opening inbound CSC sections from a snapshot.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum CscSnapshotError {
+pub enum CscSnapshotError<N = u32, E = u32> {
     /// Underlying CSR layout validation failed.
-    Layout(CsrSnapshotError<u32, u32>),
+    Layout(CsrSnapshotError<N, E>),
 }
 
-impl fmt::Display for CscSnapshotError {
+impl<N: fmt::Display, E: fmt::Display> fmt::Display for CscSnapshotError<N, E> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Layout(error) => write!(f, "inbound layout error: {error}"),
@@ -42,58 +46,75 @@ impl fmt::Display for CscSnapshotError {
     }
 }
 
-impl core::error::Error for CscSnapshotError {}
+impl<N, E> core::error::Error for CscSnapshotError<N, E>
+where
+    N: fmt::Debug + fmt::Display,
+    E: fmt::Debug + fmt::Display,
+{
+}
 
-impl From<CsrSnapshotError<u32, u32>> for CscSnapshotError {
-    fn from(error: CsrSnapshotError<u32, u32>) -> Self {
+impl<N, E> From<CsrSnapshotError<N, E>> for CscSnapshotError<N, E> {
+    fn from(error: CsrSnapshotError<N, E>) -> Self {
         Self::Layout(error)
     }
 }
 
-/// Snapshot-backed inbound CSC view for `u32` node and edge indices.
+/// Snapshot-backed inbound CSC view for node width `N` and edge width `E`.
 ///
 /// # Performance
 ///
 /// `perf: unspecified`; this alias carries no runtime cost.
-pub type CscInnerGraph<'view> = CsrGraph<
+pub type CscInnerGraph<'view, N = u32, E = u32> = CsrGraph<
     'view,
-    u32,
-    u32,
-    <u32 as CsrSnapshotIndex>::LittleEndianWord,
-    <u32 as CsrSnapshotIndex>::LittleEndianWord,
+    N,
+    E,
+    <E as SnapshotWidth>::LittleEndianWord,
+    <N as SnapshotWidth>::LittleEndianWord,
 >;
 
 /// Borrowed inbound adjacency (transpose-CSR / CSC layout).
 ///
+/// `N` is the node index width and `E` is the edge index width; both default to
+/// `u32` for the common engine configuration.
+///
 /// # Performance
 ///
 /// Per-node predecessor enumeration is `O(k)` for `k` incoming edges.
-#[derive(Clone, Copy, Debug)]
-pub struct CscSnapshotGraph<'view>(CscInnerGraph<'view>);
+#[derive(Clone, Copy)]
+pub struct CscSnapshotGraph<'view, N = u32, E = u32>(CscInnerGraph<'view, N, E>)
+where
+    N: CsrSnapshotIndex,
+    E: CsrSnapshotIndex;
 
-impl<'view> CscSnapshotGraph<'view> {
-    /// Opens inbound sections from a validated [`Snapshot`].
-    ///
-    /// # Errors
-    ///
-    /// Returns [`CscSnapshotError`] when sections are missing or fail validation.
-    ///
-    /// # Performance
-    ///
-    /// This function is `O(s + n + m)`.
-    pub fn from_snapshot(snapshot: &Snapshot<'view>) -> Result<Self, CscSnapshotError> {
-        Self::from_snapshot_with_kinds(
-            snapshot,
-            SNAPSHOT_KIND_PG_INBOUND_OFFSETS_U32,
-            SNAPSHOT_KIND_PG_INBOUND_TARGETS_U32,
-        )
+impl<N, E> fmt::Debug for CscSnapshotGraph<'_, N, E>
+where
+    N: CsrSnapshotIndex,
+    E: CsrSnapshotIndex,
+{
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("CscSnapshotGraph")
+            .field("node_count", &self.node_count())
+            .field("relation_count", &self.relation_count())
+            .finish()
     }
+}
 
+impl<'view, N, E> CscSnapshotGraph<'view, N, E>
+where
+    N: CsrSnapshotIndex,
+    E: CsrSnapshotIndex,
+{
     /// Opens inbound sections using explicit snapshot section kinds.
     ///
+    /// Reuses [`CsrGraph::from_snapshot_with_kinds`] over the transposed-edge
+    /// layout, so callers select whichever band their storage layer reserves
+    /// for the inbound index. CSC owns no section-kind constants.
+    ///
     /// # Errors
     ///
-    /// Returns [`CscSnapshotError`] when sections are missing or fail validation.
+    /// Returns [`CscSnapshotError`] when sections are missing, have the wrong
+    /// version, or fail validation.
     ///
     /// # Performance
     ///
@@ -102,39 +123,20 @@ impl<'view> CscSnapshotGraph<'view> {
         snapshot: &Snapshot<'view>,
         offsets_kind: u32,
         targets_kind: u32,
-    ) -> Result<Self, CscSnapshotError> {
-        let offsets_section = snapshot
-            .section(offsets_kind)
-            .ok_or(CsrSnapshotError::MissingOffsets)?;
-        let targets_section = snapshot
-            .section(targets_kind)
-            .ok_or(CsrSnapshotError::MissingTargets)?;
-
-        let offsets: &'view [<u32 as CsrSnapshotIndex>::LittleEndianWord] = offsets_section
-            .try_as_slice()
-            .map_err(CsrSnapshotError::OffsetsView)?;
-        let targets: &'view [<u32 as CsrSnapshotIndex>::LittleEndianWord] = targets_section
-            .try_as_slice()
-            .map_err(CsrSnapshotError::TargetsView)?;
-
-        if offsets.is_empty() {
-            return Err(CsrSnapshotError::OffsetsEmpty.into());
-        }
-
-        let node_count_usize = offsets.len() - 1;
-        let node_count =
-            u32::try_from(node_count_usize).map_err(|_| CsrSnapshotError::NodeCountOverflow {
-                offsets_len: offsets.len(),
-            })?;
-
-        let inner = CscInnerGraph::validate(node_count, offsets, targets)
-            .map_err(|error| CscSnapshotError::Layout(CsrSnapshotError::Csr(error)))?;
+        version: u32,
+    ) -> Result<Self, CscSnapshotError<N, E>> {
+        let inner = CscInnerGraph::<'view, N, E>::from_snapshot_with_kinds(
+            snapshot,
+            offsets_kind,
+            targets_kind,
+            version,
+        )?;
         Ok(Self(inner))
     }
 
     /// Returns the inner CSR graph backing this inbound view.
     #[must_use]
-    pub const fn inner(&self) -> &CscInnerGraph<'view> {
+    pub const fn inner(&self) -> &CscInnerGraph<'view, N, E> {
         &self.0
     }
 
@@ -163,9 +165,13 @@ impl<'view> CscSnapshotGraph<'view> {
     /// # Performance
     ///
     /// This method is `O(1)` to create and `O(k)` to yield `k` predecessors.
-    #[must_use]
-    pub fn predecessors(&self, target: u32) -> impl ExactSizeIterator<Item = u32> + '_ {
-        self.0.outgoing_neighbors(CsrNodeId(target)).map(|id| id.0)
+    pub fn predecessors(
+        &self,
+        target: CscNodeId<N>,
+    ) -> impl ExactSizeIterator<Item = CscNodeId<N>> + '_ {
+        self.0
+            .outgoing_neighbors(CsrNodeId::new(target.get()))
+            .map(|id| CscNodeId::new(id.get()))
     }
 
     /// Walks predecessor node ids for `target` via the CSC source slice.
@@ -175,23 +181,37 @@ impl<'view> CscSnapshotGraph<'view> {
     /// # Performance
     ///
     /// This method is `O(k)` for `k` predecessors with no iterator adapters.
-    pub fn for_each_predecessor(&self, target: u32, mut visit: impl FnMut(u32) -> bool) -> bool {
+    pub fn for_each_predecessor(
+        &self,
+        target: CscNodeId<N>,
+        mut visit: impl FnMut(CscNodeId<N>) -> bool,
+    ) -> bool {
         self.0
-            .for_each_out_target(CsrNodeId(target), |id| visit(id.0))
+            .for_each_out_target(CsrNodeId::new(target.get()), |id| {
+                visit(CscNodeId::new(id.get()))
+            })
     }
 }
 
 /// Iterator over predecessor node ids in one inbound row.
-pub struct CscPredecessors<'view> {
+pub struct CscPredecessors<'view, N = u32, E = u32>
+where
+    N: CsrSnapshotIndex + 'view,
+    E: CsrSnapshotIndex + 'view,
+{
     /// Underlying CSR out-neighbor iterator for the transposed inbound row.
-    inner: <CscInnerGraph<'view> as OutgoingNeighborsGraph>::OutNeighbors<'view>,
+    inner: <CscInnerGraph<'view, N, E> as OutgoingNeighborsGraph>::OutNeighbors<'view>,
 }
 
-impl Iterator for CscPredecessors<'_> {
-    type Item = CscNodeId;
+impl<N, E> Iterator for CscPredecessors<'_, N, E>
+where
+    N: CsrSnapshotIndex,
+    E: CsrSnapshotIndex,
+{
+    type Item = CscNodeId<N>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.inner.next().map(|id| CscNodeId(id.0))
+        self.inner.next().map(|id| CscNodeId::new(id.get()))
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
@@ -199,14 +219,27 @@ impl Iterator for CscPredecessors<'_> {
     }
 }
 
-impl ExactSizeIterator for CscPredecessors<'_> {}
-
-impl TopologyBase for CscSnapshotGraph<'_> {
-    type ElementId = CscNodeId;
-    type RelationId = CsrEdgeId<u32>;
+impl<N, E> ExactSizeIterator for CscPredecessors<'_, N, E>
+where
+    N: CsrSnapshotIndex,
+    E: CsrSnapshotIndex,
+{
 }
 
-impl TopologyCounts for CscSnapshotGraph<'_> {
+impl<N, E> TopologyBase for CscSnapshotGraph<'_, N, E>
+where
+    N: CsrSnapshotIndex,
+    E: CsrSnapshotIndex,
+{
+    type ElementId = CscNodeId<N>;
+    type RelationId = CsrEdgeId<E>;
+}
+
+impl<N, E> TopologyCounts for CscSnapshotGraph<'_, N, E>
+where
+    N: CsrSnapshotIndex,
+    E: CsrSnapshotIndex,
+{
     fn element_count(&self) -> usize {
         self.0.element_count()
     }
@@ -216,15 +249,19 @@ impl TopologyCounts for CscSnapshotGraph<'_> {
     }
 }
 
-impl ElementPredecessors for CscSnapshotGraph<'_> {
+impl<N, E> ElementPredecessors for CscSnapshotGraph<'_, N, E>
+where
+    N: CsrSnapshotIndex,
+    E: CsrSnapshotIndex,
+{
     type Predecessors<'view>
-        = CscPredecessors<'view>
+        = CscPredecessors<'view, N, E>
     where
         Self: 'view;
 
-    fn element_predecessors(&self, element: CscNodeId) -> Self::Predecessors<'_> {
+    fn element_predecessors(&self, element: CscNodeId<N>) -> Self::Predecessors<'_> {
         CscPredecessors {
-            inner: self.0.outgoing_neighbors(CsrNodeId(element.0)),
+            inner: self.0.outgoing_neighbors(CsrNodeId::new(element.get())),
         }
     }
 }
