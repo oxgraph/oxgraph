@@ -12,9 +12,9 @@ edition.workspace = true
 repository.workspace = true
 
 [dependencies]
-oxgraph-graph = { version = "0.1.0", path = "../oxgraph-graph" }
-oxgraph-hyper = { version = "0.1.0", path = "../oxgraph-hyper" }
-oxgraph-topology = { version = "0.1.0", path = "../oxgraph-topology" }
+oxgraph-graph = { version = "0.2.0", path = "../oxgraph-graph" }
+oxgraph-hyper = { version = "0.2.0", path = "../oxgraph-hyper" }
+oxgraph-topology = { version = "0.2.0", path = "../oxgraph-topology" }
 
 [features]
 default = []
@@ -26,10 +26,10 @@ arrow-array = { workspace = true }
 arrow-schema = { workspace = true }
 criterion = { workspace = true }
 oxgraph-csr = { path = "../oxgraph-csr", features = ["build-property-arrow"] }
-oxgraph-hyper = { version = "0.1.0", path = "../oxgraph-hyper" }
+oxgraph-hyper = { version = "0.2.0", path = "../oxgraph-hyper" }
 oxgraph-hyper-bcsr = { path = "../oxgraph-hyper-bcsr", features = ["build-property-arrow"] }
-oxgraph-property = { version = "0.1.0", path = "../oxgraph-property" }
-oxgraph-snapshot = { version = "0.1.0", path = "../oxgraph-snapshot", features = ["alloc"] }
+oxgraph-property = { version = "0.2.0", path = "../oxgraph-property" }
+oxgraph-snapshot = { version = "0.2.0", path = "../oxgraph-snapshot", features = ["alloc"] }
 proptest = { workspace = true }
 zerocopy = { workspace = true }
 
