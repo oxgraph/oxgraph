@@ -37,6 +37,14 @@ proptest = { workspace = true }
 name = "open_recovery"
 harness = false
 
+[[bench]]
+name = "commit"
+harness = false
+
+[[bench]]
+name = "lookup"
+harness = false
+
 # This crate inherits the workspace lint table verbatim, including
 # `unsafe_code = "forbid"`. On unix (outside miri) the base backing is
 # memory-mapped read-only through the audited `oxgraph-mmap` shim crate, which

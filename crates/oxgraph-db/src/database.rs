@@ -60,6 +60,77 @@ pub enum IndexLookup<'value> {
     CompositeEqual(&'value [PropertyValue]),
 }
 
+/// Auto-checkpoint policy: decides when a dirty commit should fold the
+/// delta-log into a fresh base generation, bounding the log tail that recovery
+/// must replay.
+///
+/// The default is size-ratio: trigger when the delta-log grows past `factor`
+/// times the live base size (`factor` configurable). [`CheckpointPolicy::Manual`]
+/// disables auto-triggering entirely (checkpoint only via
+/// [`Database::checkpoint`]/[`Database::compact`]).
+///
+/// # Performance
+///
+/// Copying this value is `O(1)`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CheckpointPolicy {
+    /// Never auto-checkpoint; the caller drives [`Database::checkpoint`].
+    Manual,
+    /// Auto-checkpoint after a dirty commit once the delta-log exceeds `factor`
+    /// times the live base size (a small floor guards a tiny/empty base so the
+    /// gen-0 store does not checkpoint on its first commit).
+    SizeRatio {
+        /// Log-to-base size factor `K`; the log may grow to `K × base` bytes
+        /// before the next dirty commit folds it.
+        factor: u32,
+    },
+}
+
+impl CheckpointPolicy {
+    /// The default auto-checkpoint factor `K`: fold when the delta-log exceeds
+    /// four times the live base size.
+    pub const DEFAULT_FACTOR: u32 = 4;
+
+    /// The base-size floor (bytes) below which the size-ratio policy never fires,
+    /// so a freshly created (near-empty) base is not checkpointed on its first
+    /// commits before it carries meaningful data.
+    const MIN_BASE_BYTES: u64 = 4 * 1024;
+
+    /// Returns whether a delta-log of `log_bytes` over a base of `base_bytes`
+    /// should trigger an auto-checkpoint under this policy.
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(1)`.
+    #[must_use]
+    const fn should_checkpoint(self, log_bytes: u64, base_bytes: u64) -> bool {
+        match self {
+            Self::Manual => false,
+            Self::SizeRatio { factor } => {
+                let floor = if base_bytes < Self::MIN_BASE_BYTES {
+                    Self::MIN_BASE_BYTES
+                } else {
+                    base_bytes
+                };
+                log_bytes > floor.saturating_mul(factor as u64)
+            }
+        }
+    }
+}
+
+impl Default for CheckpointPolicy {
+    /// The default policy: size-ratio with [`CheckpointPolicy::DEFAULT_FACTOR`].
+    ///
+    /// # Performance
+    ///
+    /// This function is `O(1)`.
+    fn default() -> Self {
+        Self::SizeRatio {
+            factor: Self::DEFAULT_FACTOR,
+        }
+    }
+}
+
 /// Builds the base filename for generation `generation`.
 ///
 /// # Performance
@@ -96,6 +167,8 @@ pub struct Database {
     /// Last writer transaction id durably recorded (the last dirty commit's id).
     /// A rollback burns a session-local id above this but does not advance it.
     last_transaction_id: TransactionId,
+    /// Auto-checkpoint policy consulted after each dirty commit.
+    checkpoint_policy: CheckpointPolicy,
 }
 
 impl Database {
@@ -207,7 +280,38 @@ impl Database {
             current: snapshot,
             base_generation: generation,
             last_transaction_id: TransactionId::new(last_txn),
+            checkpoint_policy: CheckpointPolicy::default(),
         })
+    }
+
+    /// Returns the live base generation named by the superblock (the count of
+    /// folds this store has undergone; gen-0 is the freshly created store).
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(1)`.
+    #[must_use]
+    pub const fn live_generation(&self) -> CheckpointGeneration {
+        CheckpointGeneration::new(self.base_generation)
+    }
+
+    /// Returns the configured auto-checkpoint policy.
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(1)`.
+    #[must_use]
+    pub const fn checkpoint_policy(&self) -> CheckpointPolicy {
+        self.checkpoint_policy
+    }
+
+    /// Sets the auto-checkpoint policy consulted after each dirty commit.
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(1)`.
+    pub const fn set_checkpoint_policy(&mut self, policy: CheckpointPolicy) {
+        self.checkpoint_policy = policy;
     }
 
     /// Validates the current handle by re-reading the superblock and verifying
@@ -241,9 +345,9 @@ impl Database {
     /// Folds the current base+overlay into a new base generation, rotating the
     /// delta-log and republishing the superblock (a manual checkpoint).
     ///
-    /// This is the P5b checkpoint primitive, exposed here so the existing
-    /// `compact` API keeps its "rewrite the store compactly" contract. Auto-
-    /// triggering and free-space pre-checks are P5b.
+    /// This is the checkpoint primitive, exposed here so the existing `compact`
+    /// API keeps its "rewrite the store compactly" contract. Auto-triggering is
+    /// configured separately via [`Database::set_checkpoint_policy`].
     ///
     /// # Errors
     ///
@@ -261,6 +365,14 @@ impl Database {
     /// delta-`{g+1}`.log, republishes the superblock naming `g+1` (the
     /// linearization point), then unlinks the old base and log.
     ///
+    /// The order is crash-safe: the new base is fully durable BEFORE the
+    /// superblock names it (so a crash before the superblock leaves the OLD
+    /// superblock authoritative and the orphan new base is ignored), and the old
+    /// base/log are unlinked only AFTER the superblock names the new generation
+    /// (so a crash before the unlink leaves the NEW superblock authoritative and
+    /// the orphan old files are ignored). The
+    /// [`crate::wire::SuperblockRecord`] rename is the single linearization point.
+    ///
     /// # Errors
     ///
     /// Returns [`DbError`] when encoding, writing, or publishing fails.
@@ -269,6 +381,25 @@ impl Database {
     ///
     /// This method is `O(visible state bytes)`.
     pub fn checkpoint(&mut self) -> Result<(), DbError> {
+        self.checkpoint_inner(
+            #[cfg(test)]
+            CheckpointStop::Complete,
+        )
+    }
+
+    /// Crash-safe checkpoint body. Under `#[cfg(test)]` it accepts a
+    /// [`CheckpointStop`] that simulates a crash by returning early right after a
+    /// chosen fsync point, leaving the on-disk files exactly as a real crash
+    /// there would, so the crash-matrix test can reopen and assert recovery.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError`] when encoding, writing, or publishing fails.
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(visible state bytes)`.
+    fn checkpoint_inner(&mut self, #[cfg(test)] stop: CheckpointStop) -> Result<(), DbError> {
         let _lock = WriterLock::acquire(&self.root)?;
         let next_generation = self
             .base_generation
@@ -295,6 +426,13 @@ impl Database {
         )?;
         // (2) create empty delta-{g+1}.log (fsync + dir-fsync).
         create_empty_log(&self.root, next_generation)?;
+        // Crash point A: new base + new log durable, superblock NOT yet
+        // published. The OLD superblock still names `g`, so recovery uses the old
+        // generation; the new base/log are orphans.
+        #[cfg(test)]
+        if matches!(stop, CheckpointStop::BeforeSuperblock) {
+            return Ok(());
+        }
         // (3) publish the superblock naming g+1 — the linearization point.
         write_superblock(
             &self.root,
@@ -303,29 +441,68 @@ impl Database {
             commit_seq,
             self.last_transaction_id.get(),
         )?;
+        // Crash point B: superblock now names g+1, old base/log NOT yet unlinked.
+        // Recovery uses the new generation; the old base/log are orphans.
+        #[cfg(test)]
+        if matches!(stop, CheckpointStop::BeforeRotate) {
+            return Ok(());
+        }
         // Re-open over the new generation, then (4) unlink the old base + log.
         let reopened = Self::open(&self.root)?;
         let old_generation = self.base_generation;
+        let policy = self.checkpoint_policy;
         self.current = reopened.current;
         self.base_generation = reopened.base_generation;
         self.last_transaction_id = reopened.last_transaction_id;
+        // The reopen reset the policy to the default; restore the caller's.
+        self.checkpoint_policy = policy;
         let _ = std::fs::remove_file(self.root.join(base_file(old_generation)));
         let _ = std::fs::remove_file(self.root.join(delta_file(old_generation)));
         let _ = storage::sync_directory(&self.root);
         Ok(())
     }
 
-    /// Returns operational status for this handle.
+    /// Auto-checkpoints when the configured [`CheckpointPolicy`] says the
+    /// delta-log has grown too large relative to the base. Called after a dirty
+    /// commit publishes its frame. A failed fold is surfaced so the caller can
+    /// observe it; the committed data is already durable in the log regardless.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError`] when the triggered fold fails.
     ///
     /// # Performance
     ///
-    /// This method is `O(visible state)` for the merged counts.
+    /// This method is `O(1)` to decide; `O(visible state bytes)` when it folds.
+    fn maybe_auto_checkpoint(&mut self) -> Result<(), DbError> {
+        let log_bytes = file_len(&self.root.join(delta_file(self.base_generation)));
+        let base_bytes = file_len(&self.root.join(base_file(self.base_generation)));
+        if self
+            .checkpoint_policy
+            .should_checkpoint(log_bytes, base_bytes)
+        {
+            self.checkpoint()?;
+        }
+        Ok(())
+    }
+
+    /// Returns operational status for this handle, including the live generation
+    /// count and the on-disk base/delta-log sizes the auto-checkpoint policy
+    /// weighs.
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(visible state)` for the merged counts plus two `stat`
+    /// syscalls for the file sizes.
     #[must_use]
     pub fn status(&self) -> DatabaseStatus {
         let view = self.current.view();
         DatabaseStatus {
             visible_commit_seq: self.current.lsn(),
             last_transaction_id: self.last_transaction_id,
+            live_generation: CheckpointGeneration::new(self.base_generation),
+            base_byte_size: file_len(&self.root.join(base_file(self.base_generation))),
+            log_byte_size: file_len(&self.root.join(delta_file(self.base_generation))),
             element_count: view.element_count(),
             relation_count: view.relation_count(),
             incidence_count: view.incidence_count(),
@@ -404,6 +581,49 @@ impl Database {
     pub fn prepare(&self, language: QueryLanguage, query: &str) -> Result<PreparedQuery, DbError> {
         PreparedQuery::prepare(language, query, &self.current.view())
     }
+}
+
+/// Returns the on-disk byte length of `path`, or `0` when it is absent or cannot
+/// be stat'd (size is advisory — used for status reporting and the
+/// auto-checkpoint heuristic, never for correctness).
+///
+/// # Performance
+///
+/// This function is `O(1)`: one `stat` syscall.
+fn file_len(path: &Path) -> u64 {
+    std::fs::metadata(path).map_or(0, |meta| meta.len())
+}
+
+/// Test-only crash-injection point for [`Database::checkpoint_inner`]: stops the
+/// fold right after a chosen fsync so the crash-matrix test can reopen and assert
+/// the recovered state at each crash window.
+///
+/// The crash-matrix test that constructs the non-`Complete` variants is
+/// `#[cfg(not(miri))]` (it reopens a real store across simulated crashes, which
+/// miri's isolation cannot model), so under miri only `Complete` is constructed
+/// and the other variants are expectedly unused.
+///
+/// # Performance
+///
+/// `perf: unspecified`; a test-only control tag.
+#[cfg(test)]
+#[cfg_attr(
+    miri,
+    expect(
+        dead_code,
+        reason = "the crash-injection variants are constructed only by the #[cfg(not(miri))] crash-matrix test"
+    )
+)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CheckpointStop {
+    /// Run the whole checkpoint (the production path).
+    Complete,
+    /// Stop after the new base + new log are durable, before the superblock is
+    /// published (the old superblock stays authoritative).
+    BeforeSuperblock,
+    /// Stop after the superblock names the new generation, before the old
+    /// base/log are unlinked (the new superblock is authoritative).
+    BeforeRotate,
 }
 
 /// Reads the whole delta-log into memory, treating a missing file as empty.
@@ -531,6 +751,14 @@ pub struct DatabaseStatus {
     /// This value is durable after a dirty commit and session-local after
     /// rollback.
     pub last_transaction_id: TransactionId,
+    /// Live base generation named by the superblock (the count of folds this
+    /// store has undergone; gen-0 is the freshly created store).
+    pub live_generation: CheckpointGeneration,
+    /// On-disk byte size of the live base file.
+    pub base_byte_size: u64,
+    /// On-disk byte size of the live delta-log (the tail recovery replays and
+    /// the auto-checkpoint policy weighs against the base size).
+    pub log_byte_size: u64,
     /// Visible element count.
     pub element_count: usize,
     /// Visible relation count.
@@ -1064,14 +1292,10 @@ pub struct WriteTransaction<'db> {
     /// Writer transaction id (session-local until a dirty commit makes it
     /// durable).
     transaction_id: TransactionId,
-    /// Held single-writer advisory lock; its [`Drop`] releases the lock when this
-    /// transaction drops (after commit or rollback). The field is an RAII guard
-    /// read only via that drop, so the dead-code lint is silenced with a reason
-    /// rather than threading a contrived explicit read.
-    #[expect(
-        dead_code,
-        reason = "RAII guard: held only so its Drop releases the advisory writer lock when the transaction ends"
-    )]
+    /// Held single-writer advisory lock. Its [`Drop`] releases the lock when this
+    /// transaction ends (on `rollback`, or on any early-return error path); a
+    /// successful dirty [`Self::commit`] releases it explicitly with `drop` so a
+    /// triggered auto-checkpoint can re-acquire it.
     lock: WriterLock,
 }
 
@@ -1388,7 +1612,8 @@ impl WriteTransaction<'_> {
                 actual: value.value_type(),
             });
         }
-        self.delta.set_property(subject, key, value);
+        self.delta
+            .set_property(self.parent.base_records(), subject, key, value);
         Ok(())
     }
 
@@ -1410,7 +1635,8 @@ impl WriteTransaction<'_> {
         if self.merged().catalog().property_key(key).is_none() {
             return Err(DbError::UnknownPropertyKey { id: key });
         }
-        self.delta.remove_property(subject, key);
+        self.delta
+            .remove_property(self.parent.base_records(), subject, key);
         Ok(())
     }
 
@@ -1423,14 +1649,25 @@ impl WriteTransaction<'_> {
     /// interior torn record survives), THEN folds the delta into a fresh
     /// `Arc<Overlay>` and publishes a new `Arc<Snapshot>`.
     ///
+    /// After publishing, a dirty commit consults the configured
+    /// [`CheckpointPolicy`]: it releases the writer lock FIRST (so the fold can
+    /// re-acquire it), then folds when the delta-log has outgrown the base. The
+    /// committed frame is already durable, so an auto-fold failure does not lose
+    /// data; it is surfaced to the caller.
+    ///
     /// # Errors
     ///
-    /// Returns [`DbError`] when commit-sequence allocation, frame encoding, or
-    /// the durable append fails.
+    /// Returns [`DbError`] when commit-sequence allocation, frame encoding, the
+    /// durable append, or a triggered auto-checkpoint fold fails.
     ///
     /// # Performance
     ///
-    /// This method is `O(change)` for the dirty path.
+    /// This method is `O(change)` for the dirty path — flat as the base grows.
+    /// The publish step shares the parent snapshot's already-materialized
+    /// [`crate::overlay::BaseRecords`] and derived index by `Arc` (a commit never
+    /// folds, so the base is byte-identical within the generation), so it neither
+    /// re-decodes the base nor rebuilds the index. A triggered fold adds
+    /// `O(visible state bytes)` on top.
     pub fn commit(self) -> Result<CommitSeq, DbError> {
         if self.delta.is_empty() {
             // Non-dirty commit: no append, no publish, no durable id advance.
@@ -1458,14 +1695,26 @@ impl WriteTransaction<'_> {
         // never mutated — this is a brand-new frozen `Arc<Overlay>`, so a reader
         // pinning the parent is unaffected.
         let new_overlay = Arc::new(self.delta.freeze());
-        let snapshot = Snapshot::new(
+        // A commit never folds, so the new snapshot pins the SAME base generation
+        // as the parent — the base wire bytes are byte-identical, and so are the
+        // owned records and the derived index built from them. Share the parent's
+        // `Arc<BaseRecords>` (and its `BaseIndex`) instead of re-decoding the base
+        // and rebuilding the index, which keeps a single-element commit `O(change)`
+        // rather than `O(base)` regardless of how large the base has grown.
+        let snapshot = Snapshot::with_shared_base_records(
             self.parent.generation(),
             lsn,
             Arc::clone(self.parent.base()),
             new_overlay,
-        )?;
+            Arc::clone(self.parent.base_records()),
+        );
         self.database.current = Arc::new(snapshot);
         self.database.last_transaction_id = self.transaction_id;
+        // Release the writer lock before any auto-fold so the fold can re-acquire
+        // it (a partial move out of `self`, legal because `WriteTransaction` has
+        // no `Drop` impl; the remaining `&mut Database` borrow stays live).
+        drop(self.lock);
+        self.database.maybe_auto_checkpoint()?;
         Ok(lsn)
     }
 
@@ -1695,5 +1944,247 @@ impl WriteTransaction<'_> {
         } else {
             Err(DbError::UnknownPropertyKey { id })
         }
+    }
+}
+
+#[cfg(test)]
+#[cfg(not(miri))]
+mod tests {
+    use std::{
+        path::PathBuf,
+        sync::atomic::{AtomicU64, Ordering},
+    };
+
+    use super::*;
+
+    /// Per-process path counter for unique temporary store directories.
+    static NEXT_PATH: AtomicU64 = AtomicU64::new(0);
+
+    /// Returns a unique temporary store path and removes any prior contents.
+    fn temp_store(name: &str) -> PathBuf {
+        let id = NEXT_PATH.fetch_add(1, Ordering::Relaxed);
+        let path =
+            std::env::temp_dir().join(format!("oxgraph-db-cp-{name}-{}-{id}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&path);
+        path
+    }
+
+    /// The exact logical state the crash-matrix asserts recovery preserves: the
+    /// visible element ids, the rank-keyed property values, and the `Person`
+    /// label membership.
+    #[derive(Debug, Eq, PartialEq)]
+    struct LogicalState {
+        /// Visible element ids in ascending order.
+        elements: Vec<ElementId>,
+        /// Subjects whose `rank` equals each probed value, by value.
+        rank_eq_500: Vec<PropertySubject>,
+        /// Element ids carrying the `Person` label.
+        person_members: Vec<ElementId>,
+    }
+
+    /// Catalog/topology fixture ids returned by [`build_fixture`].
+    struct Fixture {
+        /// `rank` integer property key.
+        rank: PropertyKeyId,
+        /// `Person` label.
+        person: LabelId,
+    }
+
+    /// Builds a committed fixture: 8 elements, each ranked `index * 100`, the
+    /// even-indexed ones labelled `Person`. Returns the fixture ids.
+    fn build_fixture(database: &mut Database) -> Fixture {
+        let mut writer = database.begin_write().expect("begin write");
+        let rank = writer
+            .register_property_key("rank", PropertyFamily::Element, PropertyType::Integer)
+            .expect("rank key");
+        let person = writer.register_label("Person").expect("person label");
+        for index in 0..8u64 {
+            let element = writer.create_element().expect("element");
+            writer
+                .set_property(
+                    PropertySubject::Element(element),
+                    rank,
+                    PropertyValue::Integer(i64::try_from(index).expect("index") * 100),
+                )
+                .expect("set rank");
+            if index % 2 == 0 {
+                writer
+                    .add_element_label(element, person)
+                    .expect("add label");
+            }
+        }
+        writer.commit().expect("commit fixture");
+        Fixture { rank, person }
+    }
+
+    /// Reads the logical state through the index-backed read surface.
+    fn read_logical(database: &Database, fixture: &Fixture) -> LogicalState {
+        let read = database.begin_read();
+        let elements = read.element_ids();
+        let rank_eq_500 = read
+            .lookup_property_equal(fixture.rank, &PropertyValue::Integer(500))
+            .expect("rank lookup");
+        let person_members = read.snapshot.view().elements_with_label(fixture.person);
+        LogicalState {
+            elements,
+            rank_eq_500,
+            person_members,
+        }
+    }
+
+    /// Asserts ids are never reused across a fold BEHAVIORALLY: the next element
+    /// `database` mints must take the id one past the current maximum visible
+    /// element id, i.e. the recovered watermark survived the fold. A regression
+    /// that dropped the watermark on fold (so the recovered record set is
+    /// unchanged but the next-id counter reset) would reuse an existing id and
+    /// fail this assertion — which the unchanged-record-set checks alone miss.
+    ///
+    /// The probe element is rolled back, so it does not perturb the logical state
+    /// the surrounding test re-reads.
+    fn assert_no_id_reuse_across_fold(database: &mut Database) {
+        let max_existing = database
+            .begin_read()
+            .element_ids()
+            .into_iter()
+            .map(ElementId::get)
+            .max()
+            .unwrap_or(0);
+        let expected = ElementId::new(max_existing + 1);
+        let mut writer = database.begin_write().expect("watermark probe writer");
+        let minted = writer.create_element().expect("watermark probe element");
+        assert_eq!(
+            minted, expected,
+            "the next minted id must be one past the max existing id (watermark \
+             survived the fold; ids are never reused)",
+        );
+        // Roll the probe back so it leaves no trace in the logical state.
+        writer.rollback();
+    }
+
+    /// CHECKPOINT-CRASH-MATRIX: a crash after each fsync point in `checkpoint`
+    /// recovers EXACTLY the correct logical state. After a crash before the
+    /// superblock lands, the OLD generation stays authoritative (the orphan new
+    /// base is ignored); after a crash once the superblock names the new
+    /// generation, the NEW base is authoritative. The completed checkpoint
+    /// recovers the same logical state from the folded base. In every case the
+    /// index-backed lookups return the same answers as before the (attempted)
+    /// fold.
+    #[test]
+    fn checkpoint_crash_matrix_recovers_exact_state() {
+        for stop in [
+            CheckpointStop::BeforeSuperblock,
+            CheckpointStop::BeforeRotate,
+            CheckpointStop::Complete,
+        ] {
+            let path = temp_store(&format!("crash-{stop:?}"));
+            let mut database = Database::create(&path).expect("create");
+            let fixture = build_fixture(&mut database);
+            let before = read_logical(&database, &fixture);
+            let before_generation = database.base_generation;
+
+            // Simulate a crash at `stop`: the checkpoint returns right after the
+            // chosen fsync, leaving the intermediate files in place. We then drop
+            // the handle (as a crash would) and reopen from disk.
+            database
+                .checkpoint_inner(stop)
+                .expect("checkpoint stop returns ok");
+            drop(database);
+
+            let mut recovered = Database::open(&path).expect("reopen after crash");
+            let after = read_logical(&recovered, &fixture);
+            assert_eq!(
+                after, before,
+                "crash at {stop:?} must recover the exact logical state",
+            );
+
+            // The recovered watermark survives every crash window: the next minted
+            // id is one past the max recovered element id, so ids are never reused
+            // across the (attempted) fold — asserted behaviorally, not merely
+            // inferred from the unchanged record set.
+            assert_no_id_reuse_across_fold(&mut recovered);
+
+            // Generation expectation per crash window.
+            match stop {
+                CheckpointStop::BeforeSuperblock => assert_eq!(
+                    recovered.base_generation, before_generation,
+                    "old superblock stays authoritative before the new one lands",
+                ),
+                CheckpointStop::BeforeRotate | CheckpointStop::Complete => assert_eq!(
+                    recovered.base_generation,
+                    before_generation + 1,
+                    "the new superblock names the folded generation",
+                ),
+            }
+
+            // A second open is idempotent (orphan files from a partial crash do
+            // not derail a repeat recovery).
+            let reopened = Database::open(&path).expect("second reopen");
+            assert_eq!(read_logical(&reopened, &fixture), before);
+
+            drop(reopened);
+            let _ = std::fs::remove_dir_all(&path);
+        }
+    }
+
+    /// The auto-checkpoint policy folds the delta-log into a fresh base once the
+    /// log outgrows the base by the configured factor: under a tiny factor, a
+    /// run of dirty commits advances the live generation (the log was folded),
+    /// and the logical state is preserved across the fold. The manual policy
+    /// never auto-folds.
+    #[test]
+    fn auto_checkpoint_policy_folds_when_log_outgrows_base() {
+        // Manual policy: many commits, generation never advances on its own.
+        let manual_path = temp_store("auto-manual");
+        let mut manual = Database::create(&manual_path).expect("create manual");
+        manual.set_checkpoint_policy(CheckpointPolicy::Manual);
+        let _fixture = build_fixture(&mut manual);
+        for _ in 0..200 {
+            let mut writer = manual.begin_write().expect("writer");
+            writer.create_element().expect("element");
+            writer.commit().expect("commit");
+        }
+        assert_eq!(
+            manual.live_generation(),
+            CheckpointGeneration::new(0),
+            "manual policy must never auto-fold",
+        );
+        drop(manual);
+        let _ = std::fs::remove_dir_all(&manual_path);
+
+        // Size-ratio policy with the smallest factor: the log soon outgrows the
+        // tiny base floor, so a run of commits triggers at least one fold.
+        let auto_path = temp_store("auto-ratio");
+        let mut auto = Database::create(&auto_path).expect("create auto");
+        auto.set_checkpoint_policy(CheckpointPolicy::SizeRatio { factor: 1 });
+        let fixture = build_fixture(&mut auto);
+        let before = read_logical(&auto, &fixture);
+        for _ in 0..400 {
+            let mut writer = auto.begin_write().expect("writer");
+            writer.create_element().expect("element");
+            writer.commit().expect("commit");
+        }
+        assert!(
+            auto.live_generation() > CheckpointGeneration::new(0),
+            "size-ratio policy must auto-fold once the log outgrows the base",
+        );
+        // The pre-existing logical state survives every fold; the policy is also
+        // surfaced in status and preserved across the fold.
+        let after = read_logical(&auto, &fixture);
+        assert_eq!(after.rank_eq_500, before.rank_eq_500);
+        assert_eq!(after.person_members, before.person_members);
+        // Ids are never reused across the auto-fold: the next minted id is one
+        // past the max existing id (the watermark folded into the new base).
+        assert_no_id_reuse_across_fold(&mut auto);
+        assert_eq!(
+            auto.checkpoint_policy(),
+            CheckpointPolicy::SizeRatio { factor: 1 },
+            "the auto-fold reopen must preserve the configured policy",
+        );
+        // Status surfaces the live generation and the (now small) log size.
+        let status = auto.status();
+        assert_eq!(status.live_generation, auto.live_generation());
+        assert!(status.base_byte_size > 0, "live base has bytes");
+        drop(auto);
+        let _ = std::fs::remove_dir_all(&auto_path);
     }
 }

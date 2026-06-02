@@ -17,6 +17,7 @@ pub(crate) mod database;
 pub(crate) mod error;
 pub(crate) mod freeze;
 pub(crate) mod id;
+pub(crate) mod index;
 pub(crate) mod lock;
 pub(crate) mod overlay;
 pub(crate) mod projection;
@@ -35,8 +36,8 @@ pub use crate::{
         PropertyKeyDefinition, RelationTypeDefinition, RoleDefinition,
     },
     database::{
-        CatalogSummary, Database, DatabaseStatus, IndexLookup, ReadPin, ReadTransaction,
-        WriteTransaction,
+        CatalogSummary, CheckpointPolicy, Database, DatabaseStatus, IndexLookup, ReadPin,
+        ReadTransaction, WriteTransaction,
     },
     error::DbError,
     id::{

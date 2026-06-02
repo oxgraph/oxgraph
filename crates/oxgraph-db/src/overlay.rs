@@ -57,6 +57,7 @@ use crate::{
     backing::{Base, BaseView},
     catalog::{IndexDefinition, ProjectionDefinition, PropertyFamily, PropertyKeyDefinition},
     id::CommitSeq,
+    index::{BaseIndex, OverlayIndex},
     state::{ElementRecord, IncidenceRecord, NextIds, PropertySubject, RelationRecord},
     value::{PropertyType, PropertyValue},
     wire::{self, MUTATION_OP_PAYLOAD_WORDS, MutationOp},
@@ -283,6 +284,10 @@ pub(crate) struct WriteOverlay {
     next: NextIds,
     /// Ordered, replayable log of every mutation this writer applied.
     log: MutationLog,
+    /// Incremental membership/equality index deltas this writer maintains, kept
+    /// in lockstep with the record/property deltas so a merged lookup is
+    /// index-backed (`O(log n + matches)`), not a full scan.
+    index: OverlayIndex,
 }
 
 impl WriteOverlay {
@@ -308,6 +313,7 @@ impl WriteOverlay {
                 ops: Vec::new(),
                 blob: Vec::new(),
             },
+            index: OverlayIndex::new(),
         }
     }
 
@@ -336,6 +342,9 @@ impl WriteOverlay {
                 ops: Vec::new(),
                 blob: Vec::new(),
             },
+            // Seed the index deltas from the parent's frozen overlay so the
+            // writer's lookups stay index-backed over the full committed delta.
+            index: parent.index.clone(),
         }
     }
 
@@ -408,7 +417,7 @@ impl WriteOverlay {
                 self.apply_topology_op(kind, base, op);
             }
             wire::OP_SET_PROPERTY => {
-                self.apply_set_property(op, blob, lsn)?;
+                self.apply_set_property(base, op, blob, lsn)?;
             }
             wire::OP_REMOVE_PROPERTY => {
                 let (subject_kind, _high) = wire::unpack_flags(op.flags.get());
@@ -417,10 +426,7 @@ impl WriteOverlay {
                         lsn,
                         reason: "remove-property subject kind",
                     })?;
-                self.properties
-                    .entry(subject)
-                    .or_default()
-                    .insert(PropertyKeyId::new(word(1)), None);
+                self.remove_property_inner(base, subject, PropertyKeyId::new(word(1)));
             }
             wire::OP_CATALOG_REGISTER_ROLE
             | wire::OP_CATALOG_REGISTER_LABEL
@@ -604,6 +610,7 @@ impl WriteOverlay {
     /// This method is `O(log change + text length)`.
     fn apply_set_property(
         &mut self,
+        base: &BaseRecords,
         op: &MutationOp,
         blob: &[u8],
         lsn: u64,
@@ -624,10 +631,7 @@ impl WriteOverlay {
             PropertyType::Integer => PropertyValue::Integer(word(2).cast_signed()),
             PropertyType::Text => PropertyValue::Text(blob_str(blob, word(3), word(4), lsn)?),
         };
-        self.properties
-            .entry(subject)
-            .or_default()
-            .insert(PropertyKeyId::new(word(1)), Some(value));
+        self.set_property_inner(base, subject, PropertyKeyId::new(word(1)), value);
         Ok(())
     }
 
@@ -637,8 +641,7 @@ impl WriteOverlay {
     ///
     /// This method is `O(log change + subject's base properties)`.
     fn tombstone_element_replay(&mut self, base: &BaseRecords, id: ElementId) {
-        self.elements.insert(id, None);
-        self.tombstone_subject_properties(base, PropertySubject::Element(id));
+        self.tombstone_element_inner(base, id);
     }
 
     /// Tombstones a relation during replay without re-logging the op.
@@ -647,8 +650,7 @@ impl WriteOverlay {
     ///
     /// This method is `O(log change + subject's base properties)`.
     fn tombstone_relation_replay(&mut self, base: &BaseRecords, id: RelationId) {
-        self.relations.insert(id, None);
-        self.tombstone_subject_properties(base, PropertySubject::Relation(id));
+        self.tombstone_relation_inner(base, id);
     }
 
     /// Tombstones an incidence during replay without re-logging the op.
@@ -657,8 +659,7 @@ impl WriteOverlay {
     ///
     /// This method is `O(log change + subject's base properties)`.
     fn tombstone_incidence_replay(&mut self, base: &BaseRecords, id: IncidenceId) {
-        self.incidences.insert(id, None);
-        self.tombstone_subject_properties(base, PropertySubject::Incidence(id));
+        self.tombstone_incidence_inner(base, id);
     }
 
     /// Adds an element label during replay without re-logging the op.
@@ -667,20 +668,7 @@ impl WriteOverlay {
     ///
     /// This method is `O(log change + labels)`.
     fn add_element_label_replay(&mut self, base: &BaseRecords, element: ElementId, label: LabelId) {
-        match self.elements.entry(element) {
-            btree_map::Entry::Occupied(mut entry) => {
-                if let Some(record) = entry.get_mut() {
-                    record.labels.insert(label);
-                }
-            }
-            btree_map::Entry::Vacant(entry) => {
-                if let Some(record) = base.element(element) {
-                    let mut record = record.clone();
-                    record.labels.insert(label);
-                    entry.insert(Some(record));
-                }
-            }
-        }
+        self.add_element_label_inner(base, element, label);
     }
 
     /// Adds a relation label during replay without re-logging the op.
@@ -721,20 +709,7 @@ impl WriteOverlay {
         relation: RelationId,
         relation_type: RelationTypeId,
     ) {
-        match self.relations.entry(relation) {
-            btree_map::Entry::Occupied(mut entry) => {
-                if let Some(record) = entry.get_mut() {
-                    record.relation_type = Some(relation_type);
-                }
-            }
-            btree_map::Entry::Vacant(entry) => {
-                if let Some(record) = base.relation(relation) {
-                    let mut record = record.clone();
-                    record.relation_type = Some(relation_type);
-                    entry.insert(Some(record));
-                }
-            }
-        }
+        self.set_relation_type_inner(base, relation, relation_type);
     }
 
     /// Returns the watermark (the nine monotonic allocators) after this delta.
@@ -754,6 +729,94 @@ impl WriteOverlay {
     /// This method is `O(1)`.
     pub(crate) const fn set_next_ids(&mut self, next: NextIds) {
         self.next = next;
+    }
+
+    /// Returns the merged-visible value of `(subject, key)` BEFORE a pending
+    /// property mutation: the overlay value when this writer already set it, the
+    /// base value when the overlay has not touched it, or `None` when the overlay
+    /// removed it or neither layer has it. The index maintainer uses this as the
+    /// posting the subject is leaving.
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(log change + log n)`.
+    fn visible_property(
+        &self,
+        base: &BaseRecords,
+        subject: PropertySubject,
+        key: PropertyKeyId,
+    ) -> Option<PropertyValue> {
+        self.properties
+            .get(&subject)
+            .and_then(|keys| keys.get(&key))
+            .map_or_else(|| base.property(subject, key).cloned(), Clone::clone)
+    }
+
+    /// Returns the merged-visible labels of `element` BEFORE a pending mutation
+    /// (overlay record wins; a tombstone is empty; otherwise the base labels).
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(log change + log n + labels)`.
+    fn visible_element_labels(&self, base: &BaseRecords, element: ElementId) -> BTreeSet<LabelId> {
+        match self.elements.get(&element) {
+            Some(Some(record)) => record.labels.clone(),
+            Some(None) => BTreeSet::new(),
+            None => base
+                .element(element)
+                .map_or_else(BTreeSet::new, |record| record.labels.clone()),
+        }
+    }
+
+    /// Returns the merged-visible relation type of `relation` BEFORE a pending
+    /// mutation (overlay record wins; a tombstone is `None`; otherwise base).
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(log change + log n)`.
+    fn visible_relation_type(
+        &self,
+        base: &BaseRecords,
+        relation: RelationId,
+    ) -> Option<RelationTypeId> {
+        match self.relations.get(&relation) {
+            Some(Some(record)) => record.relation_type,
+            Some(None) => None,
+            None => base
+                .relation(relation)
+                .and_then(|record| record.relation_type),
+        }
+    }
+
+    /// Returns every merged-visible property of `subject` BEFORE a pending
+    /// tombstone, so the index can withdraw each `(key, value)` posting it leaves.
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(subject's base + overlay properties)`.
+    fn visible_subject_properties(
+        &self,
+        base: &BaseRecords,
+        subject: PropertySubject,
+    ) -> BTreeMap<PropertyKeyId, PropertyValue> {
+        let mut visible: BTreeMap<PropertyKeyId, PropertyValue> = BTreeMap::new();
+        if let Some(keys) = base.properties.get(&subject) {
+            for (key, value) in keys {
+                visible.insert(*key, value.clone());
+            }
+        }
+        let Some(keys) = self.properties.get(&subject) else {
+            return visible;
+        };
+        for (key, entry) in keys {
+            // A set overrides the base value; a removal masks it.
+            if let Some(value) = entry {
+                visible.insert(*key, value.clone());
+            } else {
+                visible.remove(key);
+            }
+        }
+        visible
     }
 
     /// Records a fresh element, drawing its id from the watermark.
@@ -848,9 +911,24 @@ impl WriteOverlay {
     ///
     /// This method is `O(log change + subject's base properties)`.
     pub(crate) fn tombstone_element(&mut self, base: &BaseRecords, id: ElementId) {
-        self.elements.insert(id, None);
-        self.tombstone_subject_properties(base, PropertySubject::Element(id));
+        self.tombstone_element_inner(base, id);
         self.log.push(wire::OP_TOMBSTONE_ELEMENT, 0, &[id.get()]);
+    }
+
+    /// Tombstones an element, masking its record + properties and withdrawing
+    /// every label and property posting it carried from the index. Shared by the
+    /// live mutator and the replay path (which does not re-log).
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(log change + subject's visible labels + properties)`.
+    fn tombstone_element_inner(&mut self, base: &BaseRecords, id: ElementId) {
+        let subject = PropertySubject::Element(id);
+        let labels = self.visible_element_labels(base, id);
+        let properties = self.visible_subject_properties(base, subject);
+        self.index.on_tombstone_element(id, &labels, &properties);
+        self.elements.insert(id, None);
+        self.tombstone_subject_properties(base, subject);
     }
 
     /// Tombstones a relation, masking its record and its properties. Idempotent.
@@ -859,9 +937,25 @@ impl WriteOverlay {
     ///
     /// This method is `O(log change + subject's base properties)`.
     pub(crate) fn tombstone_relation(&mut self, base: &BaseRecords, id: RelationId) {
-        self.relations.insert(id, None);
-        self.tombstone_subject_properties(base, PropertySubject::Relation(id));
+        self.tombstone_relation_inner(base, id);
         self.log.push(wire::OP_TOMBSTONE_RELATION, 0, &[id.get()]);
+    }
+
+    /// Tombstones a relation, masking its record + properties and withdrawing its
+    /// relation-type and property postings from the index. Shared by the live
+    /// mutator and the replay path.
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(log change + subject's properties)`.
+    fn tombstone_relation_inner(&mut self, base: &BaseRecords, id: RelationId) {
+        let subject = PropertySubject::Relation(id);
+        let relation_type = self.visible_relation_type(base, id);
+        let properties = self.visible_subject_properties(base, subject);
+        self.index
+            .on_tombstone_relation(id, relation_type, &properties);
+        self.relations.insert(id, None);
+        self.tombstone_subject_properties(base, subject);
     }
 
     /// Tombstones an incidence, masking its record and its properties.
@@ -871,9 +965,23 @@ impl WriteOverlay {
     ///
     /// This method is `O(log change + subject's base properties)`.
     pub(crate) fn tombstone_incidence(&mut self, base: &BaseRecords, id: IncidenceId) {
-        self.incidences.insert(id, None);
-        self.tombstone_subject_properties(base, PropertySubject::Incidence(id));
+        self.tombstone_incidence_inner(base, id);
         self.log.push(wire::OP_TOMBSTONE_INCIDENCE, 0, &[id.get()]);
+    }
+
+    /// Tombstones an incidence, masking its record + properties and withdrawing
+    /// its property postings from the index. Shared by the live mutator and the
+    /// replay path.
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(log change + subject's properties)`.
+    fn tombstone_incidence_inner(&mut self, base: &BaseRecords, id: IncidenceId) {
+        let subject = PropertySubject::Incidence(id);
+        let properties = self.visible_subject_properties(base, subject);
+        self.index.on_tombstone_incidence(subject, &properties);
+        self.incidences.insert(id, None);
+        self.tombstone_subject_properties(base, subject);
     }
 
     /// Masks every property of `subject`: drops the writer's accumulated property
@@ -909,10 +1017,26 @@ impl WriteOverlay {
         element: ElementId,
         label: LabelId,
     ) {
+        self.add_element_label_inner(base, element, label);
+        self.log
+            .push(wire::OP_ADD_ELEMENT_LABEL, 0, &[element.get(), label.get()]);
+    }
+
+    /// Adds an element label to the overlay record and (when the record actually
+    /// receives the label) to the label index. Shared by the live mutator and
+    /// the replay path (which does not re-log). A tombstoned element is left
+    /// tombstoned and the index is untouched.
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(log change + labels)`.
+    fn add_element_label_inner(&mut self, base: &BaseRecords, element: ElementId, label: LabelId) {
+        let mut labelled = false;
         match self.elements.entry(element) {
             btree_map::Entry::Occupied(mut entry) => {
                 if let Some(record) = entry.get_mut() {
                     record.labels.insert(label);
+                    labelled = true;
                 }
             }
             btree_map::Entry::Vacant(entry) => {
@@ -920,11 +1044,13 @@ impl WriteOverlay {
                     let mut record = record.clone();
                     record.labels.insert(label);
                     entry.insert(Some(record));
+                    labelled = true;
                 }
             }
         }
-        self.log
-            .push(wire::OP_ADD_ELEMENT_LABEL, 0, &[element.get(), label.get()]);
+        if labelled {
+            self.index.on_add_element_label(element, label);
+        }
     }
 
     /// Adds a label to a relation's overlay record, materializing the base
@@ -972,10 +1098,36 @@ impl WriteOverlay {
         relation: RelationId,
         relation_type: RelationTypeId,
     ) {
+        self.set_relation_type_inner(base, relation, relation_type);
+        self.log.push(
+            wire::OP_SET_RELATION_TYPE,
+            0,
+            &[relation.get(), relation_type.get()],
+        );
+    }
+
+    /// Sets a relation's type in its overlay record and (when the record
+    /// actually receives the type) updates the relation-type index, withdrawing
+    /// the previous type's posting. Shared by the live mutator and the replay
+    /// path (which does not re-log). A tombstoned relation is left tombstoned and
+    /// the index is untouched.
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(log change)`.
+    fn set_relation_type_inner(
+        &mut self,
+        base: &BaseRecords,
+        relation: RelationId,
+        relation_type: RelationTypeId,
+    ) {
+        let previous = self.visible_relation_type(base, relation);
+        let mut typed = false;
         match self.relations.entry(relation) {
             btree_map::Entry::Occupied(mut entry) => {
                 if let Some(record) = entry.get_mut() {
                     record.relation_type = Some(relation_type);
+                    typed = true;
                 }
             }
             btree_map::Entry::Vacant(entry) => {
@@ -983,14 +1135,14 @@ impl WriteOverlay {
                     let mut record = record.clone();
                     record.relation_type = Some(relation_type);
                     entry.insert(Some(record));
+                    typed = true;
                 }
             }
         }
-        self.log.push(
-            wire::OP_SET_RELATION_TYPE,
-            0,
-            &[relation.get(), relation_type.get()],
-        );
+        if typed {
+            self.index
+                .on_set_relation_type(relation, previous, relation_type);
+        }
     }
 
     /// Records a property set: subject's key maps to `Some(value)`, overriding
@@ -1016,9 +1168,10 @@ impl WriteOverlay {
     ///
     /// # Performance
     ///
-    /// This method is `O(log change)`.
+    /// This method is `O(log change + log n)`.
     pub(crate) fn set_property(
         &mut self,
+        base: &BaseRecords,
         subject: PropertySubject,
         key: PropertyKeyId,
         value: PropertyValue,
@@ -1038,6 +1191,26 @@ impl WriteOverlay {
             wire::pack_flags(subject_kind, value_tag),
             &[subject_id, key.get(), scalar, text_off, text_len],
         );
+        self.set_property_inner(base, subject, key, value);
+    }
+
+    /// Applies a property set to the property delta and the equality index,
+    /// withdrawing the subject's previous value posting. Shared by the live
+    /// mutator and the replay path (which does not re-log).
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(log change + log n)`.
+    fn set_property_inner(
+        &mut self,
+        base: &BaseRecords,
+        subject: PropertySubject,
+        key: PropertyKeyId,
+        value: PropertyValue,
+    ) {
+        let previous = self.visible_property(base, subject, key);
+        self.index
+            .on_set_property(subject, key, previous.as_ref(), &value);
         self.properties
             .entry(subject)
             .or_default()
@@ -1049,14 +1222,38 @@ impl WriteOverlay {
     ///
     /// # Performance
     ///
-    /// This method is `O(log change)`.
-    pub(crate) fn remove_property(&mut self, subject: PropertySubject, key: PropertyKeyId) {
+    /// This method is `O(log change + log n)`.
+    pub(crate) fn remove_property(
+        &mut self,
+        base: &BaseRecords,
+        subject: PropertySubject,
+        key: PropertyKeyId,
+    ) {
         let (subject_kind, subject_id) = wire::encode_subject(subject);
         self.log.push(
             wire::OP_REMOVE_PROPERTY,
             wire::pack_flags(subject_kind, 0),
             &[subject_id, key.get()],
         );
+        self.remove_property_inner(base, subject, key);
+    }
+
+    /// Applies a property removal to the property delta and the equality index,
+    /// withdrawing the subject's previous value posting. Shared by the live
+    /// mutator and the replay path (which does not re-log).
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(log change + log n)`.
+    fn remove_property_inner(
+        &mut self,
+        base: &BaseRecords,
+        subject: PropertySubject,
+        key: PropertyKeyId,
+    ) {
+        let previous = self.visible_property(base, subject, key);
+        self.index
+            .on_remove_property(subject, key, previous.as_ref());
         self.properties
             .entry(subject)
             .or_default()
@@ -1239,6 +1436,7 @@ impl WriteOverlay {
             properties: self.properties,
             catalog: self.catalog,
             next: self.next,
+            index: self.index,
         }
     }
 }
@@ -1544,6 +1742,9 @@ pub(crate) struct Overlay {
     catalog: Catalog,
     /// The nine monotonic id allocators (the watermark) for this overlay.
     next: NextIds,
+    /// Frozen incremental index deltas this overlay carries, so a reader's
+    /// merged lookup over `(base index, overlay index)` is index-backed.
+    index: OverlayIndex,
 }
 
 impl Overlay {
@@ -1561,6 +1762,7 @@ impl Overlay {
             properties: BTreeMap::new(),
             catalog,
             next,
+            index: OverlayIndex::new(),
         }
     }
 
@@ -1612,6 +1814,10 @@ impl Overlay {
         }
         next.catalog = delta.catalog.clone();
         next.next = delta.next;
+        // The delta carries the full composed index (seeded from this parent's
+        // index, then mutated), matching `freeze`/`from_overlay` on the live
+        // path, so the published overlay takes the delta's index verbatim.
+        next.index = delta.index.clone();
         next
     }
 }
@@ -1636,12 +1842,13 @@ impl Overlay {
 /// The cost is real and per generation: [`Self::from_view`] duplicates the base
 /// bytes the Yoke already holds zero-copy into owned `BTreeMap`s, so the standing
 /// memory is ~2x the base (wire bytes + decoded records) for the life of every
-/// pinned reader. It is built once per [`Snapshot::new`] (one per checkpoint
-/// generation) and `Arc`-shared thereafter — cheap to SHARE, but a full
-/// `O(base records + labels + property bytes)` build that gates snapshot
-/// creation latency. The roadmapped reshape (P5) removes [`BaseRecords`]
-/// entirely so this 2x base memory is not load-bearing once readers pin many
-/// generations.
+/// pinned reader. It is built once per checkpoint generation (at [`Snapshot::new`]
+/// — `open`/`create`/fold) and `Arc`-shared across every commit that pins that
+/// generation via [`Snapshot::with_shared_base_records`], so a commit re-decodes
+/// neither the base nor its index and stays `O(change)`. The build itself is a
+/// full `O(base records + labels + property bytes)` that gates fold/open latency.
+/// The roadmapped reshape (P5) removes [`BaseRecords`] entirely so this 2x base
+/// memory is not load-bearing once readers pin many generations.
 ///
 /// # Performance
 ///
@@ -1657,11 +1864,14 @@ pub(crate) struct BaseRecords {
     incidences: BTreeMap<IncidenceId, IncidenceRecord>,
     /// Decoded properties keyed by subject then key.
     properties: BTreeMap<PropertySubject, BTreeMap<PropertyKeyId, PropertyValue>>,
+    /// Derived membership/equality postings for this generation, built once in
+    /// RAM from the records above so a merged lookup is index-backed.
+    index: BaseIndex,
 }
 
 impl BaseRecords {
     /// Builds the records of an empty base (the gen-0 base `create` writes): no
-    /// elements, relations, incidences, or properties.
+    /// elements, relations, incidences, properties, or index postings.
     ///
     /// This constructor is infallible: it allocates only empty maps and never
     /// decodes wire bytes.
@@ -1675,6 +1885,7 @@ impl BaseRecords {
             relations: BTreeMap::new(),
             incidences: BTreeMap::new(),
             properties: BTreeMap::new(),
+            index: BaseIndex::empty(),
         }
     }
 
@@ -1722,12 +1933,23 @@ impl BaseRecords {
             );
         }
         let properties = decode_base_properties(view)?;
+        let index = BaseIndex::from_records(&elements, &relations, &properties);
         Ok(Self {
             elements,
             relations,
             incidences,
             properties,
+            index,
         })
+    }
+
+    /// Returns this generation's derived index postings (membership + equality).
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(1)`.
+    pub(crate) const fn index(&self) -> &BaseIndex {
+        &self.index
     }
 
     /// Returns the base element record for `id`, if present.
@@ -1882,6 +2104,38 @@ impl Snapshot {
         })
     }
 
+    /// Publishes a new snapshot over the SAME base generation as a parent,
+    /// SHARING the parent's already-materialized [`BaseRecords`] (and its derived
+    /// [`crate::index::BaseIndex`]) by `Arc` instead of re-decoding the base wire
+    /// bytes and rebuilding the index.
+    ///
+    /// This is the commit publish path: a commit never folds, so its base bytes
+    /// are byte-identical to the parent's within the generation, and the records +
+    /// index derived from them are identical too. Sharing them makes a commit
+    /// `O(change)` (frame encode + overlay freeze) rather than `O(base)` — the
+    /// caller MUST pass `base` and `base_records` drawn from the same parent
+    /// snapshot so the shared records match the pinned base.
+    ///
+    /// # Performance
+    ///
+    /// This function is `O(1)`: it clones two `Arc`s and copies the identity
+    /// fields, with no base decode or index rebuild.
+    pub(crate) const fn with_shared_base_records(
+        generation: CheckpointGeneration,
+        lsn: CommitSeq,
+        base: Arc<Base>,
+        overlay: Arc<Overlay>,
+        base_records: Arc<BaseRecords>,
+    ) -> Self {
+        Self {
+            generation,
+            lsn,
+            base,
+            overlay,
+            base_records,
+        }
+    }
+
     /// Returns this snapshot's checkpoint generation.
     ///
     /// # Performance
@@ -1983,12 +2237,25 @@ const _: () = assert_send_sync::<Overlay>();
 ///   [`Self::typed_property_composite_equal`] (`query.rs` property scans, `database.rs` index
 ///   lookups).
 ///
-/// Each is implemented as a merge-aware scan (overlay-over-base, tombstones
-/// masked), at functional parity with the former owned-state model — whose
-/// property lookups are themselves scans. The membership lookups scan rather
-/// than consult a derived index for now; P5b adds incremental membership
-/// maintenance and real property indexes. This trait is the live read surface:
-/// `query.rs`, `projection.rs`, and `database.rs` all reach state through it.
+/// # Phase note — membership/property lookups are now INDEX-BACKED (P5)
+///
+/// The default methods below are merge-aware SCANS (overlay-over-base,
+/// tombstones masked) — correct, and the differential ORACLE the index path is
+/// tested against. But the live [`LayeredState`] impl OVERRIDES the membership
+/// and property lookups ([`Self::elements_with_label`],
+/// [`Self::relations_with_type`], [`Self::property_equal`],
+/// [`Self::property_range`], [`Self::typed_property_composite_equal`]) with
+/// index-backed implementations that run in `O(log n + matches)` instead of
+/// `O(n)`: they probe the per-generation [`crate::index::BaseIndex`] postings
+/// (`Arc`-shared, built once per [`Snapshot`]) merged with the overlay's
+/// incremental [`crate::index::OverlayIndex`] deltas. The typed wrappers
+/// ([`Self::typed_property_equal`], [`Self::typed_property_range`], …) validate
+/// against the catalog then delegate to those overridden lookups, so they are
+/// index-backed too. The scan oracles survive under `#[cfg(test)]` on
+/// [`LayeredState`] (the `*_scan` methods) for the differential test.
+///
+/// This trait is the live read surface: `query.rs`, `projection.rs`, and
+/// `database.rs` all reach state through it, with NO change to these signatures.
 ///
 /// # Performance
 ///
@@ -2233,7 +2500,10 @@ pub(crate) trait StateView {
     ///
     /// # Performance
     ///
-    /// This method is `O(base properties + overlay property change)`.
+    /// `O(base properties + overlay property change)` for the default scan; this
+    /// method delegates to [`Self::property_equal`], so when the impl overrides
+    /// that with an index — as [`LayeredState`] does (the live read path) — the
+    /// realized cost is `O(log n + matches + overlay change)`.
     fn typed_property_equal(
         &self,
         key: PropertyKeyId,
@@ -2256,7 +2526,10 @@ pub(crate) trait StateView {
     ///
     /// # Performance
     ///
-    /// This method is `O(base properties + overlay property change)`.
+    /// `O(base properties + overlay property change)` for the default scan; this
+    /// method delegates to [`Self::property_equal`], so when the impl overrides
+    /// that with an index — as [`LayeredState`] does (the live read path) — the
+    /// realized cost is `O(log n + matches + overlay change)`.
     fn typed_property_equal_for_family(
         &self,
         key: PropertyKeyId,
@@ -2275,7 +2548,9 @@ pub(crate) trait StateView {
     ///
     /// # Performance
     ///
-    /// This method is `O(base properties + overlay property change)`.
+    /// `O(base properties + overlay property change)` for this default scan;
+    /// [`LayeredState`] overrides it with an index-backed walk that is
+    /// `O(log n + matching postings + matches + overlay change)`.
     fn property_range(
         &self,
         key: PropertyKeyId,
@@ -2303,7 +2578,10 @@ pub(crate) trait StateView {
     ///
     /// # Performance
     ///
-    /// This method is `O(base properties + overlay property change)`.
+    /// `O(base properties + overlay property change)` for the default scan; this
+    /// method delegates to [`Self::property_range`], so when the impl overrides
+    /// that with an index — as [`LayeredState`] does (the live read path) — the
+    /// realized cost is `O(log n + matching postings + matches + overlay change)`.
     fn typed_property_range(
         &self,
         key: PropertyKeyId,
@@ -2483,6 +2761,9 @@ pub(crate) trait OverlayLayer {
     fn catalog(&self) -> &Catalog;
     /// Returns the nine monotonic id allocators (the watermark).
     fn next_ids(&self) -> NextIds;
+    /// Returns this layer's incremental index deltas, so a merged lookup can be
+    /// index-backed (`(base index ∪ added) \ removed`) rather than a full scan.
+    fn index(&self) -> &OverlayIndex;
 }
 
 impl OverlayLayer for Overlay {
@@ -2511,6 +2792,10 @@ impl OverlayLayer for Overlay {
     fn next_ids(&self) -> NextIds {
         self.next
     }
+
+    fn index(&self) -> &OverlayIndex {
+        &self.index
+    }
 }
 
 impl OverlayLayer for WriteOverlay {
@@ -2538,6 +2823,10 @@ impl OverlayLayer for WriteOverlay {
 
     fn next_ids(&self) -> NextIds {
         self.next
+    }
+
+    fn index(&self) -> &OverlayIndex {
+        &self.index
     }
 }
 
@@ -2718,6 +3007,199 @@ impl<L: OverlayLayer> StateView for LayeredState<'_, L> {
 
     fn next_ids(&self) -> NextIds {
         self.overlay.next_ids()
+    }
+
+    /// Index-backed override of the membership lookup: merges the base label
+    /// posting with the overlay's label deltas, instead of scanning every
+    /// element. Equal to the scan oracle ([`Self::elements_with_label_scan`]).
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(log n + matches + overlay change)`.
+    fn elements_with_label(&self, label: LabelId) -> Vec<ElementId> {
+        self.overlay
+            .index()
+            .elements_with_label(self.base.index(), label)
+    }
+
+    /// Index-backed override of the relation-type membership lookup: merges the
+    /// base relation-type posting with the overlay's deltas. Equal to the scan
+    /// oracle ([`Self::relations_with_type_scan`]).
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(log n + matches + overlay change)`.
+    fn relations_with_type(&self, relation_type: RelationTypeId) -> Vec<RelationId> {
+        self.overlay
+            .index()
+            .relations_with_type(self.base.index(), relation_type)
+    }
+
+    /// Index-backed override of the equality lookup: probes the base equality
+    /// posting for `(key, value)` and merges the overlay's deltas, instead of
+    /// scanning every property. Equal to the scan oracle
+    /// ([`Self::property_equal_scan`]).
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(log n + matches + overlay change)`.
+    fn property_equal(&self, key: PropertyKeyId, value: &PropertyValue) -> Vec<PropertySubject> {
+        self.overlay
+            .index()
+            .property_equal(self.base.index(), key, value)
+    }
+
+    /// Index-backed override of the range lookup: walks the contiguous ordered
+    /// slice of the base equality map in `[min, max]` and merges the overlay's
+    /// deltas, instead of scanning every property. Equal to the scan oracle
+    /// ([`Self::property_range_scan`]).
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(log n + matching postings + matches + overlay change)`.
+    fn property_range(
+        &self,
+        key: PropertyKeyId,
+        min: &PropertyValue,
+        max: &PropertyValue,
+    ) -> Vec<PropertySubject> {
+        self.overlay
+            .index()
+            .property_range(self.base.index(), key, min, max)
+    }
+
+    /// Index-backed override of the composite-equality lookup: intersects the
+    /// per-key merged equality postings of the validated `(key, value)` tuple,
+    /// instead of grouping every subject's properties. Equal to the scan oracle
+    /// ([`Self::typed_property_composite_equal_scan`]).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError::unsupported`] on a `keys`/`values` arity mismatch, and
+    /// [`DbError::UnknownPropertyKey`] or [`DbError::PropertyTypeMismatch`] when a
+    /// `(key, value)` pair fails the merged-catalog check.
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(tuple arity × (matches + overlay change))`.
+    fn typed_property_composite_equal(
+        &self,
+        keys: &[PropertyKeyId],
+        values: &[PropertyValue],
+    ) -> Result<Vec<PropertySubject>, DbError> {
+        if keys.len() != values.len() {
+            return Err(DbError::unsupported(
+                "composite equality tuple arity mismatch",
+            ));
+        }
+        for (key, value) in keys.iter().copied().zip(values) {
+            self.validate_lookup_value(key, value)?;
+        }
+        let pairs: Vec<(PropertyKeyId, PropertyValue)> =
+            keys.iter().copied().zip(values.iter().cloned()).collect();
+        Ok(self
+            .overlay
+            .index()
+            .property_composite_equal(self.base.index(), &pairs))
+    }
+}
+
+/// Merge-SCAN oracles: the pre-P5 lookup implementations, kept under
+/// `#[cfg(test)]` so the index-backed [`StateView`] overrides can be
+/// differential-tested against them. Each scans the full merged visible set and
+/// filters, exactly as the former default-trait implementations did; the
+/// index-backed methods MUST return the same result for every input.
+///
+/// # Performance
+///
+/// `perf: unspecified`; test-only scan oracles, each `O(base + overlay change)`.
+#[cfg(test)]
+impl<L: OverlayLayer> LayeredState<'_, L> {
+    /// Scan oracle for [`StateView::elements_with_label`].
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(base + overlay element change)`.
+    pub(crate) fn elements_with_label_scan(&self, label: LabelId) -> Vec<ElementId> {
+        self.elements()
+            .filter(|record| record.labels.contains(&label))
+            .map(|record| record.id)
+            .collect()
+    }
+
+    /// Scan oracle for [`StateView::relations_with_type`].
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(base + overlay relation change)`.
+    pub(crate) fn relations_with_type_scan(
+        &self,
+        relation_type: RelationTypeId,
+    ) -> Vec<RelationId> {
+        self.relations()
+            .filter(|record| record.relation_type == Some(relation_type))
+            .map(|record| record.id)
+            .collect()
+    }
+
+    /// Scan oracle for [`StateView::property_equal`].
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(base properties + overlay property change)`.
+    pub(crate) fn property_equal_scan(
+        &self,
+        key: PropertyKeyId,
+        value: &PropertyValue,
+    ) -> Vec<PropertySubject> {
+        self.properties()
+            .filter(|(_subject, candidate_key, candidate_value)| {
+                *candidate_key == key && candidate_value.as_ref() == value
+            })
+            .map(|(subject, _key, _value)| subject)
+            .collect()
+    }
+
+    /// Scan oracle for [`StateView::property_range`].
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(base properties + overlay property change)`.
+    pub(crate) fn property_range_scan(
+        &self,
+        key: PropertyKeyId,
+        min: &PropertyValue,
+        max: &PropertyValue,
+    ) -> Vec<PropertySubject> {
+        self.properties()
+            .filter(|(_subject, candidate_key, value)| {
+                *candidate_key == key && value.as_ref() >= min && value.as_ref() <= max
+            })
+            .map(|(subject, _key, _value)| subject)
+            .collect()
+    }
+
+    /// Scan oracle for [`StateView::typed_property_composite_equal`] (the inner
+    /// grouped-scan path, without revalidating the catalog).
+    ///
+    /// # Performance
+    ///
+    /// This method is `O((base subjects + overlay subject change) × arity)`.
+    pub(crate) fn property_composite_equal_scan(
+        &self,
+        keys: &[PropertyKeyId],
+        values: &[PropertyValue],
+    ) -> Vec<PropertySubject> {
+        self.properties_by_subject()
+            .into_iter()
+            .filter_map(|(subject, subject_values)| {
+                keys.iter()
+                    .copied()
+                    .zip(values)
+                    .all(|(key, value)| subject_values.get(&key) == Some(value))
+                    .then_some(subject)
+            })
+            .collect()
     }
 }
 
@@ -3014,6 +3496,7 @@ impl BaseRecords {
             relations: BTreeMap::new(),
             incidences: BTreeMap::new(),
             properties: BTreeMap::new(),
+            index: BaseIndex::empty(),
         }
     }
 }
@@ -3043,6 +3526,7 @@ impl Overlay {
             properties: BTreeMap::new(),
             catalog: Catalog::empty(),
             next: proof_zero_next_ids(),
+            index: OverlayIndex::new(),
         }
     }
 
@@ -3072,6 +3556,7 @@ impl Overlay {
             properties: BTreeMap::new(),
             catalog: Catalog::empty(),
             next: watermark,
+            index: OverlayIndex::new(),
         }
     }
 }
@@ -3145,9 +3630,12 @@ pub(crate) mod test_support {
     }
 
     /// Builds a small canonical base: two labels, one relation type, one role,
-    /// two element-family property keys, three elements, two relations, two
-    /// incidences, and several properties — enough to exercise creates, labels,
-    /// types, and every property scalar shape.
+    /// two element-family property keys, one relation-family key, one
+    /// incidence-family key, three elements, two relations, two incidences, and
+    /// several properties — enough to exercise creates, labels, types, every
+    /// property scalar shape, AND a typed/property-bearing relation plus a
+    /// property-bearing incidence (so the relation/incidence tombstone index
+    /// withdrawal paths have base postings to withdraw).
     ///
     /// # Performance
     ///
@@ -3175,6 +3663,20 @@ pub(crate) mod test_support {
                 PropertyType::Integer,
             )
             .expect("rank key");
+        let weight = write
+            .register_property_key(
+                "weight".to_owned(),
+                PropertyFamily::Relation,
+                PropertyType::Integer,
+            )
+            .expect("weight key");
+        let slot = write
+            .register_property_key(
+                "slot".to_owned(),
+                PropertyFamily::Incidence,
+                PropertyType::Integer,
+            )
+            .expect("slot key");
 
         let e1 = write.create_element().expect("e1");
         let e2 = write.create_element().expect("e2");
@@ -3185,20 +3687,38 @@ pub(crate) mod test_support {
         let r1 = write.create_relation().expect("r1");
         let _r2 = write.create_relation().expect("r2");
         write.set_relation_type(&base, r1, calls);
-        write.create_incidence(r1, e1, caller).expect("inc1");
+        let inc1 = write.create_incidence(r1, e1, caller).expect("inc1");
         write.create_incidence(r1, e2, caller).expect("inc2");
 
         write.set_property(
+            &base,
             PropertySubject::Element(e1),
             name,
             PropertyValue::Text("Alice".to_owned()),
         );
+        // A relation-family property on the typed relation r1 and an
+        // incidence-family property on inc1, so tombstoning each withdraws a real
+        // base equality posting (and r1 additionally withdraws its `calls` type).
         write.set_property(
+            &base,
+            PropertySubject::Relation(r1),
+            weight,
+            PropertyValue::Integer(3),
+        );
+        write.set_property(
+            &base,
+            PropertySubject::Incidence(inc1),
+            slot,
+            PropertyValue::Integer(1),
+        );
+        write.set_property(
+            &base,
             PropertySubject::Element(e1),
             rank,
             PropertyValue::Integer(-5),
         );
         write.set_property(
+            &base,
             PropertySubject::Element(e2),
             name,
             PropertyValue::Text("Bob".to_owned()),
@@ -3216,6 +3736,7 @@ pub(crate) mod test_support {
     /// This function is `O(1)`.
     pub(crate) fn base_view_from_ops() -> (BaseRecords, Overlay) {
         let mut write = WriteOverlay::new(NextIds::INITIAL, Catalog::empty());
+        let base = BaseRecords::empty();
         let name = write
             .register_property_key(
                 "name".to_owned(),
@@ -3226,11 +3747,12 @@ pub(crate) mod test_support {
         let e1 = write.create_element().expect("e1");
         let _e2 = write.create_element().expect("e2");
         write.set_property(
+            &base,
             PropertySubject::Element(e1),
             name,
             PropertyValue::Text("Alice".to_owned()),
         );
-        (BaseRecords::empty(), write.freeze())
+        (base, write.freeze())
     }
 }
 

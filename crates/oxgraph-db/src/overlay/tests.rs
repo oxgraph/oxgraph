@@ -107,12 +107,13 @@ fn cow_property_fast_path() {
     let mut write = WriteOverlay::new(base_next_ids(&base), base.get().catalog().clone());
     // Override element 1's name.
     write.set_property(
+        &records,
         PropertySubject::Element(ElementId::new(1)),
         name,
         PropertyValue::Text("Alicia".to_owned()),
     );
     // Remove element 1's rank.
-    write.remove_property(PropertySubject::Element(ElementId::new(1)), rank);
+    write.remove_property(&records, PropertySubject::Element(ElementId::new(1)), rank);
     let overlay = write.freeze();
     let view = MergedState::new(&records, &overlay);
 
@@ -195,7 +196,7 @@ fn overlay_records_orphan_property_unvalidated() {
     // later set re-records a visible value for the now-deleted subject.
     let mut write = WriteOverlay::new(base_next_ids(&base), base.get().catalog().clone());
     write.tombstone_element(&records, ElementId::new(1));
-    write.set_property(subject, name, orphan.clone());
+    write.set_property(&records, subject, name, orphan.clone());
     let overlay = write.freeze();
     let view = MergedState::new(&records, &overlay);
 
@@ -346,14 +347,15 @@ fn apply_to_write(
         }
         Op::SetName(raw, text) => {
             write.set_property(
+                records,
                 PropertySubject::Element(ElementId::new(1 + (raw % 3))),
                 name,
                 PropertyValue::Text(text.clone()),
             );
         }
         Op::RemoveRank(raw) => {
-            let _ = records;
             write.remove_property(
+                records,
                 PropertySubject::Element(ElementId::new(1 + (raw % 3))),
                 rank,
             );
@@ -593,5 +595,201 @@ proptest! {
         prop_assert_eq!(view.element_count(), oracle.elements.len());
         prop_assert_eq!(view.relation_count(), oracle.relations.len());
         prop_assert_eq!(view.incidence_count(), oracle.incidences.len());
+    }
+}
+
+/// One random index-affecting op applied to a `WriteOverlay`: label adds,
+/// relation-type sets, integer-`rank` sets/removes, and element / relation /
+/// incidence tombstones. The op alphabet deliberately spans every index
+/// dimension (label membership, relation-type membership, equality, range) AND
+/// every tombstone withdrawal path (element, typed/property-bearing relation,
+/// property-bearing incidence) so the differential test below exercises each
+/// posting path — including `OverlayIndex::on_tombstone_relation` (relation-type
+/// + property withdrawal) and `on_tombstone_incidence` (property withdrawal).
+#[derive(Clone, Debug)]
+enum IndexOp {
+    /// Add the `Robot` label to base element `1 + (n % 4)`.
+    LabelElement(u64),
+    /// Set base relation `1 + (n % 2)`'s type to `calls`.
+    TypeRelation(u64),
+    /// Set the integer `rank` of base element `1 + (n % 3)` to `value`.
+    SetRank(u64, i64),
+    /// Remove the `rank` of base element `1 + (n % 3)`.
+    RemoveRank(u64),
+    /// Tombstone base element `1 + (n % 4)`.
+    Tombstone(u64),
+    /// Tombstone base relation `1 + (n % 2)` (r1 is typed `calls` and carries a
+    /// `weight` property; r2 is untyped) — exercises `on_tombstone_relation`,
+    /// which withdraws the relation-type and property postings.
+    TombstoneRelation(u64),
+    /// Tombstone base incidence `1 + (n % 2)` (inc1 carries a `slot` property) —
+    /// exercises `on_tombstone_incidence`, which withdraws the property postings.
+    TombstoneIncidence(u64),
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(MERGE_CASES))]
+
+    /// Differential test for the P5 index-backed lookups: a random delta applied
+    /// to a `WriteOverlay` makes every index-backed `StateView` lookup
+    /// (`elements_with_label`, `relations_with_type`, `property_equal`,
+    /// `property_range`, `typed_property_composite_equal`) return EXACTLY what the
+    /// surviving merge-scan oracle (`*_scan`) returns — across label/type
+    /// membership, equality, range (including inverted and partial ranges), and
+    /// composite equality — over a state mixing base records, overlay overrides,
+    /// and element / relation / incidence tombstones (so the relation-type and
+    /// relation/incidence property withdrawal paths are checked, not just the
+    /// element half).
+    #[test]
+    fn index_lookups_match_scan_oracle(
+        ops in proptest::collection::vec(
+            prop_oneof![
+                any::<u64>().prop_map(IndexOp::LabelElement),
+                any::<u64>().prop_map(IndexOp::TypeRelation),
+                (any::<u64>(), -8i64..8).prop_map(|(raw, value)| IndexOp::SetRank(raw, value)),
+                any::<u64>().prop_map(IndexOp::RemoveRank),
+                any::<u64>().prop_map(IndexOp::Tombstone),
+                any::<u64>().prop_map(IndexOp::TombstoneRelation),
+                any::<u64>().prop_map(IndexOp::TombstoneIncidence),
+            ],
+            0..24,
+        )
+    ) {
+        let base = small_base();
+        let records = BaseRecords::from_view(base.get()).expect("base records");
+        let catalog = base.get().catalog();
+        let robot = catalog.label_id("Robot").expect("robot label");
+        let person = catalog.label_id("Person").expect("person label");
+        let calls = catalog.relation_type_id("calls").expect("calls type");
+        let name = catalog.property_key_id("name").expect("name key");
+        let rank = catalog.property_key_id("rank").expect("rank key");
+        let weight = catalog.property_key_id("weight").expect("weight key");
+        let slot = catalog.property_key_id("slot").expect("slot key");
+
+        let mut write = WriteOverlay::new(base_next_ids(&base), catalog.clone());
+        for op in &ops {
+            match op {
+                IndexOp::LabelElement(raw) => {
+                    write.add_element_label(&records, ElementId::new(1 + (raw % 4)), robot);
+                }
+                IndexOp::TypeRelation(raw) => {
+                    write.set_relation_type(&records, RelationId::new(1 + (raw % 2)), calls);
+                }
+                IndexOp::SetRank(raw, value) => {
+                    write.set_property(
+                        &records,
+                        PropertySubject::Element(ElementId::new(1 + (raw % 3))),
+                        rank,
+                        PropertyValue::Integer(*value),
+                    );
+                }
+                IndexOp::RemoveRank(raw) => {
+                    write.remove_property(
+                        &records,
+                        PropertySubject::Element(ElementId::new(1 + (raw % 3))),
+                        rank,
+                    );
+                }
+                IndexOp::Tombstone(raw) => {
+                    write.tombstone_element(&records, ElementId::new(1 + (raw % 4)));
+                }
+                IndexOp::TombstoneRelation(raw) => {
+                    write.tombstone_relation(&records, RelationId::new(1 + (raw % 2)));
+                }
+                IndexOp::TombstoneIncidence(raw) => {
+                    write.tombstone_incidence(&records, IncidenceId::new(1 + (raw % 2)));
+                }
+            }
+        }
+        let overlay = write.freeze();
+        let view = MergedState::new(&records, &overlay);
+
+        // Label + relation-type membership: index == scan. The relation-type
+        // assertion now exercises the `on_tombstone_relation` withdrawal path:
+        // tombstoning typed r1 must drop it from the `calls` posting.
+        for label in [person, robot] {
+            prop_assert_eq!(
+                view.elements_with_label(label),
+                view.elements_with_label_scan(label),
+                "label {} membership index != scan",
+                label.get()
+            );
+        }
+        prop_assert_eq!(
+            view.relations_with_type(calls),
+            view.relations_with_type_scan(calls),
+            "relation-type membership index != scan"
+        );
+
+        // Relation- and incidence-family equality: the `on_tombstone_relation` /
+        // `on_tombstone_incidence` property-posting withdrawals must match the
+        // scan oracle. `weight=3` is r1's relation property; `slot=1` is inc1's
+        // incidence property — both vanish from the index when tombstoned.
+        for value in -1i64..=4 {
+            let probe = PropertyValue::Integer(value);
+            prop_assert_eq!(
+                view.property_equal(weight, &probe),
+                view.property_equal_scan(weight, &probe),
+                "relation-family equality index != scan for weight={}",
+                value
+            );
+            prop_assert_eq!(
+                view.property_equal(slot, &probe),
+                view.property_equal_scan(slot, &probe),
+                "incidence-family equality index != scan for slot={}",
+                value
+            );
+        }
+
+        // Equality over every value the rank could hold (and a value never set).
+        for value in -9i64..=9 {
+            let probe = PropertyValue::Integer(value);
+            prop_assert_eq!(
+                view.property_equal(rank, &probe),
+                view.property_equal_scan(rank, &probe),
+                "equality index != scan for rank={}",
+                value
+            );
+        }
+        // A name (text) equality probe exercises the text-keyed posting too.
+        let bob = PropertyValue::Text("Bob".to_owned());
+        prop_assert_eq!(
+            view.property_equal(name, &bob),
+            view.property_equal_scan(name, &bob),
+            "text equality index != scan"
+        );
+
+        // Range over several windows (full, partial, single, inverted).
+        for (lo, hi) in [(-9i64, 9i64), (-3, 3), (0, 0), (2, 1)] {
+            let min = PropertyValue::Integer(lo);
+            let max = PropertyValue::Integer(hi);
+            let mut indexed = view.property_range(rank, &min, &max);
+            let mut scanned = view.property_range_scan(rank, &min, &max);
+            indexed.sort();
+            scanned.sort();
+            prop_assert_eq!(indexed, scanned, "range index != scan for [{}, {}]", lo, hi);
+        }
+
+        // Composite equality over (rank, name) tuples (validated path == scan).
+        for (rank_value, person_name) in [(-5i64, "Alice"), (0, "Bob"), (7, "Carol")] {
+            let keys = [rank, name];
+            let values = [
+                PropertyValue::Integer(rank_value),
+                PropertyValue::Text(person_name.to_owned()),
+            ];
+            let mut indexed = view
+                .typed_property_composite_equal(&keys, &values)
+                .expect("composite lookup");
+            let mut scanned = view.property_composite_equal_scan(&keys, &values);
+            indexed.sort();
+            scanned.sort();
+            prop_assert_eq!(
+                indexed,
+                scanned,
+                "composite index != scan for (rank={}, name={})",
+                rank_value,
+                person_name
+            );
+        }
     }
 }
