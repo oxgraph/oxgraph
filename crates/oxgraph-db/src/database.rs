@@ -5,14 +5,17 @@ use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
     rc::Rc,
+    sync::Arc,
 };
 
 use crate::{
-    Catalog, CommitSeq, DbError, ElementId, ElementRecord, GraphProjection, HypergraphProjection,
-    IncidenceId, IncidenceRecord, IndexId, LabelId, PreparedQuery, ProjectionDefinition,
-    ProjectionId, PropertyKeyId, PropertySubject, PropertyType, PropertyValue, QueryLanguage,
-    QueryResult, RelationId, RelationRecord, RelationTypeId, RoleId, TransactionId,
+    Catalog, CheckpointGeneration, CommitSeq, DbError, ElementId, ElementRecord, GraphProjection,
+    HypergraphProjection, IncidenceId, IncidenceRecord, IndexId, LabelId, PreparedQuery,
+    ProjectionDefinition, ProjectionId, PropertyKeyId, PropertySubject, PropertyType,
+    PropertyValue, QueryLanguage, QueryResult, RelationId, RelationRecord, RelationTypeId, RoleId,
+    TransactionId,
     catalog::{IndexDefinition, PropertyFamily},
+    lock::WriterLock,
     projection::{self},
     state::DatabaseState,
     storage::{self, StoredDatabase},
@@ -53,8 +56,9 @@ pub enum IndexLookup<'value> {
 pub struct Database {
     /// Root database directory.
     path: PathBuf,
-    /// Visible canonical state.
-    state: DatabaseState,
+    /// Visible canonical state, shared by all readers of the current
+    /// generation through an atomically reference-counted handle.
+    state: Arc<DatabaseState>,
     /// Last visible commit sequence.
     visible_commit_seq: CommitSeq,
     /// Last writer transaction ID burned by this handle.
@@ -174,8 +178,10 @@ impl Database {
     ///
     /// # Performance
     ///
-    /// This method is `O(database state size)` because readers own immutable
-    /// snapshots.
+    /// This method is `O(1)`: the reader shares the committed state through an
+    /// atomically reference-counted handle rather than copying it. A later
+    /// committed generation does not disturb a reader already holding its
+    /// generation's handle.
     #[must_use]
     pub fn begin_read(&self) -> ReadTransaction {
         ReadTransaction {
@@ -183,7 +189,7 @@ impl Database {
                 visible_commit_seq: self.visible_commit_seq,
                 last_transaction_id: self.last_transaction_id,
             },
-            state: self.state.clone(),
+            state: Arc::clone(&self.state),
             graph_projections: RefCell::new(BTreeMap::new()),
             hypergraph_projections: RefCell::new(BTreeMap::new()),
         }
@@ -198,20 +204,24 @@ impl Database {
     ///
     /// # Performance
     ///
-    /// This method is `O(database state size)` because writes stage an owned
-    /// copy.
+    /// This method is `O(1)`: the writer shares the committed base through an
+    /// atomically reference-counted handle and copies it lazily on the first
+    /// mutation (copy-on-write), so an empty or rolled-back transaction never
+    /// clones the state.
     pub fn begin_write(&mut self) -> Result<WriteTransaction<'_>, DbError> {
+        let lock = WriterLock::acquire(&self.path)?;
         let transaction_id = self
             .last_transaction_id
             .checked_next()
             .ok_or(DbError::TransactionIdOverflow)?;
-        let state = self.state.clone();
+        let state = Arc::clone(&self.state);
         self.last_transaction_id = transaction_id;
         Ok(WriteTransaction {
             database: self,
             state,
             transaction_id,
             dirty: false,
+            lock,
         })
     }
 
@@ -225,14 +235,14 @@ impl Database {
     ///
     /// This method is `O(query length + catalog lookup cost)`.
     pub fn prepare(&self, language: QueryLanguage, query: &str) -> Result<PreparedQuery, DbError> {
-        PreparedQuery::prepare(language, query, &self.state)
+        PreparedQuery::prepare(language, query, self.state.as_ref())
     }
 
     /// Builds a handle from stored state.
     fn from_stored(path: PathBuf, stored: StoredDatabase) -> Self {
         Self {
             path,
-            state: stored.state,
+            state: Arc::new(stored.state),
             visible_commit_seq: stored.commit_seq,
             last_transaction_id: stored.transaction_id,
         }
@@ -243,7 +253,8 @@ impl Database {
         StoredDatabase {
             commit_seq: self.visible_commit_seq,
             transaction_id: self.last_transaction_id,
-            state: self.state.clone(),
+            generation: CheckpointGeneration::new(0),
+            state: self.state.as_ref().clone(),
         }
     }
 
@@ -335,12 +346,14 @@ pub struct ReadPin {
 ///
 /// # Performance
 ///
-/// Moving a read transaction is `O(database state size)`.
+/// Creating and moving a read transaction is `O(1)`: the pinned state is shared
+/// through an atomically reference-counted handle, not copied.
 pub struct ReadTransaction {
     /// Pinned generation coordinates.
     pin: ReadPin,
-    /// Cloned visible state.
-    state: DatabaseState,
+    /// Shared pinned visible state for this reader's generation; cloning the
+    /// transaction shares the state instead of copying it.
+    state: Arc<DatabaseState>,
     /// Materialized graph projections cached for the pinned commit, keyed by
     /// projection ID. The stored [`CommitSeq`] guards against reuse across a
     /// commit-sequence advance; within one read it is always the pin's seq.
@@ -376,7 +389,7 @@ impl ReadTransaction {
     ///
     /// This method is `O(1)`.
     #[must_use]
-    pub const fn catalog(&self) -> &Catalog {
+    pub fn catalog(&self) -> &Catalog {
         self.state.catalog()
     }
 
@@ -408,6 +421,26 @@ impl ReadTransaction {
     #[must_use]
     pub fn incidence_count(&self) -> usize {
         self.state.incidence_count()
+    }
+
+    /// Returns every visible element id in id order.
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(element count)`.
+    #[must_use]
+    pub fn element_ids(&self) -> Vec<ElementId> {
+        self.state.elements().map(|record| record.id).collect()
+    }
+
+    /// Returns every visible relation id in id order.
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(relation count)`.
+    #[must_use]
+    pub fn relation_ids(&self) -> Vec<RelationId> {
+        self.state.relations().map(|record| record.id).collect()
     }
 
     /// Returns whether an element exists.
@@ -639,7 +672,7 @@ impl ReadTransaction {
             .ok_or(DbError::UnknownProjection { id })?;
         let graph = match &entry.definition {
             ProjectionDefinition::Graph(definition) => {
-                projection::GraphProjection::from_state(&self.state, definition.clone())?
+                projection::GraphProjection::from_state(self.state.as_ref(), definition.clone())?
             }
             ProjectionDefinition::Hypergraph(_definition) => {
                 return Err(DbError::invalid_projection("projection is not a graph"));
@@ -743,7 +776,10 @@ impl ReadTransaction {
             .ok_or(DbError::UnknownProjection { id })?;
         let hyper = match &entry.definition {
             ProjectionDefinition::Hypergraph(definition) => {
-                projection::HypergraphProjection::from_state(&self.state, definition.clone())?
+                projection::HypergraphProjection::from_state(
+                    self.state.as_ref(),
+                    definition.clone(),
+                )?
             }
             ProjectionDefinition::Graph(_definition) => {
                 return Err(DbError::invalid_projection(
@@ -769,7 +805,7 @@ impl ReadTransaction {
     ///
     /// This method is `O(plan output + projection build cost when used)`.
     pub fn execute(&self, query: &PreparedQuery) -> Result<QueryResult, DbError> {
-        query.execute(&self.state)
+        query.execute(self.state.as_ref())
     }
 
     /// Explains a prepared query.
@@ -807,19 +843,39 @@ impl ReadTransaction {
 ///
 /// # Performance
 ///
-/// Moving a writer is `O(database state size)`.
+/// Creating and moving a writer is `O(1)`; the staged state is copied from the
+/// shared committed base only on the first mutation (copy-on-write).
 pub struct WriteTransaction<'db> {
     /// Database receiving the commit.
     database: &'db mut Database,
-    /// Staged state after mutations.
-    state: DatabaseState,
+    /// Staged state: shares the committed base until the first mutation copies
+    /// it (copy-on-write), so `begin_write` and empty/rolled-back transactions
+    /// do not clone the whole state.
+    state: Arc<DatabaseState>,
     /// Writer transaction ID.
     transaction_id: TransactionId,
     /// Whether this transaction changed visible state.
     dirty: bool,
+    /// Held single-writer lock, released when this transaction drops.
+    #[expect(
+        dead_code,
+        reason = "held only to release the single-writer lock on drop"
+    )]
+    lock: WriterLock,
 }
 
 impl WriteTransaction<'_> {
+    /// Returns mutable access to the staged state, copying the shared committed
+    /// base on the first mutation (copy-on-write).
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(database state size)` on the first mutation after
+    /// `begin_write`, and `O(1)` thereafter.
+    fn state_mut(&mut self) -> &mut DatabaseState {
+        Arc::make_mut(&mut self.state)
+    }
+
     /// Registers a structural incidence role.
     ///
     /// # Errors
@@ -830,7 +886,7 @@ impl WriteTransaction<'_> {
     ///
     /// This method is `O(log role count + name length)`.
     pub fn register_role(&mut self, name: impl Into<String>) -> Result<RoleId, DbError> {
-        let id = self.state.register_role(name.into())?;
+        let id = self.state_mut().register_role(name.into())?;
         self.dirty = true;
         Ok(id)
     }
@@ -845,7 +901,7 @@ impl WriteTransaction<'_> {
     ///
     /// This method is `O(log label count + name length)`.
     pub fn register_label(&mut self, name: impl Into<String>) -> Result<LabelId, DbError> {
-        let id = self.state.register_label(name.into())?;
+        let id = self.state_mut().register_label(name.into())?;
         self.dirty = true;
         Ok(id)
     }
@@ -863,7 +919,7 @@ impl WriteTransaction<'_> {
         &mut self,
         name: impl Into<String>,
     ) -> Result<RelationTypeId, DbError> {
-        let id = self.state.register_relation_type(name.into())?;
+        let id = self.state_mut().register_relation_type(name.into())?;
         self.dirty = true;
         Ok(id)
     }
@@ -884,7 +940,7 @@ impl WriteTransaction<'_> {
         value_type: PropertyType,
     ) -> Result<PropertyKeyId, DbError> {
         let id = self
-            .state
+            .state_mut()
             .register_property_key(name.into(), family, value_type)?;
         self.dirty = true;
         Ok(id)
@@ -904,7 +960,7 @@ impl WriteTransaction<'_> {
         &mut self,
         definition: ProjectionDefinition,
     ) -> Result<ProjectionId, DbError> {
-        let id = self.state.define_projection(definition)?;
+        let id = self.state_mut().define_projection(definition)?;
         self.dirty = true;
         Ok(id)
     }
@@ -924,7 +980,7 @@ impl WriteTransaction<'_> {
         name: impl Into<String>,
         definition: IndexDefinition,
     ) -> Result<IndexId, DbError> {
-        let id = self.state.define_index(name.into(), definition)?;
+        let id = self.state_mut().define_index(name.into(), definition)?;
         self.dirty = true;
         Ok(id)
     }
@@ -939,7 +995,7 @@ impl WriteTransaction<'_> {
     ///
     /// This method is `O(log element count)`.
     pub fn create_element(&mut self) -> Result<ElementId, DbError> {
-        let id = self.state.create_element()?;
+        let id = self.state_mut().create_element()?;
         self.dirty = true;
         Ok(id)
     }
@@ -954,7 +1010,7 @@ impl WriteTransaction<'_> {
     ///
     /// This method is `O(log relation count)`.
     pub fn create_relation(&mut self) -> Result<RelationId, DbError> {
-        let id = self.state.create_relation()?;
+        let id = self.state_mut().create_relation()?;
         self.dirty = true;
         Ok(id)
     }
@@ -975,7 +1031,7 @@ impl WriteTransaction<'_> {
         element: ElementId,
         role: RoleId,
     ) -> Result<IncidenceId, DbError> {
-        let id = self.state.create_incidence(relation, element, role)?;
+        let id = self.state_mut().create_incidence(relation, element, role)?;
         self.dirty = true;
         Ok(id)
     }
@@ -990,7 +1046,7 @@ impl WriteTransaction<'_> {
     ///
     /// This method is `O(incidence count)`.
     pub fn tombstone_element(&mut self, id: ElementId) -> Result<(), DbError> {
-        self.state.tombstone_element(id)?;
+        self.state_mut().tombstone_element(id)?;
         self.dirty = true;
         Ok(())
     }
@@ -1005,7 +1061,7 @@ impl WriteTransaction<'_> {
     ///
     /// This method is `O(incidence count)`.
     pub fn tombstone_relation(&mut self, id: RelationId) -> Result<(), DbError> {
-        self.state.tombstone_relation(id)?;
+        self.state_mut().tombstone_relation(id)?;
         self.dirty = true;
         Ok(())
     }
@@ -1020,7 +1076,7 @@ impl WriteTransaction<'_> {
     ///
     /// This method is `O(log incidence count)`.
     pub fn tombstone_incidence(&mut self, id: IncidenceId) -> Result<(), DbError> {
-        self.state.tombstone_incidence(id)?;
+        self.state_mut().tombstone_incidence(id)?;
         self.dirty = true;
         Ok(())
     }
@@ -1035,7 +1091,7 @@ impl WriteTransaction<'_> {
     ///
     /// This method is `O(log element count + log label count)`.
     pub fn add_element_label(&mut self, element: ElementId, label: LabelId) -> Result<(), DbError> {
-        self.state.add_element_label(element, label)?;
+        self.state_mut().add_element_label(element, label)?;
         self.dirty = true;
         Ok(())
     }
@@ -1054,7 +1110,7 @@ impl WriteTransaction<'_> {
         relation: RelationId,
         label: LabelId,
     ) -> Result<(), DbError> {
-        self.state.add_relation_label(relation, label)?;
+        self.state_mut().add_relation_label(relation, label)?;
         self.dirty = true;
         Ok(())
     }
@@ -1073,7 +1129,8 @@ impl WriteTransaction<'_> {
         relation: RelationId,
         relation_type: RelationTypeId,
     ) -> Result<(), DbError> {
-        self.state.set_relation_type(relation, relation_type)?;
+        self.state_mut()
+            .set_relation_type(relation, relation_type)?;
         self.dirty = true;
         Ok(())
     }
@@ -1094,7 +1151,7 @@ impl WriteTransaction<'_> {
         key: PropertyKeyId,
         value: PropertyValue,
     ) -> Result<(), DbError> {
-        self.state.set_property(subject, key, value)?;
+        self.state_mut().set_property(subject, key, value)?;
         self.dirty = true;
         Ok(())
     }
@@ -1113,7 +1170,7 @@ impl WriteTransaction<'_> {
         subject: PropertySubject,
         key: PropertyKeyId,
     ) -> Result<(), DbError> {
-        self.state.remove_property(subject, key)?;
+        self.state_mut().remove_property(subject, key)?;
         self.dirty = true;
         Ok(())
     }
@@ -1128,16 +1185,20 @@ impl WriteTransaction<'_> {
     /// # Performance
     ///
     /// This method is `O(serialized database bytes)`.
-    pub fn commit(self) -> Result<CommitSeq, DbError> {
+    pub fn commit(mut self) -> Result<CommitSeq, DbError> {
         let commit_seq = if self.dirty {
             self.database.next_commit_seq()?
         } else {
             self.database.visible_commit_seq
         };
+        if self.dirty {
+            self.state_mut().rebuild_membership_indexes();
+        }
         let stored = StoredDatabase {
             commit_seq,
             transaction_id: self.transaction_id,
-            state: self.state.clone(),
+            generation: CheckpointGeneration::new(0),
+            state: self.state.as_ref().clone(),
         };
         storage::write_store(&self.database.path, &stored)?;
         self.database.state = self.state;

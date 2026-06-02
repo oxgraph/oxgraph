@@ -1,0 +1,62 @@
+id: 41
+name: OXGDB base+overlay write path, writer lock, and typed compound query predicate
+description: Copy-on-write transaction staging, a single-writer lock, and a typed compound OxQL element predicate
+targets:
+  shape_ids:
+  - 16
+  - 33
+  - 34
+  - 35
+status: proposed
+version_impact: major
+intent:
+  kind: amendment
+  summary: Land the base+overlay write path reserved by shape 16 as Arc copy-on-write staging, add a single-writer lock, and grow the OxQL element WHERE clause into a typed compound predicate (AND/OR plus ordered comparisons) over the shared query core.
+  source: human
+  rationale: |
+    Amendment 40 landed the zero-copy typed-section store and the borrowing read
+    path and documented the base+delta overlay write path as the next step. This
+    amendment lands it. `Database` now holds its committed `DatabaseState` behind
+    an `Arc`; `begin_read` and `begin_write` clone that handle in `O(1)` and the
+    writer copies the state lazily on its first mutation via `Arc::make_mut`
+    (copy-on-write). An empty or rolled-back write transaction therefore never
+    clones the state, and commit folds the staged copy back as the new shared
+    base and bumps the commit sequence. This is the shape 16 mutation-capability
+    overlay model and the shape 33 `O(1)` reader/writer-handle contract, made
+    real; the public transaction API is unchanged.
+
+    Cross-process safety gains a single-writer lock: `begin_write` acquires a
+    `store.lock` guard created with `OpenOptions::create_new` (atomic O_EXCL, no
+    new dependency), released on guard drop. Readers never touch it.
+
+    The OxQL element frontend (shape 35) and query core (shape 34) grow a typed
+    compound predicate. `MATCH ELEMENTS WHERE ...` now parses a boolean tree
+    (`OR` over `AND` over comparisons, parentheses overriding precedence) with
+    the ordered comparison operators `=`, `<`, `<=`, `>`, `>=`. A lone `key =
+    value` still lowers to the indexed equality fast path; any compound or
+    ordered predicate lowers to a bound predicate tree evaluated per element
+    against the typed property store. Binding remains the single catalog seam, so
+    family/type validation and error surfaces are unchanged. Both parser and
+    evaluator are private to `query.rs`; the public prepare/execute/explain API
+    is unchanged.
+initiated_by:
+  type: human
+realization:
+- bindings:
+  - scheme: path
+    value: crates/oxgraph-db/src/database.rs
+    metadata:
+      summary: Committed DatabaseState moved behind an Arc; begin_read/begin_write are O(1) handle clones; the writer stages via Arc::make_mut (copy-on-write on first mutation) and acquires the single-writer lock; commit folds the staged copy back as the new shared base.
+  - scheme: path
+    value: crates/oxgraph-db/src/lock.rs
+    metadata:
+      summary: WriterLock RAII guard over store.lock created with OpenOptions::create_new (atomic O_EXCL) and removed on drop, surfacing a held lock as a typed DbError.
+  - scheme: path
+    value: crates/oxgraph-db/src/query.rs
+    metadata:
+      summary: Typed compound element predicate (LogicalPredicate/BoundPredicate with CompareOp and recursive-descent OR/AND/comparison parsing); a lone equality keeps the indexed fast path, compound/ordered predicates lower to a per-element evaluator over the typed property store.
+  - scheme: path
+    value: crates/oxgraph-db/tests/e2e.rs
+    metadata:
+      summary: End-to-end coverage of compound WHERE predicates (OR union, AND intersection, ordered comparisons, AND-over-OR precedence, parentheses override, and prepare-time rejection of malformed predicates), plus the existing transaction/recovery suites passing against the copy-on-write write path.
+  role: primary

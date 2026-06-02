@@ -1383,7 +1383,7 @@ dependencies = [
  "oxgraph-topology",
  "proptest",
  "serde",
- "serde_json",
+ "zerocopy",
 ]
 
 [[package]]

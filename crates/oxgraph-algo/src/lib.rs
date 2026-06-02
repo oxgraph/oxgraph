@@ -55,6 +55,15 @@ extern crate std;
 pub mod bfs;
 pub mod pagerank;
 
+#[cfg(feature = "alloc")]
+pub mod components;
+#[cfg(feature = "alloc")]
+pub mod scc;
+#[cfg(feature = "alloc")]
+pub mod sssp;
+#[cfg(feature = "alloc")]
+pub mod toposort;
+
 pub use bfs::{
     BfsBounds, BfsEpochScratch, BfsError, BfsVisitor, BreadthFirstSearchEpochScratch,
     BreadthFirstSearchScratch, ReverseBreadthFirstSearchEpochScratch,
@@ -76,6 +85,8 @@ pub use bfs::{
     HashBreadthFirstSearch, HashReverseBreadthFirstSearch, breadth_first_search_generic_hash,
     reverse_breadth_first_search_generic_hash,
 };
+#[cfg(feature = "alloc")]
+pub use components::connected_components;
 pub use pagerank::{
     HyperWeighted, HypergraphOutgoingDistribution, HypergraphPageRankScratch, IntoPageRankScalar,
     OutgoingDistribution, PageRankConfig, PageRankError, PageRankReport, PageRankScalar,
@@ -87,3 +98,9 @@ pub use pagerank::{
     HypergraphPageRankWorkspace, PageRankWorkspace, pagerank_graph, pagerank_graph_with_workspace,
     pagerank_hypergraph, pagerank_hypergraph_with_workspace,
 };
+#[cfg(feature = "alloc")]
+pub use scc::strongly_connected_components;
+#[cfg(feature = "alloc")]
+pub use sssp::shortest_path_lengths;
+#[cfg(feature = "alloc")]
+pub use toposort::{ToposortError, topological_sort};

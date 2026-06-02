@@ -1,0 +1,72 @@
+id: 40
+name: OXGDB zero-copy typed-section store
+description: OXGDB zero-copy typed-section store replacing the JSON state blob
+targets:
+  shape_ids:
+  - 30
+  - 31
+  - 32
+  - 33
+status: proposed
+version_impact: major
+intent:
+  kind: amendment
+  summary: Replace the single serde-JSON DB_STATE section with typed little-endian DATABASE_BAND sections (header, catalog records plus string table, topology records, and typed property records), validated zero-copy on open.
+  source: human
+  rationale: |
+    The embedded database previously serialized its entire `DatabaseState` to
+    one opaque serde-JSON snapshot section and validated reads by re-encoding
+    the whole blob and byte-comparing. That defeated the substrate's zero-copy
+    promise at the product layer: every open parsed and re-encoded the whole
+    store. The greenfield store format is now a set of `zerocopy`-derived,
+    little-endian record sections inside the reserved `DATABASE_BAND`
+    (0x0300..0x0400): a fixed header carrying the format version, the
+    commit/transaction/checkpoint-generation stamps, and the nine id
+    allocators; catalog records (roles, labels, relation types, property keys,
+    and projection/index definition bodies) keyed into a single string table;
+    element/relation/incidence records with side label runs; and typed property
+    records with a side text blob. Reads borrow the fixed records directly from
+    the mapped bytes; only variable-length names, labels, and text are copied
+    out. The double-encode canonical check is replaced by an exact-length
+    invariant (every section is byte-aligned, so the canonical length is the
+    header plus the section table plus the contiguous payloads), which still
+    rejects trailing or truncated bytes. `serde_map.rs` and the JSON codec path
+    are deleted outright per the greenfield posture. `CheckpointGeneration`,
+    previously declared but unwired, is now the durable header generation stamp.
+    The public `Database`/transaction API is unchanged; the rewrite is internal
+    to the store format. The base+delta overlay write path reserved by shape 16
+    remains the documented next step; this amendment lands the persisted format
+    and read path it will freeze into.
+initiated_by:
+  type: human
+realization:
+- bindings:
+  - scheme: path
+    value: crates/oxgraph-db/src/wire.rs
+    metadata:
+      summary: New DATABASE_BAND section-kind map and the fixed zerocopy records (header, catalog, topology, property) plus the family/type/relation-type/subject wire mappings, with a compile-time band check.
+  - scheme: path
+    value: crates/oxgraph-db/src/freeze.rs
+    metadata:
+      summary: New freeze/open encoding of a StoredDatabase into typed DATABASE_BAND sections and decoding it back zero-copy, including the exact-length integrity check that replaces the JSON double-encode.
+  - scheme: path
+    value: crates/oxgraph-db/src/storage.rs
+    metadata:
+      summary: Store payload bundle (now carrying the checkpoint generation) and crash-atomic publication routed through the typed freeze/open format instead of serde-JSON.
+  - scheme: path
+    value: crates/oxgraph-db/src/state.rs
+    metadata:
+      summary: DatabaseState drops its serde derives and serde_map attributes and gains a NextIds accessor, a property iterator, and a from_parts open constructor that preserves canonical ids.
+  - scheme: path
+    value: crates/oxgraph-db/src/catalog.rs
+    metadata:
+      summary: Catalog drops its serde derives and serde_map attributes; it is rebuilt on open through the existing insert helpers.
+  - scheme: path
+    value: crates/oxgraph-db/src/error.rs
+    metadata:
+      summary: The serde-JSON codec error variant and conversion are removed; store-format failures surface as InvalidStore.
+  - scheme: path
+    value: crates/oxgraph-db/tests
+    metadata:
+      summary: The end-to-end round-trip, recovery, and corrupt-store tests pass against the typed-section format, with corruption now rejected by the exact-length invariant.
+  role: primary

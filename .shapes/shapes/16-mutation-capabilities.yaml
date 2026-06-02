@@ -34,6 +34,7 @@ intent:
     full mutation semantics out of scope until they have their own pressure and rules.
 amendment_log:
 - 8
+- 41
 parents:
 - id: 1
   role: pending

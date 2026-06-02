@@ -43,5 +43,10 @@ name = "pagerank"
 harness = false
 required-features = ["std"]
 
+[[bench]]
+name = "graph_algorithms"
+harness = false
+required-features = ["std"]
+
 [lints]
 workspace = true

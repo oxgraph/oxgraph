@@ -87,20 +87,61 @@ impl PropertySubject {
     }
 }
 
+/// The nine monotonic id allocators, captured for the store header in a fixed
+/// order.
+///
+/// # Performance
+///
+/// Copying is `O(1)`.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct NextIds {
+    /// Next element id candidate.
+    pub(crate) element: ElementId,
+    /// Next relation id candidate.
+    pub(crate) relation: RelationId,
+    /// Next incidence id candidate.
+    pub(crate) incidence: IncidenceId,
+    /// Next role id candidate.
+    pub(crate) role: RoleId,
+    /// Next label id candidate.
+    pub(crate) label: LabelId,
+    /// Next relation-type id candidate.
+    pub(crate) relation_type: RelationTypeId,
+    /// Next property-key id candidate.
+    pub(crate) property_key: PropertyKeyId,
+    /// Next projection id candidate.
+    pub(crate) projection: ProjectionId,
+    /// Next index id candidate.
+    pub(crate) index: IndexId,
+}
+
+/// Decoded database parts handed to [`DatabaseState::from_parts`] by the store
+/// open path; bundling them keeps the constructor within the argument budget.
+pub(crate) struct DatabaseParts {
+    /// Visible elements keyed by id.
+    pub(crate) elements: BTreeMap<ElementId, ElementRecord>,
+    /// Visible relations keyed by id.
+    pub(crate) relations: BTreeMap<RelationId, RelationRecord>,
+    /// Visible incidences keyed by id.
+    pub(crate) incidences: BTreeMap<IncidenceId, IncidenceRecord>,
+    /// Property values keyed by subject and property key.
+    pub(crate) properties: BTreeMap<PropertySubject, BTreeMap<PropertyKeyId, PropertyValue>>,
+    /// Catalog metadata.
+    pub(crate) catalog: Catalog,
+    /// The nine monotonic id allocators.
+    pub(crate) next: NextIds,
+}
+
 /// Durable canonical database state.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug)]
 pub(crate) struct DatabaseState {
     /// Visible elements keyed by ID.
-    #[serde(with = "crate::serde_map")]
     elements: BTreeMap<ElementId, ElementRecord>,
     /// Visible relations keyed by ID.
-    #[serde(with = "crate::serde_map")]
     relations: BTreeMap<RelationId, RelationRecord>,
     /// Visible incidences keyed by ID.
-    #[serde(with = "crate::serde_map")]
     incidences: BTreeMap<IncidenceId, IncidenceRecord>,
     /// Property values keyed by subject and property key.
-    #[serde(with = "crate::serde_map::nested")]
     properties: BTreeMap<PropertySubject, BTreeMap<PropertyKeyId, PropertyValue>>,
     /// Catalog metadata.
     catalog: Catalog,
@@ -122,7 +163,34 @@ pub(crate) struct DatabaseState {
     next_projection: ProjectionId,
     /// Next index ID candidate.
     next_index: IndexId,
+    /// Derived membership index: element ids per label (rebuilt on open/commit).
+    label_members: BTreeMap<LabelId, BTreeSet<ElementId>>,
+    /// Derived membership index: relation ids per relation type.
+    relation_type_members: BTreeMap<RelationTypeId, BTreeSet<RelationId>>,
 }
+
+impl PartialEq for DatabaseState {
+    fn eq(&self, other: &Self) -> bool {
+        // The membership indexes are derived from the records, so equality
+        // compares only the canonical data and id allocators.
+        self.elements == other.elements
+            && self.relations == other.relations
+            && self.incidences == other.incidences
+            && self.properties == other.properties
+            && self.catalog == other.catalog
+            && self.next_element == other.next_element
+            && self.next_relation == other.next_relation
+            && self.next_incidence == other.next_incidence
+            && self.next_role == other.next_role
+            && self.next_label == other.next_label
+            && self.next_relation_type == other.next_relation_type
+            && self.next_property_key == other.next_property_key
+            && self.next_projection == other.next_projection
+            && self.next_index == other.next_index
+    }
+}
+
+impl Eq for DatabaseState {}
 
 impl DatabaseState {
     /// Creates an empty canonical state.
@@ -147,7 +215,100 @@ impl DatabaseState {
             next_property_key: PropertyKeyId::new(1),
             next_projection: ProjectionId::new(1),
             next_index: IndexId::new(1),
+            label_members: BTreeMap::new(),
+            relation_type_members: BTreeMap::new(),
         }
+    }
+
+    /// Reconstructs a state from decoded, canonical-id-preserving parts. Used by
+    /// the store open path; callers must pass internally consistent collections.
+    ///
+    /// # Performance
+    ///
+    /// This function is `O(1)`; it moves the supplied collections.
+    pub(crate) fn from_parts(parts: DatabaseParts) -> Self {
+        let mut state = Self {
+            elements: parts.elements,
+            relations: parts.relations,
+            incidences: parts.incidences,
+            properties: parts.properties,
+            catalog: parts.catalog,
+            next_element: parts.next.element,
+            next_relation: parts.next.relation,
+            next_incidence: parts.next.incidence,
+            next_role: parts.next.role,
+            next_label: parts.next.label,
+            next_relation_type: parts.next.relation_type,
+            next_property_key: parts.next.property_key,
+            next_projection: parts.next.projection,
+            next_index: parts.next.index,
+            label_members: BTreeMap::new(),
+            relation_type_members: BTreeMap::new(),
+        };
+        state.rebuild_membership_indexes();
+        state
+    }
+
+    /// Rebuilds the derived label and relation-type membership indexes from the
+    /// canonical records. Called after a batch of mutations (commit) and on open.
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(elements + relations + their labels)`.
+    pub(crate) fn rebuild_membership_indexes(&mut self) {
+        let mut label_members: BTreeMap<LabelId, BTreeSet<ElementId>> = BTreeMap::new();
+        for record in self.elements.values() {
+            for label in &record.labels {
+                label_members.entry(*label).or_default().insert(record.id);
+            }
+        }
+        let mut relation_type_members: BTreeMap<RelationTypeId, BTreeSet<RelationId>> =
+            BTreeMap::new();
+        for record in self.relations.values() {
+            if let Some(relation_type) = record.relation_type {
+                relation_type_members
+                    .entry(relation_type)
+                    .or_default()
+                    .insert(record.id);
+            }
+        }
+        self.label_members = label_members;
+        self.relation_type_members = relation_type_members;
+    }
+
+    /// Returns the nine monotonic id allocators.
+    ///
+    /// # Performance
+    ///
+    /// This function is `O(1)`.
+    pub(crate) const fn next_ids(&self) -> NextIds {
+        NextIds {
+            element: self.next_element,
+            relation: self.next_relation,
+            incidence: self.next_incidence,
+            role: self.next_role,
+            label: self.next_label,
+            relation_type: self.next_relation_type,
+            property_key: self.next_property_key,
+            projection: self.next_projection,
+            index: self.next_index,
+        }
+    }
+
+    /// Iterates every visible `(subject, key, value)` property triple in
+    /// subject-then-key order.
+    ///
+    /// # Performance
+    ///
+    /// Creating the iterator is `O(1)`; a full walk is `O(total properties)`.
+    pub(crate) fn property_iter(
+        &self,
+    ) -> impl Iterator<Item = (PropertySubject, PropertyKeyId, &PropertyValue)> {
+        self.properties.iter().flat_map(|(subject, values)| {
+            values
+                .iter()
+                .map(move |(key, value)| (*subject, *key, value))
+        })
     }
 
     /// Returns catalog metadata.
@@ -664,18 +825,18 @@ impl DatabaseState {
 
     /// Returns elements that have `label`.
     pub(crate) fn elements_with_label(&self, label: LabelId) -> Vec<ElementId> {
-        self.elements
-            .values()
-            .filter_map(|record| record.labels.contains(&label).then_some(record.id))
-            .collect()
+        self.label_members
+            .get(&label)
+            .map(|members| members.iter().copied().collect())
+            .unwrap_or_default()
     }
 
     /// Returns relations that have `relation_type`.
     pub(crate) fn relations_with_type(&self, relation_type: RelationTypeId) -> Vec<RelationId> {
-        self.relations
-            .values()
-            .filter_map(|record| (record.relation_type == Some(relation_type)).then_some(record.id))
-            .collect()
+        self.relation_type_members
+            .get(&relation_type)
+            .map(|members| members.iter().copied().collect())
+            .unwrap_or_default()
     }
 
     /// Validates all persisted references.

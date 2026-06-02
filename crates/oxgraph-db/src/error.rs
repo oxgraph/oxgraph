@@ -19,6 +19,8 @@ pub enum DbError {
     AlreadyExists,
     /// Database files do not exist.
     NotFound,
+    /// The single-writer lock is already held by another writer.
+    WriterLockHeld,
     /// Canonical ID space is exhausted.
     IdOverflow,
     /// Transaction ID space is exhausted.
@@ -112,11 +114,6 @@ pub enum DbError {
         /// Underlying IO error.
         source: io::Error,
     },
-    /// Wraps a JSON codec error.
-    Codec {
-        /// Underlying codec error.
-        source: serde_json::Error,
-    },
     /// Wraps a substrate bounded-BFS traversal failure.
     Traversal {
         /// Underlying bounded-BFS error.
@@ -182,6 +179,7 @@ impl fmt::Display for DbError {
         match self {
             Self::AlreadyExists => formatter.write_str("database already exists"),
             Self::NotFound => formatter.write_str("database not found"),
+            Self::WriterLockHeld => formatter.write_str("database writer lock is held"),
             Self::IdOverflow => formatter.write_str("database ID overflow"),
             Self::TransactionIdOverflow => formatter.write_str("transaction ID overflow"),
             Self::CommitSeqOverflow => formatter.write_str("commit sequence overflow"),
@@ -219,7 +217,6 @@ impl fmt::Display for DbError {
             Self::UnsupportedQuery { message } => write!(formatter, "unsupported query: {message}"),
             Self::InvalidStore { message } => write!(formatter, "invalid store: {message}"),
             Self::Io { operation, source } => write!(formatter, "{operation} failed: {source}"),
-            Self::Codec { source } => write!(formatter, "codec error: {source}"),
             Self::Traversal { source } => write!(formatter, "traversal error: {source}"),
         }
     }
@@ -229,10 +226,10 @@ impl std::error::Error for DbError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Io { source, .. } => Some(source),
-            Self::Codec { source } => Some(source),
             Self::Traversal { source } => Some(source),
             Self::AlreadyExists
             | Self::NotFound
+            | Self::WriterLockHeld
             | Self::IdOverflow
             | Self::TransactionIdOverflow
             | Self::CommitSeqOverflow
@@ -254,11 +251,5 @@ impl std::error::Error for DbError {
             | Self::UnsupportedQuery { .. }
             | Self::InvalidStore { .. } => None,
         }
-    }
-}
-
-impl From<serde_json::Error> for DbError {
-    fn from(source: serde_json::Error) -> Self {
-        Self::Codec { source }
     }
 }

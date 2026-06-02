@@ -34,6 +34,7 @@ constraints:
 - 26
 amendment_log:
 - 34
+- 40
 parents:
 - id: 30
   role: component

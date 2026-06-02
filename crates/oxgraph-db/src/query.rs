@@ -114,7 +114,8 @@ impl PreparedQuery {
     ///
     /// # Performance
     ///
-    /// This method is `O(plan output + projection build cost when used)`.
+    /// This method is `O(scanned rows × predicate size + plan output +
+    /// projection build cost when used)`.
     pub(crate) fn execute(&self, state: &DatabaseState) -> Result<QueryResult, DbError> {
         self.plan.execute(state)
     }
@@ -226,6 +227,11 @@ enum QueryPlan {
         /// Required property value.
         value: PropertyValue,
     },
+    /// Filter elements by a bound compound property predicate.
+    ElementFilter {
+        /// Bound predicate tree.
+        predicate: BoundPredicate,
+    },
     /// Scan relations by relation type.
     RelationTypeScan {
         /// Relation type name for explanations.
@@ -251,6 +257,56 @@ enum QueryPlan {
     CatalogScan,
 }
 
+/// Bound element predicate produced by lowering a [`LogicalPredicate`].
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum BoundPredicate {
+    /// `key <op> value` against a resolved key and typed value.
+    Compare {
+        /// Property key name for explanations.
+        key: String,
+        /// Resolved property key id.
+        key_id: PropertyKeyId,
+        /// Comparison operator.
+        op: CompareOp,
+        /// Typed comparison value.
+        value: PropertyValue,
+    },
+    /// Conjunction of two predicates.
+    And(Box<Self>, Box<Self>),
+    /// Disjunction of two predicates.
+    Or(Box<Self>, Box<Self>),
+}
+
+impl BoundPredicate {
+    /// Formats this predicate for plan explanations.
+    fn explain(&self) -> String {
+        match self {
+            Self::Compare { key, op, value, .. } => format!("{key} {} {value}", op.spelling()),
+            Self::And(left, right) => format!("({} AND {})", left.explain(), right.explain()),
+            Self::Or(left, right) => format!("({} OR {})", left.explain(), right.explain()),
+        }
+    }
+
+    /// Returns whether `element` satisfies this predicate in `state`.
+    ///
+    /// A missing property never satisfies a comparison.
+    fn evaluate(&self, state: &DatabaseState, element: ElementId) -> bool {
+        match self {
+            Self::Compare {
+                key_id, op, value, ..
+            } => state
+                .property(PropertySubject::Element(element), *key_id)
+                .is_some_and(|actual| op.matches(actual.cmp(value))),
+            Self::And(left, right) => {
+                left.evaluate(state, element) && right.evaluate(state, element)
+            }
+            Self::Or(left, right) => {
+                left.evaluate(state, element) || right.evaluate(state, element)
+            }
+        }
+    }
+}
+
 impl QueryPlan {
     /// Explains this physical plan.
     fn explain(&self) -> String {
@@ -263,6 +319,9 @@ impl QueryPlan {
             }
             Self::ElementPropertyEqual { key, value, .. } => {
                 format!("oxql property equality lookup elements {key}={value}")
+            }
+            Self::ElementFilter { predicate } => {
+                format!("oxql element filter {}", predicate.explain())
             }
             Self::RelationTypeScan { relation_type, .. } => {
                 format!("oxql relation-type index lookup type={relation_type}")
@@ -294,6 +353,7 @@ impl QueryPlan {
             Self::ElementPropertyEqual { key_id, value, .. } => {
                 scan_elements_with_property(state, *key_id, value)
             }
+            Self::ElementFilter { predicate } => Ok(filter_elements(state, predicate)),
             Self::RelationTypeScan {
                 relation_type_id, ..
             } => Ok(scan_relations_with_type(state, *relation_type_id)),
@@ -356,6 +416,74 @@ enum LogicalOp {
     },
     /// Scan the first graph projection as directed source/relation/target triples.
     CypherDirectedTriples,
+    /// Filter elements by a compound property predicate.
+    ElementWhere {
+        /// Unbound predicate tree carrying raw key names and value tokens.
+        predicate: LogicalPredicate,
+    },
+}
+
+/// Comparison operator in an element property predicate.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CompareOp {
+    /// Equality (`=`).
+    Eq,
+    /// Strictly less than (`<`).
+    Lt,
+    /// Less than or equal (`<=`).
+    Le,
+    /// Strictly greater than (`>`).
+    Gt,
+    /// Greater than or equal (`>=`).
+    Ge,
+}
+
+impl CompareOp {
+    /// Returns whether `ordering` of the stored value against the literal
+    /// satisfies this operator.
+    const fn matches(self, ordering: core::cmp::Ordering) -> bool {
+        use core::cmp::Ordering::{Equal, Greater, Less};
+        match self {
+            Self::Eq => matches!(ordering, Equal),
+            Self::Lt => matches!(ordering, Less),
+            Self::Le => matches!(ordering, Less | Equal),
+            Self::Gt => matches!(ordering, Greater),
+            Self::Ge => matches!(ordering, Greater | Equal),
+        }
+    }
+
+    /// Returns the source spelling of this operator.
+    const fn spelling(self) -> &'static str {
+        match self {
+            Self::Eq => "=",
+            Self::Lt => "<",
+            Self::Le => "<=",
+            Self::Gt => ">",
+            Self::Ge => ">=",
+        }
+    }
+}
+
+/// Raw element predicate parsed from a `WHERE` clause, before catalog binding.
+///
+/// Precedence is `OR` (loosest) over `AND` over comparisons; parentheses
+/// override it. Leaves carry the raw key name and value token; binding resolves
+/// them to catalog ids and typed values.
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum LogicalPredicate {
+    /// `key <op> value` comparison against a raw value token.
+    Compare {
+        /// Unresolved property key name.
+        key: String,
+        /// Comparison operator.
+        op: CompareOp,
+        /// Unparsed property value token.
+        value: String,
+    },
+    /// Conjunction of two predicates.
+    And(Box<Self>, Box<Self>),
+    /// Disjunction of two predicates.
+    Or(Box<Self>, Box<Self>),
 }
 
 /// Parses native `OxQL` into a logical operation without catalog access.
@@ -365,6 +493,13 @@ fn parse_oxql(query: &str) -> Result<LogicalOp, DbError> {
         .iter()
         .map(|token| token.to_ascii_uppercase())
         .collect::<Vec<_>>();
+    if upper.len() >= 3
+        && upper[0].as_str() == "MATCH"
+        && upper[1].as_str() == "ELEMENTS"
+        && upper[2].as_str() == "WHERE"
+    {
+        return parse_element_where(&tokens[3..], &upper[3..]);
+    }
     match upper.as_slice() {
         [command] if command == "CATALOG" => Ok(LogicalOp::CatalogScan),
         [verb, family] if verb == "MATCH" && family == "ELEMENTS" => Ok(LogicalOp::ElementScan),
@@ -382,14 +517,6 @@ fn parse_oxql(query: &str) -> Result<LogicalOp, DbError> {
         {
             Ok(LogicalOp::RelationTypeScan {
                 relation_type: tokens[3].to_owned(),
-            })
-        }
-        [verb, family, r#where, _key, equals, _value]
-            if verb == "MATCH" && family == "ELEMENTS" && r#where == "WHERE" && equals == "=" =>
-        {
-            Ok(LogicalOp::ElementPropertyEqual {
-                key: tokens[3].to_owned(),
-                value: tokens[5].to_owned(),
             })
         }
         [graph, _projection, neighbors, _element]
@@ -488,6 +615,144 @@ fn parse_walk_direction(direction: &str) -> Result<TraversalDirection, DbError> 
     }
 }
 
+/// Parses an `OxQL` element `WHERE` predicate into a logical operation.
+///
+/// Collapses a lone `key = value` to the indexed
+/// [`LogicalOp::ElementPropertyEqual`] fast path; any compound or ordered
+/// predicate becomes [`LogicalOp::ElementWhere`].
+fn parse_element_where(tokens: &[&str], upper: &[String]) -> Result<LogicalOp, DbError> {
+    let mut cursor = 0;
+    let predicate = parse_predicate_or(tokens, upper, &mut cursor)?;
+    if cursor != tokens.len() {
+        return Err(DbError::unsupported(
+            "trailing tokens after WHERE predicate",
+        ));
+    }
+    match predicate {
+        LogicalPredicate::Compare {
+            key,
+            op: CompareOp::Eq,
+            value,
+        } => Ok(LogicalOp::ElementPropertyEqual { key, value }),
+        predicate => Ok(LogicalOp::ElementWhere { predicate }),
+    }
+}
+
+/// Parses a disjunction: `and ( OR and )*`.
+fn parse_predicate_or(
+    tokens: &[&str],
+    upper: &[String],
+    cursor: &mut usize,
+) -> Result<LogicalPredicate, DbError> {
+    let mut left = parse_predicate_and(tokens, upper, cursor)?;
+    while upper.get(*cursor).map(String::as_str) == Some("OR") {
+        *cursor += 1;
+        let right = parse_predicate_and(tokens, upper, cursor)?;
+        left = LogicalPredicate::Or(Box::new(left), Box::new(right));
+    }
+    Ok(left)
+}
+
+/// Parses a conjunction: `factor ( AND factor )*`.
+fn parse_predicate_and(
+    tokens: &[&str],
+    upper: &[String],
+    cursor: &mut usize,
+) -> Result<LogicalPredicate, DbError> {
+    let mut left = parse_predicate_factor(tokens, upper, cursor)?;
+    while upper.get(*cursor).map(String::as_str) == Some("AND") {
+        *cursor += 1;
+        let right = parse_predicate_factor(tokens, upper, cursor)?;
+        left = LogicalPredicate::And(Box::new(left), Box::new(right));
+    }
+    Ok(left)
+}
+
+/// Parses a parenthesized group or a single comparison.
+fn parse_predicate_factor(
+    tokens: &[&str],
+    upper: &[String],
+    cursor: &mut usize,
+) -> Result<LogicalPredicate, DbError> {
+    if tokens.get(*cursor) == Some(&"(") {
+        *cursor += 1;
+        let inner = parse_predicate_or(tokens, upper, cursor)?;
+        if tokens.get(*cursor) != Some(&")") {
+            return Err(DbError::unsupported(
+                "unbalanced parentheses in WHERE predicate",
+            ));
+        }
+        *cursor += 1;
+        return Ok(inner);
+    }
+    parse_comparison(tokens, cursor)
+}
+
+/// Parses one `key <op> value` comparison.
+fn parse_comparison(tokens: &[&str], cursor: &mut usize) -> Result<LogicalPredicate, DbError> {
+    let key = tokens
+        .get(*cursor)
+        .ok_or_else(|| DbError::unsupported("expected property key in WHERE predicate"))?;
+    let operator = tokens
+        .get(*cursor + 1)
+        .ok_or_else(|| DbError::unsupported("expected comparison operator in WHERE predicate"))?;
+    let value = tokens
+        .get(*cursor + 2)
+        .ok_or_else(|| DbError::unsupported("expected value in WHERE predicate"))?;
+    let op = parse_compare_op(operator)?;
+    *cursor += 3;
+    Ok(LogicalPredicate::Compare {
+        key: (*key).to_owned(),
+        op,
+        value: (*value).to_owned(),
+    })
+}
+
+/// Parses one comparison operator token.
+fn parse_compare_op(token: &str) -> Result<CompareOp, DbError> {
+    match token {
+        "=" => Ok(CompareOp::Eq),
+        "<" => Ok(CompareOp::Lt),
+        "<=" => Ok(CompareOp::Le),
+        ">" => Ok(CompareOp::Gt),
+        ">=" => Ok(CompareOp::Ge),
+        _operator => Err(DbError::unsupported(
+            "comparison operator must be =, <, <=, >, or >=",
+        )),
+    }
+}
+
+/// Binds a raw element predicate against the catalog.
+fn bind_predicate(
+    predicate: LogicalPredicate,
+    state: &DatabaseState,
+) -> Result<BoundPredicate, DbError> {
+    match predicate {
+        LogicalPredicate::Compare { key, op, value } => {
+            let key_id = state
+                .catalog()
+                .property_key_id(&key)
+                .ok_or_else(|| DbError::unsupported(format!("unknown property key {key}")))?;
+            let value = parse_value_token(&value).map_err(DbError::unsupported)?;
+            state.validate_lookup_value_for_family(key_id, PropertyFamily::Element, &value)?;
+            Ok(BoundPredicate::Compare {
+                key,
+                key_id,
+                op,
+                value,
+            })
+        }
+        LogicalPredicate::And(left, right) => Ok(BoundPredicate::And(
+            Box::new(bind_predicate(*left, state)?),
+            Box::new(bind_predicate(*right, state)?),
+        )),
+        LogicalPredicate::Or(left, right) => Ok(BoundPredicate::Or(
+            Box::new(bind_predicate(*left, state)?),
+            Box::new(bind_predicate(*right, state)?),
+        )),
+    }
+}
+
 /// Binds a logical operation against the catalog and lowers it to a plan.
 ///
 /// This is the single seam where names resolve to catalog IDs and where
@@ -534,6 +799,9 @@ fn bind_and_lower(op: LogicalOp, state: &DatabaseState) -> Result<QueryPlan, DbE
         } => lower_graph_walk(&projection, &element, options, state),
         LogicalOp::CypherDirectedTriples => Ok(QueryPlan::CypherDirectedTriples {
             projection: first_graph_projection(state)?,
+        }),
+        LogicalOp::ElementWhere { predicate } => Ok(QueryPlan::ElementFilter {
+            predicate: bind_predicate(predicate, state)?,
         }),
     }
 }
@@ -623,6 +891,23 @@ fn scan_elements_with_property(
             })
             .collect(),
     ))
+}
+
+/// Filters elements by a bound compound predicate.
+///
+/// # Performance
+///
+/// `O(elements × predicate nodes)`: one scan, evaluating the predicate per
+/// element. A lone equality is lowered to the indexed property fast path
+/// instead and never reaches this scan.
+fn filter_elements(state: &DatabaseState, predicate: &BoundPredicate) -> QueryResult {
+    QueryResult::new(
+        state
+            .elements()
+            .filter(|record| predicate.evaluate(state, record.id))
+            .map(|record| QueryRow::single(QueryValue::Element(record.id)))
+            .collect(),
+    )
 }
 
 /// Scans relations with one relation type.
