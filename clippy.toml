@@ -3,3 +3,9 @@ excessive-nesting-threshold = 4
 too-many-arguments-threshold = 5
 too-many-lines-threshold = 80
 type-complexity-threshold = 200
+
+# Tests may use unwrap/expect for terse failure on a broken invariant; the
+# expect_used/unwrap_used denials in the workspace lint table still ban them in
+# all non-test (library) code, where the panic discipline actually matters.
+allow-expect-in-tests = true
+allow-unwrap-in-tests = true

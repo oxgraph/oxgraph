@@ -10,8 +10,8 @@ use crate::{
     DbError, ElementId, IncidenceRecord, ProjectionId, PropertyKeyId, PropertySubject,
     PropertyValue, RelationId,
     catalog::{ProjectionDefinition, PropertyFamily},
+    overlay::StateView,
     projection::GraphProjection,
-    state::DatabaseState,
     traversal::{self, TraversalDirection, TraversalOptions},
     value::parse_value_token,
 };
@@ -58,7 +58,7 @@ impl PreparedQuery {
     pub(crate) fn prepare(
         language: QueryLanguage,
         query: &str,
-        state: &DatabaseState,
+        state: &impl StateView,
     ) -> Result<Self, DbError> {
         let trimmed = query.trim();
         if trimmed.is_empty() {
@@ -116,7 +116,7 @@ impl PreparedQuery {
     ///
     /// This method is `O(scanned rows × predicate size + plan output +
     /// projection build cost when used)`.
-    pub(crate) fn execute(&self, state: &DatabaseState) -> Result<QueryResult, DbError> {
+    pub(crate) fn execute(&self, state: &impl StateView) -> Result<QueryResult, DbError> {
         self.plan.execute(state)
     }
 }
@@ -290,13 +290,13 @@ impl BoundPredicate {
     /// Returns whether `element` satisfies this predicate in `state`.
     ///
     /// A missing property never satisfies a comparison.
-    fn evaluate(&self, state: &DatabaseState, element: ElementId) -> bool {
+    fn evaluate(&self, state: &impl StateView, element: ElementId) -> bool {
         match self {
             Self::Compare {
                 key_id, op, value, ..
             } => state
                 .property(PropertySubject::Element(element), *key_id)
-                .is_some_and(|actual| op.matches(actual.cmp(value))),
+                .is_some_and(|actual| op.matches(actual.as_ref().cmp(value))),
             Self::And(left, right) => {
                 left.evaluate(state, element) && right.evaluate(state, element)
             }
@@ -342,7 +342,7 @@ impl QueryPlan {
     }
 
     /// Executes this physical plan.
-    fn execute(&self, state: &DatabaseState) -> Result<QueryResult, DbError> {
+    fn execute(&self, state: &impl StateView) -> Result<QueryResult, DbError> {
         match self {
             Self::ElementScan => Ok(scan_elements(state)),
             Self::RelationScan => Ok(scan_relations(state)),
@@ -725,7 +725,7 @@ fn parse_compare_op(token: &str) -> Result<CompareOp, DbError> {
 /// Binds a raw element predicate against the catalog.
 fn bind_predicate(
     predicate: LogicalPredicate,
-    state: &DatabaseState,
+    state: &impl StateView,
 ) -> Result<BoundPredicate, DbError> {
     match predicate {
         LogicalPredicate::Compare { key, op, value } => {
@@ -758,7 +758,7 @@ fn bind_predicate(
 /// This is the single seam where names resolve to catalog IDs and where
 /// property literals are parsed and family/type-validated. Parsing above never
 /// touches the catalog; execution below never resolves names.
-fn bind_and_lower(op: LogicalOp, state: &DatabaseState) -> Result<QueryPlan, DbError> {
+fn bind_and_lower(op: LogicalOp, state: &impl StateView) -> Result<QueryPlan, DbError> {
     match op {
         LogicalOp::ElementScan => Ok(QueryPlan::ElementScan),
         LogicalOp::RelationScan => Ok(QueryPlan::RelationScan),
@@ -811,7 +811,7 @@ fn lower_graph_walk(
     projection: &str,
     element: &str,
     options: TraversalOptions,
-    state: &DatabaseState,
+    state: &impl StateView,
 ) -> Result<QueryPlan, DbError> {
     let projection = state
         .catalog()
@@ -835,7 +835,7 @@ fn lower_graph_walk(
 }
 
 /// Scans all elements.
-fn scan_elements(state: &DatabaseState) -> QueryResult {
+fn scan_elements(state: &impl StateView) -> QueryResult {
     QueryResult::new(
         state
             .elements()
@@ -845,7 +845,7 @@ fn scan_elements(state: &DatabaseState) -> QueryResult {
 }
 
 /// Scans all relations.
-fn scan_relations(state: &DatabaseState) -> QueryResult {
+fn scan_relations(state: &impl StateView) -> QueryResult {
     QueryResult::new(
         state
             .relations()
@@ -855,7 +855,7 @@ fn scan_relations(state: &DatabaseState) -> QueryResult {
 }
 
 /// Scans all incidences.
-fn scan_incidences(state: &DatabaseState) -> QueryResult {
+fn scan_incidences(state: &impl StateView) -> QueryResult {
     QueryResult::new(
         state
             .incidences()
@@ -865,7 +865,7 @@ fn scan_incidences(state: &DatabaseState) -> QueryResult {
 }
 
 /// Scans elements with one label.
-fn scan_elements_with_label(state: &DatabaseState, label_id: crate::LabelId) -> QueryResult {
+fn scan_elements_with_label(state: &impl StateView, label_id: crate::LabelId) -> QueryResult {
     QueryResult::new(
         state
             .elements_with_label(label_id)
@@ -877,7 +877,7 @@ fn scan_elements_with_label(state: &DatabaseState, label_id: crate::LabelId) -> 
 
 /// Scans elements with a property value.
 fn scan_elements_with_property(
-    state: &DatabaseState,
+    state: &impl StateView,
     key: PropertyKeyId,
     value: &PropertyValue,
 ) -> Result<QueryResult, DbError> {
@@ -900,7 +900,7 @@ fn scan_elements_with_property(
 /// `O(elements × predicate nodes)`: one scan, evaluating the predicate per
 /// element. A lone equality is lowered to the indexed property fast path
 /// instead and never reaches this scan.
-fn filter_elements(state: &DatabaseState, predicate: &BoundPredicate) -> QueryResult {
+fn filter_elements(state: &impl StateView, predicate: &BoundPredicate) -> QueryResult {
     QueryResult::new(
         state
             .elements()
@@ -912,7 +912,7 @@ fn filter_elements(state: &DatabaseState, predicate: &BoundPredicate) -> QueryRe
 
 /// Scans relations with one relation type.
 fn scan_relations_with_type(
-    state: &DatabaseState,
+    state: &impl StateView,
     relation_type: crate::RelationTypeId,
 ) -> QueryResult {
     QueryResult::new(
@@ -925,7 +925,7 @@ fn scan_relations_with_type(
 }
 
 /// Scans catalog entries.
-fn scan_catalog(state: &DatabaseState) -> QueryResult {
+fn scan_catalog(state: &impl StateView) -> QueryResult {
     let rows = state
         .catalog()
         .projections()
@@ -941,7 +941,7 @@ fn scan_catalog(state: &DatabaseState) -> QueryResult {
 
 /// Executes a graph walk.
 fn execute_graph_walk(
-    state: &DatabaseState,
+    state: &impl StateView,
     projection: ProjectionId,
     element: ElementId,
     options: TraversalOptions,
@@ -958,7 +958,7 @@ fn execute_graph_walk(
 
 /// Executes the Cypher directed triple profile.
 fn execute_cypher_triples(
-    state: &DatabaseState,
+    state: &impl StateView,
     projection: ProjectionId,
 ) -> Result<QueryResult, DbError> {
     let graph = graph_projection(state, projection)?;
@@ -978,7 +978,7 @@ fn execute_cypher_triples(
 
 /// Materializes a graph projection by ID.
 fn graph_projection(
-    state: &DatabaseState,
+    state: &impl StateView,
     projection: ProjectionId,
 ) -> Result<GraphProjection, DbError> {
     let entry = state
@@ -996,7 +996,7 @@ fn graph_projection(
 }
 
 /// Finds the first graph projection in catalog order.
-fn first_graph_projection(state: &DatabaseState) -> Result<ProjectionId, DbError> {
+fn first_graph_projection(state: &impl StateView) -> Result<ProjectionId, DbError> {
     state
         .catalog()
         .projections()

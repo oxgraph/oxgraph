@@ -1,33 +1,34 @@
-//! OXGDB v1 freeze/open: encode a [`StoredDatabase`] into typed zero-copy
-//! `DATABASE_BAND` sections and decode it back.
+//! OXGDB v1 base freeze: encode a merged state view into typed zero-copy
+//! `DATABASE_BAND` sections, and the borrowing decoders the base attach reuses.
 //!
-//! Each component — header, catalog, topology, properties — persists as
-//! its own typed section described in [`crate::wire`]. Reading borrows the
-//! fixed records directly from the mapped bytes; only variable-length data
-//! (names, labels, property text, definition bodies) is copied out into the
-//! owned [`StoredDatabase`].
+//! Each component — header, catalog, topology, properties — persists as its own
+//! typed section described in [`crate::wire`]. [`freeze_view`] writes a complete
+//! base file from any [`StateView`] (an empty overlay for `create`, a merged
+//! base+overlay fold for `checkpoint`), finishing with the
+//! [`wire::SECTION_BASE_TRAILER`] CRC. The decoders below ([`typed_records`],
+//! [`raw_blob`], [`decode_catalog`]) borrow the fixed records straight from the
+//! mapped bytes and are shared with [`crate::backing`].
 //!
 //! # Performance
 //!
-//! [`freeze`] is `O(catalog + topology + properties)`; [`open`] is the same,
-//! dominated by rebuilding the owned in-memory collections.
-
-use std::collections::{BTreeMap, BTreeSet};
+//! [`freeze_view`] is `O(catalog + topology + properties)` plus one
+//! `O(base bytes)` trailer CRC scan.
 
 use oxgraph_snapshot::{Snapshot, SnapshotBuilder};
-use zerocopy::byteorder::{LE, U32, U64};
+use zerocopy::{
+    IntoBytes,
+    byteorder::{LE, U32, U64},
+};
 
 use crate::{
-    Catalog, DbError, ElementId, ElementRecord, IncidenceId, IncidenceRecord, IndexId, LabelId,
-    ProjectionId, PropertyKeyId, PropertySubject, PropertyValue, RelationId, RelationRecord,
-    RelationTypeId, RoleId,
+    Catalog, DbError, IndexId, LabelId, ProjectionId, PropertyKeyId, PropertyValue, RelationTypeId,
+    RoleId,
     catalog::{
         GraphProjectionDefinition, HypergraphProjectionDefinition, IndexDefinition,
         ProjectionDefinition, PropertyKeyDefinition,
     },
-    id::{CheckpointGeneration, CommitSeq, TransactionId},
-    state::{DatabaseParts, DatabaseState, NextIds},
-    storage::StoredDatabase,
+    crc,
+    overlay::StateView,
     wire,
 };
 
@@ -47,6 +48,24 @@ const DEF_INDEX_PROPERTY_RANGE: u32 = 3;
 const DEF_INDEX_COMPOSITE_EQUALITY: u32 = 4;
 /// Index definition-body discriminant for projection materialization.
 const DEF_INDEX_PROJECTION: u32 = 5;
+
+/// The durable header stamps a base file records: the checkpoint-time commit
+/// sequence, transaction id, and generation folded into the base. Per the
+/// reconciled design these are a checkpoint snapshot of the folded state, never
+/// consulted as the live frontier (which is derived from the delta-log).
+///
+/// # Performance
+///
+/// Copying is `O(1)`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct FreezeStamps {
+    /// Checkpoint-time committed transaction sequence.
+    pub(crate) commit_seq: u64,
+    /// Checkpoint-time writer transaction id.
+    pub(crate) transaction_id: u64,
+    /// Checkpoint/root generation stamp folded into this base.
+    pub(crate) generation: u64,
+}
 
 /// Converts a `usize` length/offset to `u32`, failing the store rather than
 /// silently truncating an implausibly large value.
@@ -69,6 +88,10 @@ const fn usize_of(value: u32) -> usize {
 
 /// Accumulates UTF-8 names into a contiguous table, returning `(offset, len)`
 /// byte slices for each interned string.
+///
+/// # Performance
+///
+/// `perf: unspecified`; see [`Self::intern`].
 #[derive(Debug, Default)]
 struct StringTable {
     /// Concatenated UTF-8 bytes.
@@ -91,6 +114,11 @@ impl StringTable {
 
 /// Reads a `(offset, len)` UTF-8 slice out of a string/text table.
 ///
+/// # Errors
+///
+/// Returns [`DbError::InvalidStore`] when the slice is out of bounds or not
+/// UTF-8.
+///
 /// # Performance
 ///
 /// This function is `O(len)`.
@@ -110,10 +138,18 @@ fn read_str(table: &[u8], offset: u32, len: u32) -> Result<String, DbError> {
 /// Borrows a typed record slice from a section, or an empty slice when the
 /// section is absent (the store omits empty sections).
 ///
+/// # Errors
+///
+/// Returns [`DbError::InvalidStore`] when the section bytes cannot be borrowed
+/// as a `T` slice.
+///
 /// # Performance
 ///
 /// This function is `O(1)`.
-fn typed_records<'view, T>(snapshot: &Snapshot<'view>, kind: u32) -> Result<&'view [T], DbError>
+pub(crate) fn typed_records<'view, T>(
+    snapshot: &Snapshot<'view>,
+    kind: u32,
+) -> Result<&'view [T], DbError>
 where
     T: zerocopy::FromBytes + zerocopy::Immutable + zerocopy::KnownLayout,
 {
@@ -129,7 +165,7 @@ where
 /// # Performance
 ///
 /// This function is `O(1)`.
-fn raw_blob<'view>(snapshot: &Snapshot<'view>, kind: u32) -> &'view [u8] {
+pub(crate) fn raw_blob<'view>(snapshot: &Snapshot<'view>, kind: u32) -> &'view [u8] {
     snapshot
         .section(kind)
         .map_or(&[][..], |section| section.bytes())
@@ -137,6 +173,10 @@ fn raw_blob<'view>(snapshot: &Snapshot<'view>, kind: u32) -> &'view [u8] {
 
 /// Adds a typed record section, skipping it when empty so the open path can
 /// treat absence as an empty collection.
+///
+/// # Errors
+///
+/// Returns [`DbError::InvalidStore`] when section planning fails.
 ///
 /// # Performance
 ///
@@ -156,6 +196,10 @@ where
 
 /// Adds a raw byte-blob section, skipping it when empty.
 ///
+/// # Errors
+///
+/// Returns [`DbError::InvalidStore`] when section planning fails.
+///
 /// # Performance
 ///
 /// This function is `O(blob.len())`.
@@ -169,43 +213,117 @@ fn add_blob(builder: &mut SnapshotBuilder, kind: u32, blob: Vec<u8>) -> Result<(
     Ok(())
 }
 
-/// Encodes a stored database into deterministic OXGDB v1 snapshot bytes.
+/// Encodes a merged state `view` (plus durable `stamps`) into deterministic
+/// OXGDB v1 base bytes, finishing with a [`wire::SECTION_BASE_TRAILER`] whose
+/// CRC-32C covers every preceding base byte (see [`append_base_trailer`]).
+///
+/// `create` freezes an empty overlay over an empty base; `checkpoint` freezes a
+/// merged base+overlay fold. Either way the input is one [`StateView`], so a
+/// single encoder serves both.
 ///
 /// # Errors
 ///
 /// Returns [`DbError::InvalidStore`] when a length exceeds the `u32` wire
-/// bounds or section planning fails.
+/// bounds, section planning fails, or the trailer cannot be located after
+/// encoding.
 ///
 /// # Performance
 ///
-/// This function is `O(catalog + topology + properties)`.
-pub(crate) fn freeze(stored: &StoredDatabase) -> Result<Vec<u8>, DbError> {
-    let state = &stored.state;
+/// This function is `O(catalog + topology + properties)`; the trailer pass adds
+/// one extra `O(base bytes)` CRC scan.
+pub(crate) fn freeze_view(view: &impl StateView, stamps: FreezeStamps) -> Result<Vec<u8>, DbError> {
     let mut builder = SnapshotBuilder::new();
     let mut strings = StringTable::default();
-    encode_header(&mut builder, stored)?;
-    encode_catalog(&mut builder, state.catalog(), &mut strings)?;
-    encode_topology(&mut builder, state)?;
-    encode_properties(&mut builder, state)?;
+    encode_header(&mut builder, view, stamps)?;
+    encode_catalog(&mut builder, view.catalog(), &mut strings)?;
+    encode_topology(&mut builder, view)?;
+    encode_properties(&mut builder, view)?;
     add_blob(&mut builder, wire::SECTION_STRING_TABLE, strings.bytes)?;
-    builder
+    // The trailer is added LAST so its payload is the final region in the byte
+    // stream; its CRC then covers the entire prefix before it. The CRC field is
+    // a placeholder zero here and is patched after `finish` lays the bytes out.
+    add_typed(
+        &mut builder,
+        wire::SECTION_BASE_TRAILER,
+        &[wire::BaseTrailer {
+            crc32c: U32::new(0),
+            reserved: U32::new(0),
+        }],
+    )?;
+    let mut bytes = builder
         .finish()
-        .map_err(|error| DbError::invalid_store(error.to_string()))
+        .map_err(|error| DbError::invalid_store(error.to_string()))?;
+    append_base_trailer(&mut bytes)?;
+    Ok(bytes)
 }
 
-/// Encodes the fixed header record (version, stamps, id allocators).
+/// Patches the [`wire::SECTION_BASE_TRAILER`] record in already-encoded base
+/// `bytes` with the CRC-32C over every byte preceding the trailer's payload.
+///
+/// The covered range is `bytes[..trailer_payload_offset]`: the container header,
+/// the full section table (including the trailer's own entry, whose
+/// `reserved_checksum` is zero and therefore stable), and every section payload
+/// except the trailer's. The trailer's own payload — the `crc32c` word being
+/// written and its reserved word — is the only excluded region, so the checksum
+/// is self-consistent. The payload offset is located by the address delta
+/// between the trailer section's borrowed payload and the buffer base (no
+/// pointer reinterpretation, `unsafe_code = forbid` preserved).
+///
+/// # Errors
+///
+/// Returns [`DbError::InvalidStore`] when the encoded bytes cannot be reopened,
+/// the trailer section is missing, or its payload is shorter than a
+/// [`wire::BaseTrailer`].
+///
+/// # Performance
+///
+/// This function is `O(base bytes)` for the single CRC scan over the prefix.
+fn append_base_trailer(bytes: &mut [u8]) -> Result<(), DbError> {
+    let payload_offset = {
+        let snapshot =
+            Snapshot::open(bytes).map_err(|error| DbError::invalid_store(error.to_string()))?;
+        let trailer = snapshot
+            .section(wire::SECTION_BASE_TRAILER)
+            .ok_or_else(|| DbError::invalid_store("encoded base is missing its trailer"))?;
+        if trailer.bytes().len() < size_of::<wire::BaseTrailer>() {
+            return Err(DbError::invalid_store("base trailer payload is truncated"));
+        }
+        trailer.bytes().as_ptr().addr() - bytes.as_ptr().addr()
+    };
+    let crc = crc::checksum(
+        bytes
+            .get(..payload_offset)
+            .ok_or_else(|| DbError::invalid_store("base trailer offset out of bounds"))?,
+    );
+    let crc_field = bytes
+        .get_mut(payload_offset..payload_offset + size_of::<U32<LE>>())
+        .ok_or_else(|| DbError::invalid_store("base trailer crc field out of bounds"))?;
+    crc_field.copy_from_slice(U32::<LE>::new(crc).as_bytes());
+    Ok(())
+}
+
+/// Encodes the fixed header record (version, stamps, id allocators) from the
+/// view's watermark.
+///
+/// # Errors
+///
+/// Returns [`DbError::InvalidStore`] when section planning fails.
 ///
 /// # Performance
 ///
 /// This function is `O(1)`.
-fn encode_header(builder: &mut SnapshotBuilder, stored: &StoredDatabase) -> Result<(), DbError> {
-    let next = stored.state.next_ids();
+fn encode_header(
+    builder: &mut SnapshotBuilder,
+    view: &impl StateView,
+    stamps: FreezeStamps,
+) -> Result<(), DbError> {
+    let next = view.next_ids();
     let header = wire::DbHeaderRecord {
         format_version: U32::new(wire::OXGDB_FORMAT_VERSION),
         flags: U32::new(0),
-        commit_seq: U64::new(stored.commit_seq.get()),
-        transaction_id: U64::new(stored.transaction_id.get()),
-        checkpoint_generation: U64::new(stored.generation.get()),
+        commit_seq: U64::new(stamps.commit_seq),
+        transaction_id: U64::new(stamps.transaction_id),
+        checkpoint_generation: U64::new(stamps.generation),
         next_element: U64::new(next.element.get()),
         next_relation: U64::new(next.relation.get()),
         next_incidence: U64::new(next.incidence.get()),
@@ -221,6 +339,11 @@ fn encode_header(builder: &mut SnapshotBuilder, stored: &StoredDatabase) -> Resu
 
 /// Encodes the catalog as record sections plus the definition-body run, interning
 /// every name into `strings`.
+///
+/// # Errors
+///
+/// Returns [`DbError::InvalidStore`] when a name length exceeds the `u32` bounds
+/// or section planning fails.
 ///
 /// # Performance
 ///
@@ -286,6 +409,10 @@ fn encode_catalog(
 
 /// Builds a [`wire::NamedWire`] interning `name`.
 ///
+/// # Errors
+///
+/// Returns [`DbError::InvalidStore`] when the name length exceeds `u32`.
+///
 /// # Performance
 ///
 /// This function is `O(name.len())`.
@@ -299,6 +426,10 @@ fn named_wire(id: u64, name: &str, strings: &mut StringTable) -> Result<wire::Na
 }
 
 /// Builds a [`wire::DefWire`] interning `name`.
+///
+/// # Errors
+///
+/// Returns [`DbError::InvalidStore`] when the name length exceeds `u32`.
 ///
 /// # Performance
 ///
@@ -321,15 +452,22 @@ fn def_wire(
     })
 }
 
-/// Encodes elements, relations, and incidences with their side label runs.
+/// Encodes the merged view's elements, relations, and incidences with their side
+/// label runs. The view yields records in ascending canonical id order, so the
+/// emitted arrays are canonically sorted (the base attach binary-searches them).
+///
+/// # Errors
+///
+/// Returns [`DbError::InvalidStore`] when a label run length or offset exceeds
+/// the `u32` bounds or section planning fails.
 ///
 /// # Performance
 ///
 /// This function is `O(topology size + labels)`.
-fn encode_topology(builder: &mut SnapshotBuilder, state: &DatabaseState) -> Result<(), DbError> {
+fn encode_topology(builder: &mut SnapshotBuilder, view: &impl StateView) -> Result<(), DbError> {
     let mut element_records = Vec::new();
     let mut element_labels: Vec<U64<LE>> = Vec::new();
-    for record in state.elements() {
+    for record in view.elements() {
         let label_off = checked_u32(element_labels.len())?;
         element_labels.extend(record.labels.iter().map(|label| U64::new(label.get())));
         element_records.push(wire::ElementWire {
@@ -343,7 +481,7 @@ fn encode_topology(builder: &mut SnapshotBuilder, state: &DatabaseState) -> Resu
 
     let mut relation_records = Vec::new();
     let mut relation_labels: Vec<U64<LE>> = Vec::new();
-    for record in state.relations() {
+    for record in view.relations() {
         let label_off = checked_u32(relation_labels.len())?;
         relation_labels.extend(record.labels.iter().map(|label| U64::new(label.get())));
         relation_records.push(wire::RelationWire {
@@ -357,7 +495,7 @@ fn encode_topology(builder: &mut SnapshotBuilder, state: &DatabaseState) -> Resu
     add_typed(builder, wire::SECTION_RELATION_LABELS, &relation_labels)?;
 
     let mut incidence_records = Vec::new();
-    for record in state.incidences() {
+    for record in view.incidences() {
         incidence_records.push(wire::IncidenceWire {
             id: U64::new(record.id.get()),
             relation: U64::new(record.relation.get()),
@@ -368,17 +506,25 @@ fn encode_topology(builder: &mut SnapshotBuilder, state: &DatabaseState) -> Resu
     add_typed(builder, wire::SECTION_INCIDENCE_RECORDS, &incidence_records)
 }
 
-/// Encodes typed property records and their side text blob.
+/// Encodes the merged view's typed property records and their side text blob.
+/// The view yields triples in ascending `(subject, key)` order, so the emitted
+/// array is sorted by `(subject_kind, subject_id, key)` (the order the base
+/// attach binary-searches and validates).
+///
+/// # Errors
+///
+/// Returns [`DbError::InvalidStore`] when a text offset/length exceeds `u32` or
+/// section planning fails.
 ///
 /// # Performance
 ///
 /// This function is `O(properties + text bytes)`.
-fn encode_properties(builder: &mut SnapshotBuilder, state: &DatabaseState) -> Result<(), DbError> {
+fn encode_properties(builder: &mut SnapshotBuilder, view: &impl StateView) -> Result<(), DbError> {
     let mut records = Vec::new();
     let mut text: Vec<u8> = Vec::new();
-    for (subject, key, value) in state.property_iter() {
+    for (subject, key, value) in view.properties() {
         let (subject_kind, subject_id) = wire::encode_subject(subject);
-        let (scalar, text_off, text_len) = match value {
+        let (scalar, text_off, text_len) = match value.as_ref() {
             PropertyValue::Boolean(flag) => (u64::from(*flag), 0, 0),
             PropertyValue::Integer(number) => ((*number).cast_unsigned(), 0, 0),
             PropertyValue::Text(string) => {
@@ -401,102 +547,19 @@ fn encode_properties(builder: &mut SnapshotBuilder, state: &DatabaseState) -> Re
     add_blob(builder, wire::SECTION_PROPERTY_TEXT, text)
 }
 
-/// Decodes OXGDB v1 snapshot bytes back into a stored database.
+/// Rebuilds the catalog from its record sections and the definition-body run.
+/// Shared with the base-attach path in [`crate::backing`], which borrows the same
+/// sections.
 ///
 /// # Errors
 ///
-/// Returns [`DbError::InvalidStore`] when the bytes are malformed, carry an
-/// unknown format version, or fail semantic validation.
-///
-/// # Performance
-///
-/// This function is `O(catalog + topology + properties)`.
-pub(crate) fn open(bytes: &[u8]) -> Result<StoredDatabase, DbError> {
-    let snapshot =
-        Snapshot::open(bytes).map_err(|error| DbError::invalid_store(error.to_string()))?;
-    check_exact_length(&snapshot, bytes)?;
-
-    let headers = typed_records::<wire::DbHeaderRecord>(&snapshot, wire::SECTION_DB_HEADER)?;
-    let header = headers
-        .first()
-        .ok_or_else(|| DbError::invalid_store("store is missing the header section"))?;
-    if header.format_version.get() != wire::OXGDB_FORMAT_VERSION {
-        return Err(DbError::invalid_store("unsupported OXGDB format version"));
-    }
-
-    let table = raw_blob(&snapshot, wire::SECTION_STRING_TABLE);
-    let defs = typed_records::<U64<LE>>(&snapshot, wire::SECTION_CATALOG_DEFS)?;
-    let catalog = decode_catalog(&snapshot, table, defs)?;
-    let (elements, relations, incidences) = decode_topology(&snapshot)?;
-    let properties = decode_properties(&snapshot)?;
-
-    let state = DatabaseState::from_parts(DatabaseParts {
-        elements,
-        relations,
-        incidences,
-        properties,
-        catalog,
-        next: read_next_ids(header),
-    });
-    state.validate()?;
-
-    Ok(StoredDatabase {
-        commit_seq: CommitSeq::new(header.commit_seq.get()),
-        transaction_id: TransactionId::new(header.transaction_id.get()),
-        generation: CheckpointGeneration::new(header.checkpoint_generation.get()),
-        state,
-    })
-}
-
-/// Rejects trailing or truncated bytes. Every OXGDB section is byte-aligned, so
-/// the canonical length is the header plus the section table plus the
-/// contiguous payloads; the container otherwise tolerates trailing bytes.
-///
-/// # Performance
-///
-/// This function is `O(section count)`.
-fn check_exact_length(snapshot: &Snapshot<'_>, bytes: &[u8]) -> Result<(), DbError> {
-    let payload_len: usize = snapshot
-        .sections()
-        .map(|section| section.bytes().len())
-        .sum();
-    let expected_len = oxgraph_snapshot::HEADER_SIZE
-        + snapshot.section_count() * oxgraph_snapshot::SECTION_ENTRY_SIZE
-        + payload_len;
-    if bytes.len() == expected_len {
-        Ok(())
-    } else {
-        Err(DbError::invalid_store(
-            "store has trailing or truncated bytes",
-        ))
-    }
-}
-
-/// Reads the nine id allocators from the header record.
-///
-/// # Performance
-///
-/// This function is `O(1)`.
-const fn read_next_ids(header: &wire::DbHeaderRecord) -> NextIds {
-    NextIds {
-        element: ElementId::new(header.next_element.get()),
-        relation: RelationId::new(header.next_relation.get()),
-        incidence: IncidenceId::new(header.next_incidence.get()),
-        role: RoleId::new(header.next_role.get()),
-        label: LabelId::new(header.next_label.get()),
-        relation_type: RelationTypeId::new(header.next_relation_type.get()),
-        property_key: PropertyKeyId::new(header.next_property_key.get()),
-        projection: ProjectionId::new(header.next_projection.get()),
-        index: IndexId::new(header.next_index.get()),
-    }
-}
-
-/// Rebuilds the catalog from its record sections and the definition-body run.
+/// Returns [`DbError::InvalidStore`] when a record is malformed, a name slice is
+/// out of bounds, or a definition kind is unknown.
 ///
 /// # Performance
 ///
 /// This function is `O(catalog entries + name bytes)`.
-fn decode_catalog(
+pub(crate) fn decode_catalog(
     snapshot: &Snapshot<'_>,
     table: &[u8],
     defs: &[U64<LE>],
@@ -548,129 +611,12 @@ fn decode_catalog(
     Ok(catalog)
 }
 
-/// The decoded topology maps returned by [`decode_topology`].
-type DecodedTopology = (
-    BTreeMap<ElementId, ElementRecord>,
-    BTreeMap<RelationId, RelationRecord>,
-    BTreeMap<IncidenceId, IncidenceRecord>,
-);
-
-/// Rebuilds the topology maps from their record and label-run sections.
-///
-/// # Performance
-///
-/// This function is `O(topology size + labels)`.
-fn decode_topology(snapshot: &Snapshot<'_>) -> Result<DecodedTopology, DbError> {
-    let element_labels = typed_records::<U64<LE>>(snapshot, wire::SECTION_ELEMENT_LABELS)?;
-    let mut elements = BTreeMap::new();
-    for record in typed_records::<wire::ElementWire>(snapshot, wire::SECTION_ELEMENT_RECORDS)? {
-        let labels = read_label_set(
-            element_labels,
-            record.label_off.get(),
-            record.label_len.get(),
-        )?;
-        let id = ElementId::new(record.id.get());
-        elements.insert(id, ElementRecord { id, labels });
-    }
-
-    let relation_labels = typed_records::<U64<LE>>(snapshot, wire::SECTION_RELATION_LABELS)?;
-    let mut relations = BTreeMap::new();
-    for record in typed_records::<wire::RelationWire>(snapshot, wire::SECTION_RELATION_RECORDS)? {
-        let labels = read_label_set(
-            relation_labels,
-            record.label_off.get(),
-            record.label_len.get(),
-        )?;
-        let id = RelationId::new(record.id.get());
-        relations.insert(
-            id,
-            RelationRecord {
-                id,
-                relation_type: wire::decode_relation_type(record.relation_type.get()),
-                labels,
-            },
-        );
-    }
-
-    let mut incidences = BTreeMap::new();
-    for record in typed_records::<wire::IncidenceWire>(snapshot, wire::SECTION_INCIDENCE_RECORDS)? {
-        let id = IncidenceId::new(record.id.get());
-        incidences.insert(
-            id,
-            IncidenceRecord {
-                id,
-                relation: RelationId::new(record.relation.get()),
-                element: ElementId::new(record.element.get()),
-                role: RoleId::new(record.role.get()),
-            },
-        );
-    }
-    Ok((elements, relations, incidences))
-}
-
-/// Rebuilds the property map from its record section and text blob.
-///
-/// # Performance
-///
-/// This function is `O(properties + text bytes)`.
-fn decode_properties(
-    snapshot: &Snapshot<'_>,
-) -> Result<BTreeMap<PropertySubject, BTreeMap<PropertyKeyId, PropertyValue>>, DbError> {
-    let text = raw_blob(snapshot, wire::SECTION_PROPERTY_TEXT);
-    let mut properties: BTreeMap<PropertySubject, BTreeMap<PropertyKeyId, PropertyValue>> =
-        BTreeMap::new();
-    for record in typed_records::<wire::PropertyWire>(snapshot, wire::SECTION_PROPERTY_RECORDS)? {
-        let subject = wire::decode_subject(record.subject_kind.get(), record.subject_id.get())
-            .ok_or_else(|| DbError::invalid_store("unknown property subject kind"))?;
-        let value = decode_property_value(record, text)?;
-        properties
-            .entry(subject)
-            .or_default()
-            .insert(PropertyKeyId::new(record.key.get()), value);
-    }
-    Ok(properties)
-}
-
-/// Reads a label set out of a label run by `(offset, len)` element indices.
-///
-/// # Performance
-///
-/// This function is `O(len)`.
-fn read_label_set(run: &[U64<LE>], offset: u32, len: u32) -> Result<BTreeSet<LabelId>, DbError> {
-    let start = usize_of(offset);
-    let end = start
-        .checked_add(usize_of(len))
-        .ok_or_else(|| DbError::invalid_store("label slice overflow"))?;
-    let slice = run
-        .get(start..end)
-        .ok_or_else(|| DbError::invalid_store("label slice out of bounds"))?;
-    Ok(slice.iter().map(|word| LabelId::new(word.get())).collect())
-}
-
-/// Decodes a property value from its record and the shared text blob.
-///
-/// # Performance
-///
-/// This function is `O(value length)` for text and `O(1)` otherwise.
-fn decode_property_value(
-    record: &wire::PropertyWire,
-    text: &[u8],
-) -> Result<PropertyValue, DbError> {
-    let value_type = wire::property_type_from_tag(record.value_tag.get())
-        .ok_or_else(|| DbError::invalid_store("unknown property value tag"))?;
-    Ok(match value_type {
-        crate::PropertyType::Boolean => PropertyValue::Boolean(record.scalar.get() != 0),
-        crate::PropertyType::Integer => PropertyValue::Integer(record.scalar.get().cast_signed()),
-        crate::PropertyType::Text => PropertyValue::Text(read_str(
-            text,
-            record.text_off.get(),
-            record.text_len.get(),
-        )?),
-    })
-}
-
 /// Encodes a projection definition body into the shared `u64` run, returning
 /// its `(kind, offset, len)` in run words.
+///
+/// # Errors
+///
+/// Returns [`DbError::InvalidStore`] when the body length exceeds `u32`.
 ///
 /// # Performance
 ///
@@ -700,6 +646,10 @@ fn encode_projection_def(
 
 /// Encodes an index definition body into the shared `u64` run, returning its
 /// `(kind, offset, len)` in run words.
+///
+/// # Errors
+///
+/// Returns [`DbError::InvalidStore`] when the body length exceeds `u32`.
 ///
 /// # Performance
 ///
@@ -743,6 +693,10 @@ fn encode_index_def(
 
 /// Pushes a length-prefixed id set into the definition run.
 ///
+/// # Errors
+///
+/// Returns [`DbError::InvalidStore`] when the set size exceeds `u32`.
+///
 /// # Performance
 ///
 /// This function is `O(set size)`.
@@ -759,6 +713,10 @@ fn push_id_set(
 }
 
 /// Borrows a definition body slice out of the shared run.
+///
+/// # Errors
+///
+/// Returns [`DbError::InvalidStore`] when the body slice is out of bounds.
 ///
 /// # Performance
 ///
@@ -777,6 +735,10 @@ fn def_body<'run>(
 
 /// Reads a length-prefixed id set starting at `cursor`, advancing it past the
 /// set.
+///
+/// # Errors
+///
+/// Returns [`DbError::InvalidStore`] when the length or slice is out of bounds.
 ///
 /// # Performance
 ///
@@ -801,6 +763,11 @@ fn read_id_set(body: &[U64<LE>], cursor: &mut usize) -> Result<Vec<u64>, DbError
 }
 
 /// Decodes a projection definition from its record and the shared run.
+///
+/// # Errors
+///
+/// Returns [`DbError::InvalidStore`] when the body is malformed or the kind is
+/// unknown.
 ///
 /// # Performance
 ///
@@ -862,6 +829,11 @@ fn decode_projection_def(
 
 /// Decodes an index definition from its record and the shared run.
 ///
+/// # Errors
+///
+/// Returns [`DbError::InvalidStore`] when the body is malformed or the kind is
+/// unknown.
+///
 /// # Performance
 ///
 /// This function is `O(definition size)`.
@@ -895,5 +867,53 @@ fn decode_index_def(record: &wire::DefWire, defs: &[U64<LE>]) -> Result<IndexDef
             projection: ProjectionId::new(first()?),
         }),
         _other => Err(DbError::invalid_store("unknown index definition kind")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use zerocopy::FromBytes;
+
+    use super::*;
+    use crate::overlay::test_support::base_view_from_ops;
+
+    /// Frozen base bytes carry a [`wire::SECTION_BASE_TRAILER`] whose recorded
+    /// CRC equals a fresh CRC-32C recomputed over every byte preceding the
+    /// trailer payload — the exact check [`crate::backing::Base::open`] performs.
+    #[test]
+    fn freeze_emits_base_trailer_with_validating_crc() {
+        let (base, overlay) = base_view_from_ops();
+        let view = crate::overlay::MergedState::new(&base, &overlay);
+        let bytes = freeze_view(
+            &view,
+            FreezeStamps {
+                commit_seq: 42,
+                transaction_id: 43,
+                generation: 44,
+            },
+        )
+        .expect("freeze view");
+
+        let snapshot = Snapshot::open(&bytes).expect("reopen frozen base");
+        let trailer_section = snapshot
+            .section(wire::SECTION_BASE_TRAILER)
+            .expect("frozen base has a trailer section");
+        let payload_offset = trailer_section.bytes().as_ptr().addr() - bytes.as_ptr().addr();
+
+        let trailer = wire::BaseTrailer::ref_from_bytes(trailer_section.bytes())
+            .expect("trailer payload is a BaseTrailer");
+        assert_eq!(
+            trailer.reserved.get(),
+            0,
+            "trailer reserved word must be zero"
+        );
+
+        let recomputed = crc::checksum(&bytes[..payload_offset]);
+        assert_eq!(
+            trailer.crc32c.get(),
+            recomputed,
+            "stored trailer CRC must cover the whole prefix before its payload",
+        );
+        assert_ne!(recomputed, 0, "non-empty base prefix has a non-zero CRC");
     }
 }

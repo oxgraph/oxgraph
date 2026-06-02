@@ -10,18 +10,22 @@
     reason = "internal modules use crate visibility for sibling boundaries while staying unexported"
 )]
 
+pub(crate) mod backing;
 pub(crate) mod catalog;
+pub(crate) mod crc;
 pub(crate) mod database;
 pub(crate) mod error;
 pub(crate) mod freeze;
 pub(crate) mod id;
 pub(crate) mod lock;
+pub(crate) mod overlay;
 pub(crate) mod projection;
 pub(crate) mod query;
 pub(crate) mod state;
 pub(crate) mod storage;
 pub(crate) mod traversal;
 pub(crate) mod value;
+pub(crate) mod wal;
 pub(crate) mod wire;
 
 pub use crate::{

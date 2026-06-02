@@ -118,6 +118,15 @@ pub(crate) const SECTION_CATALOG_INDEXES: u32 = 0x0307;
 ///
 /// `perf: unspecified`; this is a compile-time constant.
 pub(crate) const SECTION_CATALOG_DEFS: u32 = 0x0308;
+/// Base content-integrity trailer: a single [`BaseTrailer`] written last in a
+/// base file, holding the CRC-32C over every base byte preceding the trailer
+/// section. Open recomputes it to fault truncation or in-place corruption into
+/// [`crate::DbError::InvalidStore`] before any borrow.
+///
+/// # Performance
+///
+/// `perf: unspecified`; this is a compile-time constant.
+pub(crate) const SECTION_BASE_TRAILER: u32 = 0x0309;
 /// Element records ([`ElementWire`] array; label runs in
 /// [`SECTION_ELEMENT_LABELS`]).
 ///
@@ -217,7 +226,7 @@ pub(crate) const SECTION_INDEX_LABEL_POSTINGS: u32 = 0x0341;
 /// # Performance
 ///
 /// `perf: unspecified`; this is a compile-time constant.
-pub(crate) const ALL_SECTION_KINDS: [u32; 23] = [
+pub(crate) const ALL_SECTION_KINDS: [u32; 24] = [
     SECTION_DB_HEADER,
     SECTION_STRING_TABLE,
     SECTION_CATALOG_ROLES,
@@ -227,6 +236,7 @@ pub(crate) const ALL_SECTION_KINDS: [u32; 23] = [
     SECTION_CATALOG_PROJECTIONS,
     SECTION_CATALOG_INDEXES,
     SECTION_CATALOG_DEFS,
+    SECTION_BASE_TRAILER,
     SECTION_ELEMENT_RECORDS,
     SECTION_ELEMENT_LABELS,
     SECTION_RELATION_RECORDS,
@@ -502,6 +512,19 @@ pub(crate) const fn property_type_from_tag(tag: u32) -> Option<PropertyType> {
 /// Encodes a property subject into its `(kind, id)` wire pair, where the kind
 /// tag is `0` for elements, `1` for relations, and `2` for incidences.
 ///
+/// # Invariant
+///
+/// These kind tags (`0`/`1`/`2`) are contractually tied to the
+/// [`PropertySubject`] variant declaration order: the derived `Ord` on
+/// [`PropertySubject`] ranks `Element < Relation < Incidence`, which MUST equal
+/// the ascending tag order here. Property records are written in
+/// the former owned-state `property_iter` order (a `BTreeMap<PropertySubject, …>`
+/// walk) and read back via a binary search keyed on `(subject_kind, subject_id,
+/// key)` in `backing::BaseView::property_by_key`. Reordering the variants or
+/// renumbering these tags would silently desynchronize write order from search
+/// order. `backing::attach_view` enforces this at open time with a debug
+/// assertion that the property array is sorted by that triple.
+///
 /// # Performance
 ///
 /// This function is `O(1)`.
@@ -557,6 +580,333 @@ pub(crate) struct PropertyWire {
     pub(crate) text_len: U32<LE>,
 }
 
+/// Base content-integrity trailer record. Exactly one occupies
+/// [`SECTION_BASE_TRAILER`], written last in a base file. Its `crc32c` is the
+/// CRC-32C over every base byte preceding the trailer section, so open can
+/// recompute the checksum and reject a truncated or in-place-corrupted base
+/// before borrowing any section.
+///
+/// # Performance
+///
+/// Copying is `O(1)`; the record is a fixed-size value type.
+#[derive(Clone, Copy, Debug, FromBytes, Immutable, IntoBytes, KnownLayout)]
+#[repr(C)]
+pub(crate) struct BaseTrailer {
+    /// CRC-32C over all base bytes preceding this trailer section.
+    pub(crate) crc32c: U32<LE>,
+    /// Reserved word; must be zero in this format version.
+    pub(crate) reserved: U32<LE>,
+}
+
+/// Eight-byte magic identifying a [`SuperblockRecord`].
+///
+/// # Performance
+///
+/// `perf: unspecified`; this is a compile-time constant.
+pub(crate) const SUPERBLOCK_MAGIC: [u8; 8] = *b"OXGSUPER";
+
+/// Superblock / manifest record stored in `super.oxgdb`. It is the store's
+/// single linearization point: a store's identity is whatever the superblock
+/// names. It is a recovery FLOOR, not the live frontier — it names the base
+/// generation, the last checkpoint LSN folded into that base, and the byte
+/// offset in the delta-log where post-checkpoint records begin. The live
+/// `commit_seq`/`transaction_id` are derived from the valid prefix of the
+/// delta-log; the values here are a checkpoint-time snapshot.
+///
+/// `crc32c` covers all bytes of this record preceding the `crc32c` field; the
+/// `pad` word follows it so the struct has no trailing padding for `IntoBytes`.
+///
+/// # Performance
+///
+/// Copying is `O(1)`; the record is a fixed-size value type.
+#[derive(Clone, Copy, Debug, FromBytes, Immutable, IntoBytes, KnownLayout)]
+#[repr(C)]
+pub(crate) struct SuperblockRecord {
+    /// Format magic; must equal [`SUPERBLOCK_MAGIC`] to open.
+    pub(crate) magic: [u8; 8],
+    /// Base generation named by this superblock.
+    pub(crate) base_generation: U64<LE>,
+    /// Last checkpoint LSN folded into the named base.
+    pub(crate) checkpoint_lsn: U64<LE>,
+    /// Byte offset in the delta-log where post-checkpoint records begin.
+    pub(crate) log_byte_offset: U64<LE>,
+    /// Checkpoint-time commit sequence snapshot.
+    pub(crate) commit_seq: U64<LE>,
+    /// Checkpoint-time writer transaction id snapshot.
+    pub(crate) transaction_id: U64<LE>,
+    /// OXGDB format version; must equal [`OXGDB_FORMAT_VERSION`] to open.
+    pub(crate) format_version: U32<LE>,
+    /// Reserved flag bits; must be zero in this format version.
+    pub(crate) flags: U32<LE>,
+    /// CRC-32C over all preceding bytes of this record.
+    pub(crate) crc32c: U32<LE>,
+    /// Trailing pad word kept zero so the record has no implicit padding.
+    pub(crate) pad: U32<LE>,
+}
+
+/// Byte length of a [`SuperblockRecord`] prefix the `crc32c` field covers: every
+/// field before `crc32c` (the `pad` word that follows it is excluded along with
+/// the checksum itself).
+///
+/// # Performance
+///
+/// `perf: unspecified`; this is a compile-time constant.
+pub(crate) const SUPERBLOCK_CRC_PREFIX_LEN: usize =
+    size_of::<SuperblockRecord>() - size_of::<U32<LE>>() - size_of::<U32<LE>>();
+
+/// Magic word stamped on every [`LogRecordHeader`]; misframing or a foreign
+/// file is caught when this does not match.
+///
+/// # Performance
+///
+/// `perf: unspecified`; this is a compile-time constant.
+pub(crate) const OXGLOGR: u32 = 0x4F58_4C47;
+
+/// Fixed delta-log record header. Each record is this header followed by
+/// `op_count` [`MutationOp`] records and then an optional UTF-8 blob; `len` is
+/// the total record size (header + ops + blob) so a reader skips to the next
+/// record by `len` alone. Fields are grouped `u64`s-then-`u32`s so the
+/// `#[repr(C)]` layout has no padding.
+///
+/// `crc32c` covers the ENTIRE record from the first header byte through the end
+/// of the blob, EXCEPT the four bytes of the `crc32c` field itself; `len` IS
+/// included so a torn `len` is caught by the checksum as well as the bounds
+/// check. `crc32c` is the last field, so the covered prefix of the header is the
+/// contiguous range `[0 .. size_of::<LogRecordHeader>() - 4]`.
+///
+/// # Performance
+///
+/// Copying is `O(1)`; the record is a fixed-size value type.
+#[derive(Clone, Copy, Debug, FromBytes, Immutable, IntoBytes, KnownLayout)]
+#[repr(C)]
+pub(crate) struct LogRecordHeader {
+    /// Base generation this record applies over; must equal the superblock's.
+    pub(crate) base_generation: U64<LE>,
+    /// Log sequence number; strictly ascending across the log.
+    pub(crate) lsn: U64<LE>,
+    /// Writer transaction id that produced the record.
+    pub(crate) txn_id: U64<LE>,
+    /// Record magic; must equal [`OXGLOGR`].
+    pub(crate) magic: U32<LE>,
+    /// Total record byte length (header + ops + blob).
+    pub(crate) len: U32<LE>,
+    /// Number of [`MutationOp`] records following this header.
+    pub(crate) op_count: U32<LE>,
+    /// CRC-32C over the whole record except these four bytes.
+    pub(crate) crc32c: U32<LE>,
+}
+
+/// Number of `U64<LE>` payload words in a [`MutationOp`], sized to the widest
+/// op ([`OP_NEXT_ID_WATERMARK`] carries all nine id allocators).
+///
+/// # Performance
+///
+/// `perf: unspecified`; this is a compile-time constant.
+pub(crate) const MUTATION_OP_PAYLOAD_WORDS: usize = 9;
+
+/// One fixed-size mutation, discriminated by `op_kind`. `flags` packs small
+/// secondary tags (e.g. a property subject kind and value tag, or a property
+/// key's family and value type) without widening the record; `payload` carries
+/// the id words, and variable-length text/name bytes are referenced as
+/// `(offset, len)` words into the record's trailing blob. The op vocabulary
+/// mirrors the the former owned-state model mutators one for one and reuses
+/// the same tag helpers ([`encode_subject`], [`property_family_tag`],
+/// [`property_type_tag`]) as the base format.
+///
+/// # Performance
+///
+/// Copying is `O(1)`; the record is a fixed-size value type.
+#[derive(Clone, Copy, Debug, Eq, FromBytes, Immutable, IntoBytes, KnownLayout, PartialEq)]
+#[repr(C)]
+pub(crate) struct MutationOp {
+    /// Op discriminant; one of the `OP_*` constants.
+    pub(crate) op_kind: U32<LE>,
+    /// Packed secondary tags (see the op packing helpers); zero when unused.
+    pub(crate) flags: U32<LE>,
+    /// Fixed id/offset payload words interpreted per `op_kind`.
+    pub(crate) payload: [U64<LE>; MUTATION_OP_PAYLOAD_WORDS],
+}
+
+/// Creates one element; `payload[0]` is the allocated element id.
+///
+/// # Performance
+///
+/// `perf: unspecified`; this is a compile-time constant.
+pub(crate) const OP_CREATE_ELEMENT: u32 = 1;
+/// Tombstones one element; `payload[0]` is the element id.
+///
+/// # Performance
+///
+/// `perf: unspecified`; this is a compile-time constant.
+pub(crate) const OP_TOMBSTONE_ELEMENT: u32 = 2;
+/// Creates one relation; `payload[0]` is the allocated relation id.
+///
+/// # Performance
+///
+/// `perf: unspecified`; this is a compile-time constant.
+pub(crate) const OP_CREATE_RELATION: u32 = 3;
+/// Tombstones one relation; `payload[0]` is the relation id.
+///
+/// # Performance
+///
+/// `perf: unspecified`; this is a compile-time constant.
+pub(crate) const OP_TOMBSTONE_RELATION: u32 = 4;
+/// Creates one incidence; `payload` holds `(incidence, relation, element,
+/// role)` in that order.
+///
+/// # Performance
+///
+/// `perf: unspecified`; this is a compile-time constant.
+pub(crate) const OP_CREATE_INCIDENCE: u32 = 5;
+/// Tombstones one incidence; `payload[0]` is the incidence id.
+///
+/// # Performance
+///
+/// `perf: unspecified`; this is a compile-time constant.
+pub(crate) const OP_TOMBSTONE_INCIDENCE: u32 = 6;
+/// Sets a relation's type; `payload` holds `(relation, relation_type)`.
+///
+/// # Performance
+///
+/// `perf: unspecified`; this is a compile-time constant.
+pub(crate) const OP_SET_RELATION_TYPE: u32 = 7;
+/// Adds a label to an element; `payload` holds `(element, label)`.
+///
+/// # Performance
+///
+/// `perf: unspecified`; this is a compile-time constant.
+pub(crate) const OP_ADD_ELEMENT_LABEL: u32 = 8;
+/// Adds a label to a relation; `payload` holds `(relation, label)`.
+///
+/// # Performance
+///
+/// `perf: unspecified`; this is a compile-time constant.
+pub(crate) const OP_ADD_RELATION_LABEL: u32 = 9;
+/// Sets a typed property; `flags` packs the subject kind and value tag, and
+/// `payload` holds `(subject_id, key, scalar, text_off, text_len)`.
+///
+/// # Performance
+///
+/// `perf: unspecified`; this is a compile-time constant.
+pub(crate) const OP_SET_PROPERTY: u32 = 10;
+/// Removes a property; `flags` packs the subject kind and `payload` holds
+/// `(subject_id, key)`.
+///
+/// # Performance
+///
+/// `perf: unspecified`; this is a compile-time constant.
+pub(crate) const OP_REMOVE_PROPERTY: u32 = 11;
+/// Registers a catalog role; `payload` holds `(id, name_off, name_len)`.
+///
+/// # Performance
+///
+/// `perf: unspecified`; this is a compile-time constant.
+pub(crate) const OP_CATALOG_REGISTER_ROLE: u32 = 12;
+/// Registers a catalog label; `payload` holds `(id, name_off, name_len)`.
+///
+/// # Performance
+///
+/// `perf: unspecified`; this is a compile-time constant.
+pub(crate) const OP_CATALOG_REGISTER_LABEL: u32 = 13;
+/// Registers a catalog relation type; `payload` holds `(id, name_off,
+/// name_len)`.
+///
+/// # Performance
+///
+/// `perf: unspecified`; this is a compile-time constant.
+pub(crate) const OP_CATALOG_REGISTER_RELATION_TYPE: u32 = 14;
+/// Registers a catalog property key; `flags` packs the family and value type
+/// and `payload` holds `(id, name_off, name_len)`.
+///
+/// # Performance
+///
+/// `perf: unspecified`; this is a compile-time constant.
+pub(crate) const OP_CATALOG_REGISTER_PROPERTY_KEY: u32 = 15;
+/// Registers a catalog projection; `payload` holds `(id, name_off, name_len,
+/// def_off, def_len)`.
+///
+/// # Performance
+///
+/// `perf: unspecified`; this is a compile-time constant.
+pub(crate) const OP_CATALOG_REGISTER_PROJECTION: u32 = 16;
+/// Registers a catalog index; `payload` holds `(id, name_off, name_len,
+/// def_off, def_len)`.
+///
+/// # Performance
+///
+/// `perf: unspecified`; this is a compile-time constant.
+pub(crate) const OP_CATALOG_REGISTER_INDEX: u32 = 17;
+/// Carries the full nine-value next-id watermark; `payload` holds `(element,
+/// relation, incidence, role, label, relation_type, property_key, projection,
+/// index)`. Emitted as the last op of every dirty commit so recovery never
+/// recomputes allocators from live records.
+///
+/// # Performance
+///
+/// `perf: unspecified`; this is a compile-time constant.
+pub(crate) const OP_NEXT_ID_WATERMARK: u32 = 18;
+/// Reserved catalog-drop op kind. v1 is register-only; this value is reserved
+/// so a future catalog-tombstone workstream owns it without renumbering.
+///
+/// # Performance
+///
+/// `perf: unspecified`; this is a compile-time constant.
+pub(crate) const OP_CATALOG_DROP: u32 = 19;
+/// Reserved catalog-rename op kind. v1 is register-only; this value is reserved
+/// for a future workstream.
+///
+/// # Performance
+///
+/// `perf: unspecified`; this is a compile-time constant.
+pub(crate) const OP_CATALOG_RENAME: u32 = 20;
+
+/// Op kinds reserved for a future catalog-tombstone workstream but never emitted
+/// by v1 (catalog is register-only; any drift surfaces as a missing-catalog
+/// lookup at read time). They are listed here so the reservation is referenced
+/// (not dead) and the compile-time check below proves they sit strictly above
+/// every emitted op kind.
+///
+/// # Performance
+///
+/// `perf: unspecified`; this is a compile-time constant.
+pub(crate) const RESERVED_OP_KINDS: [u32; 2] = [OP_CATALOG_DROP, OP_CATALOG_RENAME];
+
+// The reserved op kinds must sit strictly above the highest emitted op kind
+// ([`OP_NEXT_ID_WATERMARK`] = 18) so a future workstream can claim them without
+// renumbering any emitted op.
+const _: () = {
+    assert!(
+        RESERVED_OP_KINDS[0] > OP_NEXT_ID_WATERMARK,
+        "reserved op kind must not collide with an emitted op kind",
+    );
+    assert!(
+        RESERVED_OP_KINDS[1] > RESERVED_OP_KINDS[0],
+        "reserved op kinds must be distinct and ascending",
+    );
+};
+
+/// Packs two `u16`-range tags into a single `flags` `u32`: the low 16 bits of
+/// `low` in the low half and the low 16 bits of `high` in the high half. Used
+/// for property subject-kind + value tag and property-key family + value type,
+/// all of which are `0..=2`, so the high bits are always zero.
+///
+/// # Performance
+///
+/// This function is `O(1)`.
+pub(crate) const fn pack_flags(low: u32, high: u32) -> u32 {
+    (low & 0xFFFF) | ((high & 0xFFFF) << 16)
+}
+
+/// Unpacks a `flags` `u32` produced by [`pack_flags`] into its `(low, high)`
+/// tags (each in the `0..=u16::MAX` range, returned widened to `u32`).
+///
+/// # Performance
+///
+/// This function is `O(1)`.
+pub(crate) const fn unpack_flags(flags: u32) -> (u32, u32) {
+    (flags & 0xFFFF, flags >> 16)
+}
+
 #[cfg(test)]
 mod tests {
     use proptest::prelude::*;
@@ -608,5 +958,36 @@ mod tests {
             );
         }
         assert_eq!(property_type_from_tag(3), None);
+    }
+
+    /// The new format records carry no implicit padding: every field is
+    /// accounted for, which `IntoBytes` requires and recovery's byte-range CRC
+    /// scopes depend on.
+    #[test]
+    fn new_records_have_no_padding() {
+        assert_eq!(size_of::<BaseTrailer>(), 8);
+        // 8 (magic) + 5 * 8 (u64 fields) + 4 * 4 (u32 fields incl. pad) = 64.
+        assert_eq!(size_of::<SuperblockRecord>(), 64);
+        // 3 * 8 (u64 fields) + 4 * 4 (u32 fields) = 40.
+        assert_eq!(size_of::<LogRecordHeader>(), 40);
+        assert_eq!(size_of::<MutationOp>(), 8 + MUTATION_OP_PAYLOAD_WORDS * 8);
+    }
+
+    /// The superblock CRC prefix covers every field before `crc32c` and excludes
+    /// both the checksum and the trailing pad word.
+    #[test]
+    fn superblock_crc_prefix_excludes_crc_and_pad() {
+        assert_eq!(SUPERBLOCK_CRC_PREFIX_LEN, size_of::<SuperblockRecord>() - 8);
+    }
+
+    proptest! {
+        /// Two `u16`-range tags round-trip through the packed `flags` word in
+        /// both positions independently (the packer keeps only the low 16 bits
+        /// of each half).
+        #[test]
+        fn flags_pack_roundtrips(low in any::<u16>(), high in any::<u16>()) {
+            let (low, high) = (u32::from(low), u32::from(high));
+            prop_assert_eq!(unpack_flags(pack_flags(low, high)), (low, high));
+        }
     }
 }
