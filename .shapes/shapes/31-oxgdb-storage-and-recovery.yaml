@@ -1,9 +1,10 @@
 id: 31
 name: OXGDB storage and recovery
 description: |
-  Durable database storage layer: greenfield OXGDB store publication with a
-  fixed zerocopy header, exact-size payload validation, checksums, create/open,
-  corrupt-store detection, and compaction rewrite.
+  Durable database storage layer: an immutable per-generation base snapshot plus
+  an append-only delta-log (WAL) and a superblock linearization point; CRC32C
+  content integrity, create/open, valid-prefix crash recovery, and checkpoint
+  folding the log into a fresh base.
 profile: 1
 status: proposed
 intent:
@@ -11,20 +12,22 @@ intent:
   summary: Durable OXGDB store format, recovery validation, and compaction rewrite
   source: human
   goals: |
-    - Define the on-disk OXGDB store contract using a fixed zerocopy header and
-      a validated product payload.
-    - Store IO-boundary headers with zerocopy-compatible layouts and explicit
-      payload checksums.
-    - Recover deterministically by rejecting malformed, trailing, or
-      checksum-mismatched store bytes.
-    - Publish compaction by validating state and atomically replacing the store.
+    - Define the on-disk OXGDB contract: an immutable base snapshot, an
+      append-only CRC-framed delta-log (WAL), and a superblock floor.
+    - Commit by appending one fsync'd delta frame (O(change)); publish via the
+      atomic superblock rename as the single linearization point.
+    - Recover deterministically by replaying the valid log prefix over the base
+      (torn tail truncates; interior corruption or a CRC mismatch is rejected).
+    - Checkpoint by folding base+overlay into a fresh base generation, rotating
+      the log, and preserving canonical ids.
   non_goals: |
-    No distributed replication, page-store mutation engine, WAL compatibility,
-    manifest compatibility, or stable public ABI promise for OXGDB bytes.
+    No distributed replication, in-place page-store mutation engine, external
+    WAL-format compatibility, or a stable public ABI promise for OXGDB bytes yet.
   rationale: |
-    The Postgres overlay model is not a standalone storage engine. OXGDB needs
-    a crash model, reader-generation protocol, and canonical-ID-preserving
-    compaction before it can be trusted as a database.
+    OXGDB needs a real crash model and an O(change) commit, not a whole-store
+    reprint. An immutable base + append-only delta-log + superblock gives
+    O(change) durable commits, valid-prefix recovery, and canonical-ID-preserving
+    checkpoints, which the earlier reprint design (amendment 40) could not.
 constraints:
 - 11
 - 12
@@ -39,15 +42,16 @@ amendment_log:
 - 34
 - 36
 - 40
+- 42
 parents:
 - id: 30
   role: component
 realization:
 - bindings:
   - scheme: path
-    value: crates/oxgraph-db/src/storage.rs
+    value: crates/oxgraph-db/src/wal.rs
     metadata:
-      summary: OXGDB v1 typed zerocopy DATABASE_BAND sections (header, catalog records and string table, topology records, typed property records), exact-length payload validation, atomic store publication with directory fsync, open, validate, and compaction support.
+      summary: Delta-log (WAL) frame codec, crash-atomic superblock read/write, append_commit (eof-capture + fsync + truncate-back on partial write), and valid-prefix recovery (torn tail truncates; interior corruption / base-generation mismatch is loud). The base format lives in freeze.rs/wire.rs; the atomic temp+rename+fsync helper in storage.rs.
   - scheme: path
     value: crates/oxgraph-db/tests/e2e.rs
     metadata:

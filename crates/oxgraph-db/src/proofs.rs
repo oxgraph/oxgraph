@@ -260,13 +260,15 @@ fn wire_subject_roundtrip() {
     assert_eq!(wire::decode_subject(kind, raw), None);
 }
 
-/// Proves the `flags` word packs and unpacks two `u16` tags losslessly in both
-/// positions, which the property and catalog ops rely on to recover their
+/// Proves the `flags` word packs and unpacks two 16-bit-range tags losslessly in
+/// both positions, which the property and catalog ops rely on to recover their
 /// subject kind / value tag / family / value type.
 #[kani::proof]
 fn wire_flags_pack_roundtrip() {
-    let low: u16 = kani::any();
-    let high: u16 = kani::any();
+    let low: u32 = kani::any();
+    let high: u32 = kani::any();
+    kani::assume(low <= 0xFFFF);
+    kani::assume(high <= 0xFFFF);
     assert_eq!(wire::unpack_flags(wire::pack_flags(low, high)), (low, high));
 }
 

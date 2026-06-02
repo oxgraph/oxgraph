@@ -1,0 +1,110 @@
+id: 42
+name: OXGDB base+overlay+WAL+mmap engine (supersedes reprint and copy-on-write)
+description: Replace whole-store reprint + whole-state copy-on-write with an immutable base + append-only delta-log (WAL) + mmap-borrow engine.
+targets:
+  shape_ids:
+  - 16
+  - 31
+  - 32
+  - 33
+status: proposed
+version_impact: major
+intent:
+  kind: amendment
+  summary: OXGDB is rebuilt on ONE architecture — an immutable per-generation base snapshot read by borrowing zero-copy from a byte buffer (mmap on unix, owned Vec under miri/non-unix), an owned delta overlay, an append-only delta-log (WAL) for O(change) commits, and periodic checkpoint/compaction folding the log into a fresh base. Supersedes the whole-store reprint-on-commit (amendment 40) and whole-DatabaseState copy-on-write write path (amendment 41); that code is deleted, not kept.
+  source: human
+  rationale: |
+    Amendments 40 and 41 landed a zero-copy typed-section store whose commit
+    reprinted the entire store and whose writer copied the entire DatabaseState
+    (copy-on-write). That made every commit O(total) and held the whole database
+    in owned RAM, which downstream consumers (oxcode) compensated for by batching
+    every change into one transaction and by building their own in-memory indexes.
+    This amendment replaces that core with a single architecture.
+
+    On disk (per store directory): base-{g}.oxgdb (an immutable OXGTOPO snapshot
+    of the typed DATABASE_BAND sections, written ONLY at checkpoint),
+    delta-{g}.log (an append-only log of CRC32C-framed commit records — the WAL),
+    and super.oxgdb (a superblock naming the current base generation, the
+    checkpoint LSN, and the log fold offset). The superblock rename is the single
+    linearization point; the live durable frontier is the valid prefix of the log
+    replayed over the base — never the superblock, never the base header.
+
+    In memory: an immutable base read by BORROWING zero-copy from a byte buffer
+    (memmap2 on unix via the new oxgraph-mmap shim crate that isolates the one
+    unavoidable unsafe map call; an owned Vec under miri/non-unix/forced — the
+    SAME borrow code), plus a small owned delta OVERLAY. A Snapshot pairs an
+    Arc<Base> with an Arc<Overlay>; begin_read clones that Arc in O(1) and is
+    Send+Sync; reads merge overlay-over-base with Cow point reads (base-only
+    borrowed, overlay owned, tombstones masked). begin_write layers a WriteOverlay
+    on the current overlay; commit encodes the delta to typed MutationOps, appends
+    one CRC'd frame and fsyncs (eof-capture + truncate-back on partial write),
+    then publishes a fresh immutable Arc<Snapshot> — O(change), not O(total).
+
+    Recovery on open: acquire the advisory writer lock, read+verify the
+    superblock, open the base and verify its content CRC (a new
+    SECTION_BASE_TRAILER), then replay the valid log prefix — a torn tail
+    truncates silently while interior corruption or a base-generation mismatch is
+    a loud DbError. The nine id allocators are recovered as the elementwise
+    maximum of the base header and every replayed frame's watermark, so canonical
+    ids are NEVER reused (preserving the shape-32 identity contract oxcode depends
+    on). Checkpoint folds base+overlay into base-{g+1}, writes a fresh empty
+    delta-{g+1}.log and a new superblock, then unlinks the old generation
+    (base-then-superblock-then-rotate ordering); a CheckpointPolicy auto-folds
+    when the log outgrows the base.
+
+    Property/membership lookups are now real index-backed O(log n + matches)
+    lookups (a derived in-RAM base index + incremental overlay deltas), closing
+    the inert-index limitation that forced oxcode's hand-rolled stable_key map.
+    The single-writer lock becomes an advisory std::fs::File lock (auto-released
+    on crash), replacing the sentinel that could deadlock. oxgraph-db stays
+    unsafe_code=forbid; the only unsafe is the mmap syscall isolated in
+    oxgraph-mmap.
+initiated_by:
+  type: human
+realization:
+- bindings:
+  - scheme: path
+    value: crates/oxgraph-db/src/wal.rs
+    metadata:
+      summary: Delta-log (WAL) frame codec + crash-atomic superblock read/write + append_commit (eof-capture, fsync, truncate-back on partial write) + replay with valid-prefix recovery — a torn tail truncates, interior corruption / base-generation mismatch is loud.
+  - scheme: path
+    value: crates/oxgraph-db/src/wire.rs
+    metadata:
+      summary: SuperblockRecord, LogRecordHeader (magic + base_generation + len-in-CRC), the MutationOp op vocabulary, and SECTION_BASE_TRAILER/BaseTrailer; CRC32C lives in crc.rs.
+  - scheme: path
+    value: crates/oxgraph-db/src/backing.rs
+    metadata:
+      summary: Backing { Mmap | Owned } borrowed zero-copy via a Yoke cart; Base::open verifies the base content CRC before attaching the borrowing BaseView; the mmap call is isolated in oxgraph-mmap so this crate stays unsafe_code=forbid.
+  - scheme: path
+    value: crates/oxgraph-db/src/overlay.rs
+    metadata:
+      summary: Owned delta Overlay over the borrowed base; immutable published overlays; Snapshot{generation,lsn,base,overlay}; StateView merge with Cow point reads and the full adjacency/membership/typed-lookup read surface at DatabaseState parity.
+  - scheme: path
+    value: crates/oxgraph-db/src/index.rs
+    metadata:
+      summary: Derived in-RAM BaseIndex (membership + ordered equality postings) + incremental OverlayIndex deltas; real O(log n + matches) equality/range/composite/membership lookups replacing the O(n) scans.
+  - scheme: path
+    value: crates/oxgraph-db/src/database.rs
+    metadata:
+      summary: Database holds current Arc<Snapshot>; begin_read O(1) Arc::clone (Send+Sync); begin_write &mut self + WriteOverlay; commit = append+fsync then publish; recovery on open; CheckpointPolicy auto-fold; crash-safe checkpoint (base/superblock/rotate ordering).
+  - scheme: path
+    value: crates/oxgraph-db/src/lock.rs
+    metadata:
+      summary: Advisory std::fs::File writer lock (auto-released on crash), replacing the create_new sentinel that could deadlock.
+  - scheme: path
+    value: crates/oxgraph-mmap
+    metadata:
+      summary: New shim crate owning the single audited unsafe read-only mmap call behind a safe API, so every other crate (incl. oxgraph-db) keeps unsafe_code=forbid.
+  - scheme: path
+    value: crates/oxgraph-db/src/freeze.rs
+    metadata:
+      summary: freeze_view encodes any StateView into base bytes (with the content trailer); the owned decode-on-open path is deleted (backing borrows instead).
+  - scheme: path
+    value: crates/oxgraph-db/src/storage.rs
+    metadata:
+      summary: Reduced to the crash-atomic temp+fsync+rename+dir-fsync helper reused by the base/superblock writers; the per-commit whole-store reprint (read_store/write_store/StoredDatabase) is deleted.
+  - scheme: path
+    value: crates/oxgraph-db/benches
+    metadata:
+      summary: Criterion benches defending the new contracts — commit O(change), index lookup O(log n), open O(base + log-tail).
+  role: primary

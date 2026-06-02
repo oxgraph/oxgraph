@@ -21,10 +21,11 @@ intent:
     transaction compatibility in the first database engine slice.
   rationale: |
     Snapshot isolation is only meaningful when the visible generation and commit
-    sequence are explicit. The greenfield embedded engine shares the committed
-    state behind an Arc, stages writes via copy-on-write (a lazy copy on the
-    first mutation, so begin_read/begin_write are O(1)), and publishes one atomic
-    store replacement at commit.
+    sequence are explicit. The engine shares an immutable base+overlay Snapshot
+    behind an Arc (begin_read is an O(1) Arc clone), stages writes in an owned
+    delta overlay, and commits by appending one fsync'd delta-log frame and
+    publishing a fresh Snapshot (O(change), not a whole-store rewrite); recovery
+    replays the valid log prefix over the base.
 constraints:
 - 11
 - 12
@@ -38,6 +39,7 @@ amendment_log:
 - 36
 - 40
 - 41
+- 42
 parents:
 - id: 30
   role: component

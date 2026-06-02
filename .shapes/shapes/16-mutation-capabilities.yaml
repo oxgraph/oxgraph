@@ -35,6 +35,7 @@ intent:
 amendment_log:
 - 8
 - 41
+- 42
 parents:
 - id: 1
   role: pending
