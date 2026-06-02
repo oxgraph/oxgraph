@@ -1,13 +1,12 @@
-//! OXGDB v2 on-disk wire vocabulary.
+//! OXGDB v1 on-disk wire vocabulary.
 //!
 //! This module owns the byte-level contract for the embedded database store:
 //! the section-kind allocation inside the snapshot container's reserved
 //! [`DATABASE_BAND`](oxgraph_snapshot::kinds::DATABASE_BAND) and the fixed-width
-//! `zerocopy` records that hold the durable canonical state. It replaces the
-//! previous "serialize the whole `DatabaseState` to one opaque JSON section"
-//! scheme: topology, catalog, identity, and properties each persist as their
-//! own typed section, so reads borrow directly from the mapped bytes instead of
-//! parsing an intermediate document.
+//! `zerocopy` records that hold the durable canonical state. Topology, catalog,
+//! identity, and properties each persist as their own typed section, so reads
+//! borrow directly from the mapped bytes instead of parsing an intermediate
+//! document.
 //!
 //! Records here are deliberately small and `#[repr(C)]` with little-endian
 //! [`zerocopy`] words, mirroring the snapshot container's own header/entry

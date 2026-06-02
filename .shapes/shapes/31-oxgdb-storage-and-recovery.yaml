@@ -47,7 +47,7 @@ realization:
   - scheme: path
     value: crates/oxgraph-db/src/storage.rs
     metadata:
-      summary: OXGDB v2 typed zerocopy DATABASE_BAND sections (header, catalog records and string table, topology records, typed property records), exact-length payload validation, atomic store publication with directory fsync, open, validate, and compaction support.
+      summary: OXGDB v1 typed zerocopy DATABASE_BAND sections (header, catalog records and string table, topology records, typed property records), exact-length payload validation, atomic store publication with directory fsync, open, validate, and compaction support.
   - scheme: path
     value: crates/oxgraph-db/tests/e2e.rs
     metadata:

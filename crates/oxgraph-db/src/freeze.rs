@@ -1,8 +1,7 @@
-//! OXGDB v2 freeze/open: encode a [`StoredDatabase`] into typed zero-copy
+//! OXGDB v1 freeze/open: encode a [`StoredDatabase`] into typed zero-copy
 //! `DATABASE_BAND` sections and decode it back.
 //!
-//! This replaces the previous "serialize the whole state to one JSON section"
-//! scheme. Each component — header, catalog, topology, properties — persists as
+//! Each component — header, catalog, topology, properties — persists as
 //! its own typed section described in [`crate::wire`]. Reading borrows the
 //! fixed records directly from the mapped bytes; only variable-length data
 //! (names, labels, property text, definition bodies) is copied out into the
@@ -170,7 +169,7 @@ fn add_blob(builder: &mut SnapshotBuilder, kind: u32, blob: Vec<u8>) -> Result<(
     Ok(())
 }
 
-/// Encodes a stored database into deterministic OXGDB v2 snapshot bytes.
+/// Encodes a stored database into deterministic OXGDB v1 snapshot bytes.
 ///
 /// # Errors
 ///
@@ -402,7 +401,7 @@ fn encode_properties(builder: &mut SnapshotBuilder, state: &DatabaseState) -> Re
     add_blob(builder, wire::SECTION_PROPERTY_TEXT, text)
 }
 
-/// Decodes OXGDB v2 snapshot bytes back into a stored database.
+/// Decodes OXGDB v1 snapshot bytes back into a stored database.
 ///
 /// # Errors
 ///

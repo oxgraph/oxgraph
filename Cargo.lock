@@ -1305,7 +1305,7 @@ dependencies = [
 
 [[package]]
 name = "oxgraph"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "oxgraph-algo",
  "oxgraph-csc",
@@ -1369,7 +1369,7 @@ dependencies = [
 
 [[package]]
 name = "oxgraph-db"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "criterion 0.8.2",
  "oxgraph-algo",
