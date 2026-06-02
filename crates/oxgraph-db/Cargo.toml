@@ -1,6 +1,6 @@
 [package]
 name = "oxgraph-db"
-version.workspace = true
+version = "0.2.1"
 license.workspace = true
 description = "Standalone OxGraph-native database engine above the topology substrate."
 categories.workspace = true
