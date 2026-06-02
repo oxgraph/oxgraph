@@ -1,4 +1,4 @@
-//! OXGDB v2 store: durable payload bundle plus crash-atomic publication.
+//! OXGDB v1 store: durable payload bundle plus crash-atomic publication.
 //!
 //! The byte format lives in [`crate::freeze`]; this module owns the on-disk
 //! file lifecycle (temp file, fsync, atomic rename, directory fsync).
