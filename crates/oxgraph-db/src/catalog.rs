@@ -221,35 +221,29 @@ pub struct ProjectionEntry {
 /// # Performance
 ///
 /// Cloning is `O(catalog entries + string bytes)`.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Catalog {
     /// Roles by stable ID.
-    #[serde(with = "crate::serde_map")]
     roles: BTreeMap<RoleId, RoleDefinition>,
     /// Role IDs by name.
     role_names: BTreeMap<String, RoleId>,
     /// Labels by stable ID.
-    #[serde(with = "crate::serde_map")]
     labels: BTreeMap<LabelId, LabelDefinition>,
     /// Label IDs by name.
     label_names: BTreeMap<String, LabelId>,
     /// Relation types by stable ID.
-    #[serde(with = "crate::serde_map")]
     relation_types: BTreeMap<RelationTypeId, RelationTypeDefinition>,
     /// Relation type IDs by name.
     relation_type_names: BTreeMap<String, RelationTypeId>,
     /// Property keys by stable ID.
-    #[serde(with = "crate::serde_map")]
     property_keys: BTreeMap<PropertyKeyId, PropertyKeyDefinition>,
     /// Property key IDs by name.
     property_key_names: BTreeMap<String, PropertyKeyId>,
     /// Projections by stable ID.
-    #[serde(with = "crate::serde_map")]
     projections: BTreeMap<ProjectionId, ProjectionEntry>,
     /// Projection IDs by name.
     projection_names: BTreeMap<String, ProjectionId>,
     /// Indexes by stable ID.
-    #[serde(with = "crate::serde_map")]
     indexes: BTreeMap<IndexId, IndexEntry>,
     /// Index IDs by name.
     index_names: BTreeMap<String, IndexId>,

@@ -4,8 +4,8 @@ use core::hash::{Hash, Hasher};
 
 use crate::{
     CheckpointGeneration, CommitSeq, ElementId, IncidenceId, IndexId, LabelId, ProjectionElementId,
-    ProjectionId, ProjectionIncidenceId, ProjectionRelationId, PropertyKeyId, RelationId,
-    RelationTypeId, RoleId, TransactionId,
+    ProjectionId, ProjectionIncidenceId, ProjectionRelationId, PropertyFamily, PropertyKeyId,
+    PropertySubject, PropertyType, RelationId, RelationTypeId, RoleId, TransactionId, wire,
 };
 
 /// Deterministic proof hasher for ID newtype hash/equality checks.
@@ -186,3 +186,76 @@ prove_projection_id!(
     projection_incidence_id_ordering_equality_matches_value_equality,
     projection_incidence_id_hash_matches_equality
 );
+
+/// Proves the optional-relation-type sentinel encoding round-trips for any
+/// allocated id (ids start at 1, so the `0` sentinel never collides), and that
+/// the absent case maps to and from the sentinel.
+#[kani::proof]
+fn wire_relation_type_roundtrip() {
+    let raw: u64 = kani::any();
+    kani::assume(raw >= 1);
+    let id = RelationTypeId::new(raw);
+    assert_eq!(
+        wire::decode_relation_type(wire::encode_relation_type(Some(id))),
+        Some(id)
+    );
+    assert_eq!(wire::encode_relation_type(None), wire::RELATION_TYPE_NONE);
+    assert_eq!(wire::decode_relation_type(wire::RELATION_TYPE_NONE), None);
+}
+
+/// Proves the property-family tag mapping round-trips for every family and
+/// rejects unknown tags.
+#[kani::proof]
+fn wire_property_family_tag_roundtrip() {
+    for family in [
+        PropertyFamily::Element,
+        PropertyFamily::Relation,
+        PropertyFamily::Incidence,
+    ] {
+        assert_eq!(
+            wire::property_family_from_tag(wire::property_family_tag(family)),
+            Some(family)
+        );
+    }
+    let tag: u32 = kani::any();
+    kani::assume(tag > 2);
+    assert_eq!(wire::property_family_from_tag(tag), None);
+}
+
+/// Proves the property-value-type tag mapping round-trips for every type and
+/// rejects unknown tags.
+#[kani::proof]
+fn wire_property_type_tag_roundtrip() {
+    for value_type in [
+        PropertyType::Boolean,
+        PropertyType::Integer,
+        PropertyType::Text,
+    ] {
+        assert_eq!(
+            wire::property_type_from_tag(wire::property_type_tag(value_type)),
+            Some(value_type)
+        );
+    }
+    let tag: u32 = kani::any();
+    kani::assume(tag > 2);
+    assert_eq!(wire::property_type_from_tag(tag), None);
+}
+
+/// Proves the property-subject `(kind, id)` encoding round-trips for every
+/// subject family and rejects unknown kinds.
+#[kani::proof]
+fn wire_subject_roundtrip() {
+    let raw: u64 = kani::any();
+    let subjects = [
+        PropertySubject::Element(ElementId::new(raw)),
+        PropertySubject::Relation(RelationId::new(raw)),
+        PropertySubject::Incidence(IncidenceId::new(raw)),
+    ];
+    for subject in subjects {
+        let (kind, id) = wire::encode_subject(subject);
+        assert_eq!(wire::decode_subject(kind, id), Some(subject));
+    }
+    let kind: u32 = kani::any();
+    kani::assume(kind > 2);
+    assert_eq!(wire::decode_subject(kind, raw), None);
+}

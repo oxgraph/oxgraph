@@ -606,6 +606,25 @@ fn corrupt_store_bytes_fail_validation() -> Result<(), TestError> {
     Ok(())
 }
 
+#[test]
+fn concurrent_writers_are_rejected_until_release() -> Result<(), TestError> {
+    let path = temp_path("writer-lock");
+    clean(&path)?;
+
+    let mut first = Database::create(&path)?;
+    let writer = first.begin_write()?;
+
+    let mut second = Database::open(&path)?;
+    assert!(matches!(second.begin_write(), Err(DbError::WriterLockHeld)));
+
+    // Releasing the held writer frees the single-writer lock.
+    drop(writer);
+    assert!(second.begin_write().is_ok());
+
+    clean(&path)?;
+    Ok(())
+}
+
 /// Loads a traversal-focused graph fixture.
 fn load_traversal_fixture(database: &mut Database) -> Result<TraversalFixtureIds, DbError> {
     let mut writer = database.begin_write()?;
@@ -878,6 +897,67 @@ fn create_people(
     Ok((alice, bob, carol))
 }
 
+/// Asserts compound `WHERE` predicate coverage over the fixture.
+///
+/// Verifies that `OR` unions, `AND` intersects, ordered comparisons work, `AND`
+/// binds tighter than `OR`, parentheses override that precedence, and malformed
+/// predicates are rejected at prepare time.
+fn assert_compound_where(
+    database: &Database,
+    read: &oxgraph_db::ReadTransaction,
+    fixture: &FixtureIds,
+) -> Result<(), DbError> {
+    assert_eq!(
+        execute_element_query(
+            database,
+            read,
+            "MATCH ELEMENTS WHERE name = 'Alice' OR name = 'Bob'",
+        )?
+        .len(),
+        2,
+    );
+    assert_eq!(
+        execute_element_query(
+            database,
+            read,
+            "MATCH ELEMENTS WHERE name = 'Alice' AND age = 42"
+        )?,
+        vec![fixture.alice],
+    );
+    assert_eq!(
+        execute_element_query(database, read, "MATCH ELEMENTS WHERE age >= 42")?,
+        vec![fixture.alice],
+    );
+    assert!(execute_element_query(database, read, "MATCH ELEMENTS WHERE age > 42")?.is_empty());
+    // AND binds tighter: `Bob AND age=42` is false, so only Alice matches.
+    assert_eq!(
+        execute_element_query(
+            database,
+            read,
+            "MATCH ELEMENTS WHERE name = 'Bob' AND age = 42 OR name = 'Alice'",
+        )?,
+        vec![fixture.alice],
+    );
+    // Parentheses override precedence: `(Alice OR Bob) AND age=42` is just Alice.
+    assert_eq!(
+        execute_element_query(
+            database,
+            read,
+            "MATCH ELEMENTS WHERE ( name = 'Alice' OR name = 'Bob' ) AND age = 42",
+        )?,
+        vec![fixture.alice],
+    );
+    assert!(matches!(
+        database.prepare(QueryLanguage::Oxql, "MATCH ELEMENTS WHERE name ="),
+        Err(DbError::UnsupportedQuery { .. })
+    ));
+    assert!(matches!(
+        database.prepare(QueryLanguage::Oxql, "MATCH ELEMENTS WHERE ( name = 'Alice'"),
+        Err(DbError::UnsupportedQuery { .. })
+    ));
+    Ok(())
+}
+
 /// Asserts query-language coverage over the fixture.
 fn assert_query_counts(database: &Database, fixture: &FixtureIds) -> Result<(), DbError> {
     let read = database.begin_read();
@@ -921,6 +1001,8 @@ fn assert_query_counts(database: &Database, fixture: &FixtureIds) -> Result<(), 
             actual: PropertyFamily::Element,
         })
     ));
+
+    assert_compound_where(database, &read, fixture)?;
 
     let knows = database.prepare(QueryLanguage::Oxql, "MATCH RELATIONS TYPE Knows")?;
     assert_eq!(read.execute(&knows)?.rows().len(), 1);

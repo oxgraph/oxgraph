@@ -21,8 +21,10 @@ intent:
     transaction compatibility in the first database engine slice.
   rationale: |
     Snapshot isolation is only meaningful when the visible generation and commit
-    sequence are explicit. The greenfield embedded engine stages writes in an
-    owned state copy and publishes one atomic store replacement at commit.
+    sequence are explicit. The greenfield embedded engine shares the committed
+    state behind an Arc, stages writes via copy-on-write (a lazy copy on the
+    first mutation, so begin_read/begin_write are O(1)), and publishes one atomic
+    store replacement at commit.
 constraints:
 - 11
 - 12
@@ -34,6 +36,8 @@ constraints:
 amendment_log:
 - 34
 - 36
+- 40
+- 41
 parents:
 - id: 30
   role: component
