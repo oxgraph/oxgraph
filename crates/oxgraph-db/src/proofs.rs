@@ -259,3 +259,315 @@ fn wire_subject_roundtrip() {
     kani::assume(kind > 2);
     assert_eq!(wire::decode_subject(kind, raw), None);
 }
+
+/// Proves the `flags` word packs and unpacks two 16-bit-range tags losslessly in
+/// both positions, which the property and catalog ops rely on to recover their
+/// subject kind / value tag / family / value type.
+#[kani::proof]
+fn wire_flags_pack_roundtrip() {
+    let low: u32 = kani::any();
+    let high: u32 = kani::any();
+    kani::assume(low <= 0xFFFF);
+    kani::assume(high <= 0xFFFF);
+    assert_eq!(wire::unpack_flags(wire::pack_flags(low, high)), (low, high));
+}
+
+/// Builds one `MutationOp` from arbitrary fields.
+fn any_op(op_kind: u32) -> wire::MutationOp {
+    let flags: u32 = kani::any();
+    let mut payload = [zerocopy::byteorder::U64::<zerocopy::byteorder::LE>::new(0);
+        wire::MUTATION_OP_PAYLOAD_WORDS];
+    let mut index = 0;
+    while index < wire::MUTATION_OP_PAYLOAD_WORDS {
+        let word: u64 = kani::any();
+        payload[index] = zerocopy::byteorder::U64::new(word);
+        index += 1;
+    }
+    wire::MutationOp {
+        op_kind: op_kind.into(),
+        flags: flags.into(),
+        payload,
+    }
+}
+
+/// Proves a `MutationOp` round-trips through zerocopy byte encoding for the
+/// given op kind: writing it to bytes and reading it back yields an identical
+/// op. Bounded over the fixed-size record, so the model checker terminates.
+macro_rules! prove_op_roundtrip {
+    ($name:ident, $op_kind:path) => {
+        /// Proves the named op kind round-trips through byte encoding.
+        #[kani::proof]
+        fn $name() {
+            use zerocopy::{FromBytes, IntoBytes};
+            let op = any_op($op_kind);
+            let bytes = op.as_bytes().to_vec();
+            let Ok(decoded) = wire::MutationOp::read_from_bytes(bytes.as_slice()) else {
+                assert!(false);
+                return;
+            };
+            assert!(op == decoded);
+            assert_eq!(decoded.op_kind.get(), $op_kind);
+        }
+    };
+}
+
+prove_op_roundtrip!(op_create_element_roundtrips, wire::OP_CREATE_ELEMENT);
+prove_op_roundtrip!(op_tombstone_element_roundtrips, wire::OP_TOMBSTONE_ELEMENT);
+prove_op_roundtrip!(op_create_relation_roundtrips, wire::OP_CREATE_RELATION);
+prove_op_roundtrip!(
+    op_tombstone_relation_roundtrips,
+    wire::OP_TOMBSTONE_RELATION
+);
+prove_op_roundtrip!(op_create_incidence_roundtrips, wire::OP_CREATE_INCIDENCE);
+prove_op_roundtrip!(
+    op_tombstone_incidence_roundtrips,
+    wire::OP_TOMBSTONE_INCIDENCE
+);
+prove_op_roundtrip!(op_set_relation_type_roundtrips, wire::OP_SET_RELATION_TYPE);
+prove_op_roundtrip!(op_add_element_label_roundtrips, wire::OP_ADD_ELEMENT_LABEL);
+prove_op_roundtrip!(
+    op_add_relation_label_roundtrips,
+    wire::OP_ADD_RELATION_LABEL
+);
+prove_op_roundtrip!(op_set_property_roundtrips, wire::OP_SET_PROPERTY);
+prove_op_roundtrip!(op_remove_property_roundtrips, wire::OP_REMOVE_PROPERTY);
+prove_op_roundtrip!(op_register_role_roundtrips, wire::OP_CATALOG_REGISTER_ROLE);
+prove_op_roundtrip!(
+    op_register_label_roundtrips,
+    wire::OP_CATALOG_REGISTER_LABEL
+);
+prove_op_roundtrip!(
+    op_register_relation_type_roundtrips,
+    wire::OP_CATALOG_REGISTER_RELATION_TYPE
+);
+prove_op_roundtrip!(
+    op_register_property_key_roundtrips,
+    wire::OP_CATALOG_REGISTER_PROPERTY_KEY
+);
+prove_op_roundtrip!(
+    op_register_projection_roundtrips,
+    wire::OP_CATALOG_REGISTER_PROJECTION
+);
+prove_op_roundtrip!(
+    op_register_index_roundtrips,
+    wire::OP_CATALOG_REGISTER_INDEX
+);
+prove_op_roundtrip!(op_next_id_watermark_roundtrips, wire::OP_NEXT_ID_WATERMARK);
+
+/// Proves the [`wire::LogRecordHeader`] framing contract that
+/// [`crate::wal::encode_commit`] must satisfy: a header stamped with `len ==
+/// header + op_count * op_size + blob_len` round-trips through zerocopy bytes
+/// with every framing field intact, the appended op decodes verbatim, and the
+/// blob byte survives. Bounded to one op and a one-byte blob.
+// kani-skip: `encode_commit` computes the `crc32c` field via the external
+// `crc32c` crate (a foreign function the model checker cannot evaluate), so this
+// proof assembles the record framing directly — exactly as `encode_commit`
+// lays it out, minus the CRC — and proves the len/op/blob mapping only. The CRC
+// (check vector, single-bit flip) is covered by the crc unit tests, the real
+// `encode_commit`/`replay` round-trip by the wal unit tests, and the unbounded
+// multi-record replay walk by the wal proptest.
+#[kani::proof]
+#[kani::unwind(80)]
+fn single_record_framing_consistent() {
+    use zerocopy::{FromBytes, IntoBytes};
+    let lsn: u64 = kani::any();
+    let txn: u64 = kani::any();
+    let generation: u64 = kani::any();
+    let op = any_op(wire::OP_CREATE_ELEMENT);
+    let byte: u8 = kani::any();
+
+    let header_len = size_of::<wire::LogRecordHeader>();
+    let op_len = size_of::<wire::MutationOp>();
+    let total = header_len + op_len + 1;
+
+    let header = wire::LogRecordHeader {
+        base_generation: generation.into(),
+        lsn: lsn.into(),
+        txn_id: txn.into(),
+        magic: wire::OXGLOGR.into(),
+        len: (total as u32).into(),
+        op_count: 1u32.into(),
+        crc32c: 0u32.into(),
+    };
+    let mut record = Vec::with_capacity(total);
+    record.extend_from_slice(header.as_bytes());
+    record.extend_from_slice(op.as_bytes());
+    record.push(byte);
+
+    // len == header + one op + one blob byte.
+    assert_eq!(record.len(), total);
+
+    let Ok(parsed) = wire::LogRecordHeader::read_from_bytes(&record[..header_len]) else {
+        assert!(false);
+        return;
+    };
+    assert_eq!(parsed.len.get() as usize, record.len());
+    assert_eq!(parsed.magic.get(), wire::OXGLOGR);
+    assert_eq!(parsed.lsn.get(), lsn);
+    assert_eq!(parsed.txn_id.get(), txn);
+    assert_eq!(parsed.base_generation.get(), generation);
+    assert_eq!(parsed.op_count.get(), 1);
+
+    let Ok(decoded_op) =
+        wire::MutationOp::read_from_bytes(&record[header_len..header_len + op_len])
+    else {
+        assert!(false);
+        return;
+    };
+    assert!(decoded_op == op);
+    assert_eq!(record[header_len + op_len], byte);
+}
+
+/// Proves the overlay merge is TOTAL and DUPLICATE-FREE over a bounded id
+/// universe: for any base presence and overlay element entries over ids
+/// `{1, 2, 3}`, the merged element iterator yields each id at most once, in
+/// strictly ascending order, never yields a tombstoned id, and yields an id
+/// exactly when it is visible (present in the overlay as a set value, or present
+/// in the base with no overlay tombstone/override). Bounded to three ids so the
+/// model checker terminates.
+#[kani::proof]
+#[kani::unwind(8)]
+fn overlay_merge_is_total_and_duplicate_free() {
+    use crate::overlay::{BaseRecords, MergedState, Overlay, StateView};
+
+    // Arbitrary base presence for ids 1, 2, 3.
+    let base_has: [bool; 3] = [kani::any(), kani::any(), kani::any()];
+    // Arbitrary overlay opinion for ids 1, 2, 3: 0 = no opinion, 1 = set
+    // (present), 2 = tombstone.
+    let overlay_kind: [u8; 3] = [kani::any(), kani::any(), kani::any()];
+    for kind in overlay_kind {
+        kani::assume(kind <= 2);
+    }
+
+    let ids = [ElementId::new(1), ElementId::new(2), ElementId::new(3)];
+
+    let base_ids: Vec<ElementId> = ids
+        .iter()
+        .copied()
+        .enumerate()
+        .filter_map(|(index, id)| base_has[index].then_some(id))
+        .collect();
+    let base = BaseRecords::proof_elements(&base_ids);
+
+    let overlay_entries: Vec<(ElementId, bool)> = ids
+        .iter()
+        .copied()
+        .enumerate()
+        .filter_map(|(index, id)| match overlay_kind[index] {
+            1 => Some((id, true)),
+            2 => Some((id, false)),
+            _no_opinion => None,
+        })
+        .collect();
+    let overlay = Overlay::proof_element_entries(&overlay_entries);
+    let view = MergedState::new(&base, &overlay);
+
+    // Collect the merged element ids.
+    let merged: Vec<ElementId> = view.elements().map(|record| record.id).collect();
+
+    // Strictly ascending: each id appears at most once and in order.
+    let mut index = 1;
+    while index < merged.len() {
+        assert!(merged[index - 1] < merged[index]);
+        index += 1;
+    }
+
+    // Visibility equivalence: id visible iff (overlay set) or (base present and
+    // overlay neither tombstones nor overrides it).
+    let mut id_index = 0;
+    while id_index < ids.len() {
+        let id = ids[id_index];
+        let overlay_set = overlay_kind[id_index] == 1;
+        let overlay_tombstone = overlay_kind[id_index] == 2;
+        let base_present = base_has[id_index];
+        let expected_visible = overlay_set || (base_present && !overlay_tombstone);
+
+        let in_merged = merged.iter().any(|candidate| *candidate == id);
+        assert_eq!(in_merged, expected_visible);
+
+        // A point read agrees with the iterator, resolves to the queried id when
+        // present, and is absent for a tombstoned id.
+        let point = view.element(id);
+        assert_eq!(point.is_some(), expected_visible);
+        assert_eq!(
+            point.map(|record| record.id),
+            expected_visible.then_some(id)
+        );
+        if overlay_tombstone {
+            assert!(overlay.proof_is_element_tombstoned(id));
+        }
+        id_index += 1;
+    }
+}
+
+/// Proves tombstone-masking idempotence at the element layer: tombstoning an
+/// absent id makes it absent (a no-op against the visible set when the base
+/// also lacks it), and tombstoning the same id twice yields the same single
+/// tombstone and the same `None` read as tombstoning it once. Bounded to one id.
+#[kani::proof]
+#[kani::unwind(6)]
+fn overlay_tombstone_is_idempotent() {
+    use crate::overlay::{BaseRecords, MergedState, Overlay, StateView, WriteOverlay};
+
+    let raw: u64 = kani::any();
+    kani::assume(raw >= 1);
+    let id = ElementId::new(raw);
+    let base_present: bool = kani::any();
+
+    let base_ids: Vec<ElementId> = if base_present { vec![id] } else { Vec::new() };
+    let base = BaseRecords::proof_elements(&base_ids);
+    let next = Overlay::proof_element_entries(&[]).next_ids();
+
+    // Single tombstone.
+    let mut once = WriteOverlay::new(next, crate::Catalog::empty());
+    once.tombstone_element(&base, id);
+    let once = once.freeze();
+
+    // Double tombstone.
+    let mut twice = WriteOverlay::new(next, crate::Catalog::empty());
+    twice.tombstone_element(&base, id);
+    twice.tombstone_element(&base, id);
+    let twice = twice.freeze();
+
+    // Both hide the id and both record a tombstone.
+    assert!(MergedState::new(&base, &once).element(id).is_none());
+    assert!(MergedState::new(&base, &twice).element(id).is_none());
+    assert!(once.proof_is_element_tombstoned(id));
+    assert!(twice.proof_is_element_tombstoned(id));
+
+    // Tombstoning an absent id is a no-op against the visible set: when the base
+    // also lacks the id, the merged element set is empty either way.
+    if !base_present {
+        assert_eq!(MergedState::new(&base, &once).element_count(), 0);
+    }
+}
+
+/// Proves the next-id watermark is strictly monotonic under
+/// `Overlay::with_applied`: a child overlay built from a parent plus a writer
+/// delta that allocates one element has a strictly greater `next_element`
+/// watermark than the parent, and the rest of the watermark never regresses.
+#[kani::proof]
+#[kani::unwind(4)]
+fn overlay_watermark_monotonic_under_apply() {
+    use crate::overlay::{Overlay, OverlayLayer, WriteOverlay};
+
+    let raw: u64 = kani::any();
+    // Leave headroom so the single allocation cannot overflow.
+    kani::assume(raw >= 1 && raw < u64::MAX - 1);
+
+    // Parent overlay whose watermark's element allocator is `raw`.
+    let parent = Overlay::proof_with_next_element(raw);
+
+    let mut child_write = WriteOverlay::new(parent.next_ids(), parent.catalog().clone());
+    let created = child_write.create_element().expect("create");
+    assert_eq!(created.get(), raw);
+    let child = parent.with_applied(&child_write);
+
+    // Strictly greater element watermark, exactly one beyond.
+    assert!(child.next_ids().element > parent.next_ids().element);
+    assert_eq!(child.next_ids().element.get(), raw + 1);
+
+    // The other allocators never regress.
+    assert_eq!(child.next_ids().relation, parent.next_ids().relation);
+    assert_eq!(child.next_ids().role, parent.next_ids().role);
+}

@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc b32483f1eca53d1b8b2e2bb31aaa106c21e812111e3cdc35278637aec7b97d62 # shrinks to ops = [TombstoneRelation(3019796502672086991)]

@@ -514,6 +514,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "crc32c"
+version = "0.6.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3a47af21622d091a8f0fb295b88bc886ac74efcc613efc19f5d0b21de5c89e47"
+dependencies = [
+ "rustc_version",
+]
+
+[[package]]
 name = "criterion"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1191,6 +1200,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8ca58f447f06ed17d5fc4043ce1b10dd205e060fb3ce5b979b8ed8e59ff3f79"
 
 [[package]]
+name = "memmap2"
+version = "0.9.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "714098028fe011992e1c3962653c96b2d578c4b4bce9036e15ff220319b1e0e3"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "minimal-lexical"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1305,7 +1323,7 @@ dependencies = [
 
 [[package]]
 name = "oxgraph"
-version = "0.2.2"
+version = "0.2.4"
 dependencies = [
  "oxgraph-algo",
  "oxgraph-csc",
@@ -1323,7 +1341,7 @@ dependencies = [
 
 [[package]]
 name = "oxgraph-algo"
-version = "0.2.0"
+version = "0.2.4"
 dependencies = [
  "arrow-array",
  "arrow-schema",
@@ -1341,7 +1359,7 @@ dependencies = [
 
 [[package]]
 name = "oxgraph-csc"
-version = "0.2.0"
+version = "0.2.4"
 dependencies = [
  "oxgraph-csr",
  "oxgraph-graph",
@@ -1353,7 +1371,7 @@ dependencies = [
 
 [[package]]
 name = "oxgraph-csr"
-version = "0.2.0"
+version = "0.2.4"
 dependencies = [
  "arrow-array",
  "arrow-schema",
@@ -1369,8 +1387,9 @@ dependencies = [
 
 [[package]]
 name = "oxgraph-db"
-version = "0.2.1"
+version = "0.2.4"
 dependencies = [
+ "crc32c",
  "criterion 0.8.2",
  "oxgraph-algo",
  "oxgraph-csc",
@@ -1378,17 +1397,19 @@ dependencies = [
  "oxgraph-graph",
  "oxgraph-hyper",
  "oxgraph-hyper-bcsr",
+ "oxgraph-mmap",
  "oxgraph-property",
  "oxgraph-snapshot",
  "oxgraph-topology",
  "proptest",
  "serde",
+ "yoke",
  "zerocopy",
 ]
 
 [[package]]
 name = "oxgraph-graph"
-version = "0.2.0"
+version = "0.2.4"
 dependencies = [
  "oxgraph-topology",
  "proptest",
@@ -1396,7 +1417,7 @@ dependencies = [
 
 [[package]]
 name = "oxgraph-hyper"
-version = "0.2.0"
+version = "0.2.4"
 dependencies = [
  "oxgraph-topology",
  "proptest",
@@ -1404,7 +1425,7 @@ dependencies = [
 
 [[package]]
 name = "oxgraph-hyper-bcsr"
-version = "0.2.0"
+version = "0.2.4"
 dependencies = [
  "arrow-array",
  "arrow-schema",
@@ -1420,10 +1441,17 @@ dependencies = [
 
 [[package]]
 name = "oxgraph-layout-util"
-version = "0.2.0"
+version = "0.2.4"
 dependencies = [
  "proptest",
  "zerocopy",
+]
+
+[[package]]
+name = "oxgraph-mmap"
+version = "0.2.4"
+dependencies = [
+ "memmap2",
 ]
 
 [[package]]
@@ -1438,7 +1466,7 @@ dependencies = [
 
 [[package]]
 name = "oxgraph-postgres"
-version = "0.2.0"
+version = "0.2.4"
 dependencies = [
  "criterion 0.8.2",
  "oxgraph-algo",
@@ -1454,7 +1482,7 @@ dependencies = [
 
 [[package]]
 name = "oxgraph-property"
-version = "0.2.0"
+version = "0.2.4"
 dependencies = [
  "arrow-array",
  "arrow-ipc",
@@ -1469,7 +1497,7 @@ dependencies = [
 
 [[package]]
 name = "oxgraph-snapshot"
-version = "0.2.0"
+version = "0.2.4"
 dependencies = [
  "criterion 0.8.2",
  "oxgraph-layout-util",
@@ -1479,7 +1507,7 @@ dependencies = [
 
 [[package]]
 name = "oxgraph-topology"
-version = "0.2.0"
+version = "0.2.4"
 dependencies = [
  "proptest",
 ]

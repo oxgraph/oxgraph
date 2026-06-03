@@ -20,7 +20,8 @@ use serde::{Deserialize, Serialize};
 use crate::{
     DbError, ElementId, IncidenceId, RelationId, RelationTypeId, RoleId,
     catalog::{GraphProjectionDefinition, HypergraphProjectionDefinition},
-    state::{DatabaseState, IncidenceRecord, PropertySubject, RelationRecord},
+    overlay::StateView,
+    state::{IncidenceRecord, PropertySubject, RelationRecord},
 };
 
 /// Dense projection-local element identifier.
@@ -159,13 +160,13 @@ impl GraphProjection {
     /// This function is `O(r * i + e log n)` for relation count `r`,
     /// incidence count `i`, and selected edge count `e`.
     pub(crate) fn from_state(
-        state: &DatabaseState,
+        state: &impl StateView,
         definition: GraphProjectionDefinition,
     ) -> Result<Self, DbError> {
         let mut builder = GraphProjectionBuilder::new(definition);
         for relation in state.relations() {
-            if relation_selected(relation, &builder.definition.relation_types) {
-                builder.push_relation(state, relation)?;
+            if relation_selected(relation.as_ref(), &builder.definition.relation_types) {
+                builder.push_relation(state, relation.as_ref())?;
             }
         }
         builder.finish()
@@ -228,7 +229,7 @@ impl GraphProjectionBuilder {
     /// Adds one selected canonical relation.
     fn push_relation(
         &mut self,
-        state: &DatabaseState,
+        state: &impl StateView,
         relation: &RelationRecord,
     ) -> Result<(), DbError> {
         let (source, target) = graph_endpoints(
@@ -560,7 +561,7 @@ impl HypergraphProjection {
     /// This function is `O(r * i + p log v)` for relation count `r`,
     /// incidence count `i`, and selected participant count `p`.
     pub(crate) fn from_state(
-        state: &DatabaseState,
+        state: &impl StateView,
         definition: HypergraphProjectionDefinition,
     ) -> Result<Self, DbError> {
         if definition.source_roles.is_empty() || definition.target_roles.is_empty() {
@@ -570,8 +571,8 @@ impl HypergraphProjection {
         }
         let mut builder = HypergraphProjectionBuilder::new(definition);
         for relation in state.relations() {
-            if relation_selected(relation, &builder.definition.relation_types) {
-                builder.push_relation(state, relation)?;
+            if relation_selected(relation.as_ref(), &builder.definition.relation_types) {
+                builder.push_relation(state, relation.as_ref())?;
             }
         }
         builder.finish()
@@ -658,7 +659,7 @@ impl HypergraphProjectionBuilder {
     /// Adds one selected canonical hyperedge relation.
     fn push_relation(
         &mut self,
-        state: &DatabaseState,
+        state: &impl StateView,
         relation: &RelationRecord,
     ) -> Result<(), DbError> {
         let hyperedge = projection_relation_id(self.relations.len())?;
@@ -670,7 +671,7 @@ impl HypergraphProjectionBuilder {
         let mut sources = Vec::new();
         let mut targets = Vec::new();
         for incidence in state.relation_incidences(relation.id) {
-            let local = self.push_incidence(incidence)?;
+            let local = self.push_incidence(&incidence)?;
             let vertex = intern_element(
                 &mut self.element_index,
                 &mut self.elements,
@@ -1097,7 +1098,7 @@ fn relation_selected(record: &RelationRecord, selected: &BTreeSet<RelationTypeId
 
 /// Finds graph source and target endpoints for one canonical relation.
 fn graph_endpoints(
-    state: &DatabaseState,
+    state: &impl StateView,
     relation: RelationId,
     source_role: RoleId,
     target_role: RoleId,
@@ -1105,8 +1106,8 @@ fn graph_endpoints(
     let mut source = None;
     let mut target = None;
     for incidence in state.relation_incidences(relation) {
-        update_endpoint(&mut source, incidence, source_role, "source")?;
-        update_endpoint(&mut target, incidence, target_role, "target")?;
+        update_endpoint(&mut source, &incidence, source_role, "source")?;
+        update_endpoint(&mut target, &incidence, target_role, "target")?;
     }
     match (source, target) {
         (Some(source), Some(target)) => Ok((source, target)),

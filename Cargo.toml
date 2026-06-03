@@ -10,6 +10,7 @@ members = [
   "crates/oxgraph-hyper",
   "crates/oxgraph-hyper-bcsr",
   "crates/oxgraph-layout-util",
+  "crates/oxgraph-mmap",
   "crates/oxgraph-pgrx",
   "crates/oxgraph-postgres",
   "crates/oxgraph-property",
@@ -27,6 +28,7 @@ default-members = [
   "crates/oxgraph-hyper",
   "crates/oxgraph-hyper-bcsr",
   "crates/oxgraph-layout-util",
+  "crates/oxgraph-mmap",
   "crates/oxgraph-postgres",
   "crates/oxgraph-property",
   "crates/oxgraph-snapshot",
@@ -42,7 +44,7 @@ keywords = ["graph", "topology", "zero-copy"]
 license = "MIT"
 readme = "README.md"
 repository = "https://github.com/oxgraph/oxgraph"
-version = "0.2.0"
+version = "0.2.4"
 # rust-version intentionally omitted: rust-toolchain.toml pins the daily toolchain; kani ships
 # its own nightly below latest stable, and we're not publishing an MSRV contract yet.
 
@@ -51,6 +53,8 @@ arrow-array = "58.3.0"
 arrow-ipc = "58.3.0"
 arrow-schema = "58.2.0"
 arrow-select = "58.2.0"
+crc32c = "0.6.8"
+memmap2 = "0.9.8"
 yoke = { version = "0.8.2", features = ["derive"] }
 zerocopy = { version = "0.8.48", default-features = false, features = ["derive"] }
 

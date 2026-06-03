@@ -85,8 +85,9 @@ fn greenfield_database_supports_topology_properties_queries_and_recovery() -> Re
     assert_eq!(read.relation_count(), 2);
     assert_eq!(read.incidence_count(), 5);
     assert_eq!(
-        read.property(PropertySubject::Element(fixture.alice), fixture.name_key),
-        Some(&PropertyValue::Text("Alice".to_owned()))
+        read.property(PropertySubject::Element(fixture.alice), fixture.name_key)
+            .map(std::borrow::Cow::into_owned),
+        Some(PropertyValue::Text("Alice".to_owned()))
     );
 
     let graph = read.graph_projection(fixture.graph_projection)?;
@@ -590,18 +591,90 @@ fn oxql_graph_walk_rejects_invalid_queries() -> Result<(), TestError> {
     Ok(())
 }
 
+/// Three-way durability contract (a): any mutation to the base bytes after
+/// create fails the next open with `InvalidStore` — the `SECTION_BASE_TRAILER`
+/// CRC catches it before any borrow.
 #[test]
-fn corrupt_store_bytes_fail_validation() -> Result<(), TestError> {
-    let path = temp_path("corrupt-store");
+fn corrupt_base_bytes_fail_open() -> Result<(), TestError> {
+    let path = temp_path("corrupt-base");
     clean(&path)?;
 
     let mut database = Database::create(&path)?;
     load_fixture(&mut database)?;
-    let store_path = path.join("store.oxgdb");
-    let file = std::fs::OpenOptions::new().append(true).open(store_path)?;
-    file.set_len(file.metadata()?.len() + 1)?;
+    database.checkpoint()?; // fold the data into base-1 so the base is non-empty
+    drop(database);
 
-    assert!(Database::open(&path).is_err());
+    // The live base is named by the superblock; after one checkpoint it is base-1.
+    let base_path = path.join("base-1.oxgdb");
+    let mut bytes = std::fs::read(&base_path)?;
+    // Flip a byte well inside the covered prefix (the container header).
+    bytes[16] ^= 0xFF;
+    std::fs::write(&base_path, &bytes)?;
+
+    assert!(
+        matches!(Database::open(&path), Err(DbError::InvalidStore { .. })),
+        "corrupt base must fail open with InvalidStore",
+    );
+    clean(&path)?;
+    Ok(())
+}
+
+/// Three-way durability contract (b): a torn final log frame (a partial trailing
+/// record) truncates-and-accepts on open — the prior committed frame is the
+/// recovered frontier, so recovery succeeds and the durable data survives.
+#[test]
+fn torn_log_tail_truncates_and_recovers() -> Result<(), TestError> {
+    let path = temp_path("torn-log-tail");
+    clean(&path)?;
+
+    let mut database = Database::create(&path)?;
+    let mut writer = database.begin_write()?;
+    let kept = writer.create_element()?;
+    writer.commit()?;
+    drop(database);
+
+    // Append a partial (torn) trailing record to the live delta-0.log.
+    let log_path = path.join("delta-0.log");
+    let mut log = std::fs::OpenOptions::new().append(true).open(&log_path)?;
+    std::io::Write::write_all(&mut log, &[0xAB, 0xCD, 0xEF])?; // < a header: torn tail
+    drop(log);
+
+    // Recovery truncates the torn tail and accepts the prior committed frame.
+    let reopened = Database::open(&path)?;
+    let read = reopened.begin_read();
+    assert!(read.contains_element(kept), "committed element survives");
+    assert_eq!(read.element_count(), 1);
+    clean(&path)?;
+    Ok(())
+}
+
+/// Three-way durability contract (c): a bit-flip inside a NON-final committed log
+/// frame is loud `LogCorrupt`, never silently skipped.
+#[test]
+fn interior_log_corruption_is_loud() -> Result<(), TestError> {
+    let path = temp_path("interior-log-corruption");
+    clean(&path)?;
+
+    let mut database = Database::create(&path)?;
+    let mut first = database.begin_write()?;
+    first.create_element()?;
+    first.commit()?;
+    let mut second = database.begin_write()?;
+    second.create_element()?;
+    second.commit()?;
+    drop(database);
+
+    // Flip a payload byte inside the FIRST (non-final) frame's body. The
+    // LogRecordHeader is 40 bytes; offset 48 lands in the first frame's ops.
+    let log_path = path.join("delta-0.log");
+    let mut bytes = std::fs::read(&log_path)?;
+    bytes[48] ^= 0xFF;
+    std::fs::write(&log_path, &bytes)?;
+
+    assert!(
+        matches!(Database::open(&path), Err(DbError::LogCorrupt { .. })),
+        "interior log corruption must be a loud LogCorrupt",
+    );
     clean(&path)?;
     Ok(())
 }
@@ -620,6 +693,60 @@ fn concurrent_writers_are_rejected_until_release() -> Result<(), TestError> {
     // Releasing the held writer frees the single-writer lock.
     drop(writer);
     assert!(second.begin_write().is_ok());
+
+    clean(&path)?;
+    Ok(())
+}
+
+/// MVCC isolation on the LIVE commit path: a `ReadTransaction` pins its snapshot
+/// before a commit on the same `Database` handle, so it keeps observing the
+/// pre-commit state (count and pin unchanged) while a fresh reader observes the
+/// post-commit state. This guards the P4 publish-new-`Arc` invariant on the real
+/// `begin_write` + `commit` path (not the `with_applied` proof helper).
+#[test]
+fn pinned_reader_is_isolated_from_a_later_commit() -> Result<(), TestError> {
+    let path = temp_path("mvcc-reader-isolation");
+    clean(&path)?;
+
+    let mut database = Database::create(&path)?;
+    let mut seed = database.begin_write()?;
+    seed.create_element()?;
+    seed.commit()?;
+
+    // Pin a reader at count N = 1, recording its visible generation/lsn.
+    let pinned = database.begin_read();
+    let n = pinned.element_count();
+    assert_eq!(n, 1);
+    let pin_before = pinned.pin();
+
+    // Commit a new element on the SAME handle while the reader is pinned.
+    let mut writer = database.begin_write()?;
+    writer.create_element()?;
+    writer.commit()?;
+
+    // The pinned reader still observes the pre-commit state and an unchanged pin.
+    assert_eq!(
+        pinned.element_count(),
+        n,
+        "pinned reader must not see the post-commit element",
+    );
+    assert_eq!(
+        pinned.pin(),
+        pin_before,
+        "pinned reader's generation/lsn must be unchanged across the commit",
+    );
+
+    // A fresh reader observes the post-commit state (N + 1) and a newer pin.
+    let fresh = database.begin_read();
+    assert_eq!(
+        fresh.element_count(),
+        n + 1,
+        "a reader begun after the commit must see the new element",
+    );
+    assert!(
+        fresh.pin().visible_commit_seq > pin_before.visible_commit_seq,
+        "the fresh reader's commit sequence must advance past the pinned reader's",
+    );
 
     clean(&path)?;
     Ok(())

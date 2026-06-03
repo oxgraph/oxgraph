@@ -119,6 +119,20 @@ pub enum DbError {
         /// Underlying bounded-BFS error.
         source: oxgraph_algo::BfsError,
     },
+    /// A delta-log record is corrupt beyond the recoverable torn tail.
+    LogCorrupt {
+        /// Log sequence number of the offending record.
+        lsn: u64,
+        /// Deterministic reason the record was rejected.
+        reason: &'static str,
+    },
+    /// A delta-log record names a different base generation than the superblock.
+    BaseGenerationMismatch {
+        /// Base generation named by the superblock.
+        expected: u64,
+        /// Base generation found in the record.
+        found: u64,
+    },
 }
 
 impl DbError {
@@ -218,6 +232,13 @@ impl fmt::Display for DbError {
             Self::InvalidStore { message } => write!(formatter, "invalid store: {message}"),
             Self::Io { operation, source } => write!(formatter, "{operation} failed: {source}"),
             Self::Traversal { source } => write!(formatter, "traversal error: {source}"),
+            Self::LogCorrupt { lsn, reason } => {
+                write!(formatter, "delta-log corrupt at lsn {lsn}: {reason}")
+            }
+            Self::BaseGenerationMismatch { expected, found } => write!(
+                formatter,
+                "base generation mismatch: superblock names {expected}, record has {found}"
+            ),
         }
     }
 }
@@ -249,7 +270,9 @@ impl std::error::Error for DbError {
             | Self::InvalidProjection { .. }
             | Self::EmptyQuery
             | Self::UnsupportedQuery { .. }
-            | Self::InvalidStore { .. } => None,
+            | Self::InvalidStore { .. }
+            | Self::LogCorrupt { .. }
+            | Self::BaseGenerationMismatch { .. } => None,
         }
     }
 }

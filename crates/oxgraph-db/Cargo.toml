@@ -1,6 +1,6 @@
 [package]
 name = "oxgraph-db"
-version = "0.2.1"
+version = "0.2.4"
 license.workspace = true
 description = "Standalone OxGraph-native database engine above the topology substrate."
 categories.workspace = true
@@ -12,18 +12,21 @@ edition.workspace = true
 repository.workspace = true
 
 [dependencies]
-oxgraph-algo = { version = "0.2.0", path = "../oxgraph-algo", default-features = false, features = [
+crc32c = { workspace = true }
+oxgraph-algo = { version = "0.2.4", path = "../oxgraph-algo", default-features = false, features = [
   "alloc",
 ] }
-oxgraph-csc = { version = "0.2.0", path = "../oxgraph-csc" }
-oxgraph-csr = { version = "0.2.0", path = "../oxgraph-csr", features = ["build"] }
-oxgraph-graph = { version = "0.2.0", path = "../oxgraph-graph" }
-oxgraph-hyper = { version = "0.2.0", path = "../oxgraph-hyper" }
-oxgraph-hyper-bcsr = { version = "0.2.0", path = "../oxgraph-hyper-bcsr", features = ["build"] }
-oxgraph-property = { version = "0.2.0", path = "../oxgraph-property" }
-oxgraph-snapshot = { version = "0.2.0", path = "../oxgraph-snapshot", features = ["alloc"] }
-oxgraph-topology = { version = "0.2.0", path = "../oxgraph-topology" }
+oxgraph-csc = { version = "0.2.4", path = "../oxgraph-csc" }
+oxgraph-csr = { version = "0.2.4", path = "../oxgraph-csr", features = ["build"] }
+oxgraph-graph = { version = "0.2.4", path = "../oxgraph-graph" }
+oxgraph-hyper = { version = "0.2.4", path = "../oxgraph-hyper" }
+oxgraph-hyper-bcsr = { version = "0.2.4", path = "../oxgraph-hyper-bcsr", features = ["build"] }
+oxgraph-mmap = { version = "0.2.4", path = "../oxgraph-mmap" }
+oxgraph-property = { version = "0.2.4", path = "../oxgraph-property" }
+oxgraph-snapshot = { version = "0.2.4", path = "../oxgraph-snapshot", features = ["alloc"] }
+oxgraph-topology = { version = "0.2.4", path = "../oxgraph-topology" }
 serde = { workspace = true }
+yoke = { workspace = true }
 zerocopy = { workspace = true }
 
 [dev-dependencies]
@@ -34,5 +37,21 @@ proptest = { workspace = true }
 name = "open_recovery"
 harness = false
 
+[[bench]]
+name = "commit"
+harness = false
+
+[[bench]]
+name = "lookup"
+harness = false
+
+# This crate inherits the workspace lint table verbatim, including
+# `unsafe_code = "forbid"`. On unix (outside miri) the base backing is
+# memory-mapped read-only through the audited `oxgraph-mmap` shim crate, which
+# owns the single `unsafe` mmap call behind a safe API; under miri, on non-unix
+# targets, or when a caller forces it, the base is read fully into an owned
+# `Vec<u8>` (backing.rs). Either way the `unsafe` is isolated in the shim, so the
+# storage-engine read path here stays `forbid` like every other library crate —
+# no `allow`/`expect` for `unsafe_code` lives in `oxgraph-db`.
 [lints]
 workspace = true

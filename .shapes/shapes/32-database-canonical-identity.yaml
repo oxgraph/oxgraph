@@ -35,6 +35,7 @@ constraints:
 amendment_log:
 - 34
 - 40
+- 42
 parents:
 - id: 30
   role: component
@@ -47,7 +48,7 @@ realization:
   - scheme: path
     value: crates/oxgraph-db/src/state.rs
     metadata:
-      summary: Canonical incidence-first state with element/relation/incidence records, catalog-owned labels/types/properties, ID allocation, tombstones, property subjects, and validation.
+      summary: Canonical record value types (ElementRecord/RelationRecord/IncidenceRecord/PropertySubject) and the nine-allocator NextIds watermark; recovery folds the elementwise maximum of the base header and every replayed delta-log frame so canonical ids are never reused. The live state is the merged overlay-over-base view in overlay.rs.
   - scheme: path
     value: crates/oxgraph-db/src/projection.rs
     metadata:

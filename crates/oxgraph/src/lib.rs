@@ -255,16 +255,17 @@ pub mod property {
 #[cfg(feature = "db")]
 pub mod db {
     pub use oxgraph_db::{
-        Catalog, CatalogSummary, CheckpointGeneration, CommitSeq, Database, DatabaseStatus,
-        DbError, ElementId, ElementRecord, GraphProjection, GraphProjectionDefinition,
-        HypergraphProjection, HypergraphProjectionDefinition, IncidenceId, IncidenceRecord,
-        IndexDefinition, IndexEntry, IndexId, IndexLookup, LabelDefinition, LabelId, PreparedQuery,
-        ProjectionDefinition, ProjectionElementId, ProjectionEntry, ProjectionId,
-        ProjectionIncidenceId, ProjectionRelationId, PropertyFamily, PropertyKeyDefinition,
-        PropertyKeyId, PropertySubject, PropertyType, PropertyValue, QueryLanguage, QueryResult,
-        QueryRow, QueryValue, ReadPin, ReadTransaction, RelationId, RelationRecord,
-        RelationTypeDefinition, RelationTypeId, RoleDefinition, RoleId, TransactionId,
-        TraversalDirection, TraversalOptions, TraversalResult, TraversalRow, WriteTransaction,
+        Catalog, CatalogSummary, CheckpointGeneration, CheckpointPolicy, CommitSeq, Database,
+        DatabaseStatus, DbError, ElementId, ElementRecord, GraphProjection,
+        GraphProjectionDefinition, HypergraphProjection, HypergraphProjectionDefinition,
+        IncidenceId, IncidenceRecord, IndexDefinition, IndexEntry, IndexId, IndexLookup,
+        LabelDefinition, LabelId, PreparedQuery, ProjectionDefinition, ProjectionElementId,
+        ProjectionEntry, ProjectionId, ProjectionIncidenceId, ProjectionRelationId, PropertyFamily,
+        PropertyKeyDefinition, PropertyKeyId, PropertySubject, PropertyType, PropertyValue,
+        QueryLanguage, QueryResult, QueryRow, QueryValue, ReadPin, ReadTransaction, RelationId,
+        RelationRecord, RelationTypeDefinition, RelationTypeId, RoleDefinition, RoleId,
+        TransactionId, TraversalDirection, TraversalOptions, TraversalResult, TraversalRow,
+        WriteTransaction,
     };
 }
 

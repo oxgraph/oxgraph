@@ -1,0 +1,45 @@
+[package]
+name = "oxgraph-mmap"
+version = "0.2.4"
+license.workspace = true
+description = "Read-only memory-map shim: the single audited unsafe island for OxGraph's zero-copy base files."
+categories.workspace = true
+keywords.workspace = true
+readme.workspace = true
+
+authors.workspace = true
+edition.workspace = true
+repository.workspace = true
+
+[dependencies]
+memmap2 = { workspace = true }
+
+# This crate exists ONLY to own the one unavoidable `unsafe` call: memmap2
+# exposes read-only file maps solely as `unsafe fn`, and a read-only base mmap
+# genuinely needs it. Every other workspace crate keeps `unsafe_code = "forbid"`;
+# here it is `deny` (not forbid) so a single `#[expect(unsafe_code, reason=...)]`
+# can permit exactly that one SAFETY-documented site and any other unsafe still
+# fails the build. The rest of the workspace strict lint posture is mirrored.
+[lints.rust]
+rust_2024_compatibility = { level = "deny", priority = -1 }
+missing_docs = "deny"
+unreachable_pub = "deny"
+unsafe_code = "deny"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+cargo = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+cognitive_complexity = "deny"
+excessive_nesting = "deny"
+too_many_arguments = "deny"
+too_many_lines = "deny"
+type_complexity = "deny"
+missing_docs_in_private_items = "deny"
+expect_used = "deny"
+unwrap_used = "deny"
+allow_attributes = "deny"
+allow_attributes_without_reason = "deny"
+multiple_crate_versions = { level = "allow", priority = 1 }
+module_name_repetitions = { level = "allow", priority = 1 }
