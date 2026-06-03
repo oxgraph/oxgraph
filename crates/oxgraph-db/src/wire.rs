@@ -517,10 +517,10 @@ pub(crate) const fn property_type_from_tag(tag: u32) -> Option<PropertyType> {
 /// These kind tags (`0`/`1`/`2`) are contractually tied to the
 /// [`PropertySubject`] variant declaration order: the derived `Ord` on
 /// [`PropertySubject`] ranks `Element < Relation < Incidence`, which MUST equal
-/// the ascending tag order here. Property records are written in
-/// the former owned-state `property_iter` order (a `BTreeMap<PropertySubject, …>`
-/// walk) and read back via a binary search keyed on `(subject_kind, subject_id,
-/// key)` in `backing::BaseView::property_by_key`. Reordering the variants or
+/// the ascending tag order here. Property records are written in ascending
+/// `PropertySubject` order and read back via a binary search keyed on
+/// `(subject_kind, subject_id, key)` in
+/// `backing::BaseView::property_by_key`. Reordering the variants or
 /// renumbering these tags would silently desynchronize write order from search
 /// order. `backing::attach_view` enforces this at open time with a debug
 /// assertion that the property array is sorted by that triple.
@@ -709,9 +709,9 @@ pub(crate) const MUTATION_OP_PAYLOAD_WORDS: usize = 9;
 /// key's family and value type) without widening the record; `payload` carries
 /// the id words, and variable-length text/name bytes are referenced as
 /// `(offset, len)` words into the record's trailing blob. The op vocabulary
-/// mirrors the the former owned-state model mutators one for one and reuses
-/// the same tag helpers ([`encode_subject`], [`property_family_tag`],
-/// [`property_type_tag`]) as the base format.
+/// has one op per state mutator and reuses the same tag helpers
+/// ([`encode_subject`], [`property_family_tag`], [`property_type_tag`]) as the
+/// base format.
 ///
 /// # Performance
 ///

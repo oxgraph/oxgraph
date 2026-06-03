@@ -1,12 +1,10 @@
 //! Canonical record value types and the id-allocator watermark.
 //!
-//! After the base+overlay+WAL integration this module no longer owns a
-//! whole-database state object. It owns only the durable record VALUE types the
-//! base and overlay both materialize ([`ElementRecord`], [`RelationRecord`],
-//! [`IncidenceRecord`], [`PropertySubject`]) plus the nine-value monotonic id
-//! allocator watermark ([`NextIds`]). The live read surface is the merged
-//! overlay-over-base view in [`crate::overlay`]; the owned whole-DB model is
-//! gone.
+//! This module owns the durable record VALUE types the base and overlay both
+//! materialize ([`ElementRecord`], [`RelationRecord`], [`IncidenceRecord`],
+//! [`PropertySubject`]) plus the nine-value monotonic id allocator watermark
+//! ([`NextIds`]). The live read surface is the merged overlay-over-base view in
+//! [`crate::overlay`].
 //!
 //! # Performance
 //!

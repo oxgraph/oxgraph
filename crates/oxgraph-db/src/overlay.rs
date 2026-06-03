@@ -1,6 +1,6 @@
 //! In-memory delta overlay layered over the borrowed base.
 //!
-//! This is the state model of the new MVCC engine: an owned, change-sized
+//! This is the state model of the MVCC engine: an owned, change-sized
 //! delta ([`Overlay`]) layered over the immutable, borrowed base
 //! ([`crate::backing::Base`]), unified for reads by a k-way merge
 //! ([`MergedState`]) so a lookup sees the overlay first and falls through to
@@ -14,8 +14,7 @@
 //!   turns the writer's accumulated delta into one. A published `Arc<Overlay>` is immutable
 //!   FOREVER; a commit seeds a fresh writer from the parent overlay
 //!   ([`WriteOverlay::from_overlay`]), applies the new mutations on top, freezes it, and publishes
-//!   a brand-new `Arc<Overlay>` — it NEVER mutates a published overlay. There is no
-//!   [`Arc::make_mut`] anywhere on this type.
+//!   a brand-new `Arc<Overlay>` — it NEVER mutates a published overlay in place.
 //! * [`MergedState`] — the borrowed read view that merges an `Overlay` over a base snapshot. Point
 //!   reads return [`Cow`]: a base-only id borrows from the base (zero clone, the fast path); an
 //!   overlay-supplied or overlay-overridden id is owned by the overlay; a tombstoned id is absent.
@@ -26,14 +25,14 @@
 //!
 //! # Wiring
 //!
-//! This overlay/merge model IS the live read/write path. The former owned
-//! `DatabaseState` is gone: `query.rs`, `projection.rs`, and `database.rs` all
-//! read state through [`StateView`] (a [`Snapshot`]'s [`MergedState`], or a
-//! writer's [`WriteMergedState`]), and writes accumulate into a [`WriteOverlay`]
-//! that a commit freezes into a published [`Overlay`]. The clone-and-apply
-//! primitive used to prove the merge laws (`Overlay::with_applied`, gated to
-//! `cfg(test)`/`cfg(kani)`) mirrors that commit semantics for the proofs; the
-//! live path freezes the seeded writer directly.
+//! This overlay/merge model IS the live read/write path. `query.rs`,
+//! `projection.rs`, and `database.rs` all read state through [`StateView`] (a
+//! [`Snapshot`]'s [`MergedState`], or a writer's [`WriteMergedState`]), and
+//! writes accumulate into a [`WriteOverlay`] that a commit freezes into a
+//! published [`Overlay`]. The clone-and-apply primitive that proves the merge
+//! laws (`Overlay::with_applied`, gated to `cfg(test)`/`cfg(kani)`) mirrors that
+//! commit semantics for the proofs; the live path freezes the seeded writer
+//! directly.
 //!
 //! # Performance
 //!
@@ -1148,23 +1147,14 @@ impl WriteOverlay {
     /// Records a property set: subject's key maps to `Some(value)`, overriding
     /// any base/overlay value for that pair.
     ///
-    /// # Phase note — UNVALIDATED delta; orphan properties must be rejected in P4
-    ///
-    /// The property layer and the record layer are independent maps, so this
-    /// records a visible property even when the same writer has tombstoned the
-    /// subject's element/relation/incidence (or never created it): the property
-    /// merge and the record merge do not consult each other. This is STRICTLY
-    /// more permissive than the type it replaces — the live
-    /// the former owned-state `set_property` gates on `require_subject`
-    /// and rejects a property whose subject is absent.
-    ///
-    /// This is acceptable here because the overlay is an unvalidated delta;
-    /// referential-integrity validation lives in the commit / write-transaction
-    /// layer (P4). P4's `WriteTransaction` (or commit-time `validate()`) MUST
-    /// reject a `set_property` against a subject tombstoned earlier in the same
-    /// transaction, and MUST carry a test asserting that orphan-property case is
-    /// rejected at the transaction boundary, so this permissiveness does not leak
-    /// into the live path.
+    /// The overlay is an unvalidated delta: the property layer and the record
+    /// layer are independent maps, so this records a visible property even when
+    /// the same writer has tombstoned the subject's element/relation/incidence
+    /// (or never created it) — the property merge and the record merge do not
+    /// consult each other. Referential-integrity validation lives in the
+    /// write-transaction layer: the database's `set_property` calls
+    /// `require_subject` to reject a property whose subject is absent before
+    /// recording it here, so orphan properties never reach the live path.
     ///
     /// # Performance
     ///
@@ -1718,11 +1708,11 @@ fn decode_index_def(
 /// A published `Arc<Overlay>` is immutable forever. To advance state, a commit
 /// seeds a fresh writer from the parent ([`WriteOverlay::from_overlay`]), applies
 /// the new mutations on top, freezes the result with [`WriteOverlay::freeze`],
-/// and publishes a brand-new `Arc<Overlay>`; it NEVER calls [`Arc::make_mut`] on,
-/// nor interior-mutates, a published overlay. (The `cfg(test)`/`cfg(kani)`
-/// `with_applied` helper proves that same clone-the-parent, apply-the-delta
-/// semantics for the merge laws.) A reader that pinned an `Arc<Overlay>`
-/// therefore observes a fixed delta for the lifetime of its pin.
+/// and publishes a brand-new `Arc<Overlay>`; it never mutates a published
+/// overlay in place. (The `cfg(test)`/`cfg(kani)` `with_applied` helper proves
+/// that same clone-the-parent, apply-the-delta semantics for the merge laws.) A
+/// reader that pinned an `Arc<Overlay>` therefore observes a fixed delta for the
+/// lifetime of its pin.
 ///
 /// # Performance
 ///
@@ -1832,23 +1822,17 @@ impl Overlay {
 /// once; [`MergedState`] then borrows from it for base-only ids (zero clone per
 /// read).
 ///
-/// # Phase note — stand-in; carries a standing ~2x base memory cost until P5
+/// # Memory cost
 ///
-/// This owned realization is the P3 stand-in for the borrowed-from-wire record
-/// accessor the reconciled design targets (a future `ElementRecord` reshaped
-/// into a label-run-borrowing view). The merge logic, the [`Cow`] contract, and
-/// the tests are identical either way; only the base record source changes.
-///
-/// The cost is real and per generation: [`Self::from_view`] duplicates the base
-/// bytes the Yoke already holds zero-copy into owned `BTreeMap`s, so the standing
-/// memory is ~2x the base (wire bytes + decoded records) for the life of every
-/// pinned reader. It is built once per checkpoint generation (at [`Snapshot::new`]
-/// — `open`/`create`/fold) and `Arc`-shared across every commit that pins that
-/// generation via [`Snapshot::with_shared_base_records`], so a commit re-decodes
-/// neither the base nor its index and stays `O(change)`. The build itself is a
-/// full `O(base records + labels + property bytes)` that gates fold/open latency.
-/// The roadmapped reshape (P5) removes [`BaseRecords`] entirely so this 2x base
-/// memory is not load-bearing once readers pin many generations.
+/// This realization carries a standing ~2x base memory cost per generation:
+/// [`Self::from_view`] duplicates the base bytes the Yoke already holds zero-copy
+/// into owned `BTreeMap`s, so the standing memory is ~2x the base (wire bytes +
+/// decoded records) for the life of every pinned reader. It is built once per
+/// checkpoint generation (at [`Snapshot::new`] — `open`/`create`/fold) and
+/// `Arc`-shared across every commit that pins that generation via
+/// [`Snapshot::with_shared_base_records`], so a commit re-decodes neither the
+/// base nor its index and stays `O(change)`. The build itself is a full
+/// `O(base records + labels + property bytes)` that gates fold/open latency.
 ///
 /// # Performance
 ///
@@ -2204,9 +2188,9 @@ impl Snapshot {
 /// `perf: unspecified`; compile-time only.
 const fn assert_send_sync<T: Send + Sync>() {}
 
-/// `Snapshot` MUST be `Send + Sync`: a `ReadTransaction` pinning it (a later
-/// phase) crosses threads, and the snapshot owns only `Arc`-shared `Send + Sync`
-/// data plus `Copy` identity fields.
+/// `Snapshot` MUST be `Send + Sync`: a `ReadTransaction` pinning it crosses
+/// threads, and the snapshot owns only `Arc`-shared `Send + Sync` data plus
+/// `Copy` identity fields.
 const _: () = assert_send_sync::<Snapshot>();
 /// `Overlay` MUST be `Send + Sync`: it is shared via `Arc<Overlay>` across the
 /// snapshots a reader pins.
@@ -2220,11 +2204,10 @@ const _: () = assert_send_sync::<Overlay>();
 /// * the adjacency / membership / typed-lookup surface the live consumers call, provided as default
 ///   methods over the base surface (the block after [`Self::next_ids`]).
 ///
-/// # Phase note — adjacency/membership/lookup surface is now COMPLETE (P4a)
+/// # Surface
 ///
-/// This trait now covers the full surface the live consumers
-/// (`query.rs`/`projection.rs`/`database.rs`) call, so P4 can swap
-/// `DatabaseState` for a merged view behind it:
+/// The trait covers the full surface the live consumers
+/// (`query.rs`/`projection.rs`/`database.rs`) call:
 ///
 /// * adjacency accessors — [`Self::relation_incidences`] / [`Self::element_incidences`] (incidence
 ///   adjacency; both projection builders walk them, e.g. `projection.rs` `from_state` via
@@ -2237,12 +2220,12 @@ const _: () = assert_send_sync::<Overlay>();
 ///   [`Self::typed_property_composite_equal`] (`query.rs` property scans, `database.rs` index
 ///   lookups).
 ///
-/// # Phase note — membership/property lookups are now INDEX-BACKED (P5)
+/// # Index-backed lookups
 ///
 /// The default methods below are merge-aware SCANS (overlay-over-base,
 /// tombstones masked) — correct, and the differential ORACLE the index path is
-/// tested against. But the live [`LayeredState`] impl OVERRIDES the membership
-/// and property lookups ([`Self::elements_with_label`],
+/// tested against. The live [`LayeredState`] impl OVERRIDES the membership and
+/// property lookups ([`Self::elements_with_label`],
 /// [`Self::relations_with_type`], [`Self::property_equal`],
 /// [`Self::property_range`], [`Self::typed_property_composite_equal`]) with
 /// index-backed implementations that run in `O(log n + matches)` instead of
@@ -2255,7 +2238,7 @@ const _: () = assert_send_sync::<Overlay>();
 /// [`LayeredState`] (the `*_scan` methods) for the differential test.
 ///
 /// This trait is the live read surface: `query.rs`, `projection.rs`, and
-/// `database.rs` all reach state through it, with NO change to these signatures.
+/// `database.rs` all reach state through it.
 ///
 /// # Performance
 ///
@@ -2398,8 +2381,7 @@ pub(crate) trait StateView {
     /// Returns every visible incidence attached to `element`, in ascending
     /// incidence-id order.
     ///
-    /// This mirrors the former owned-state `element_incidences`; it
-    /// returns an owned [`Vec`] (not a borrowed iterator) because the merged set
+    /// Returns an owned [`Vec`] (not a borrowed iterator) because the merged set
     /// mixes records owned by the overlay with records borrowed from the base, so
     /// no single borrow can span both. [`IncidenceRecord`] is [`Copy`], so the
     /// owned vector is cheap.
@@ -2418,8 +2400,7 @@ pub(crate) trait StateView {
     /// Returns every visible incidence belonging to `relation`, in ascending
     /// incidence-id order.
     ///
-    /// This mirrors the former owned-state `relation_incidences`; see
-    /// [`Self::element_incidences`] for why the result is an owned [`Vec`].
+    /// See [`Self::element_incidences`] for why the result is an owned [`Vec`].
     ///
     /// # Performance
     ///
@@ -2435,9 +2416,8 @@ pub(crate) trait StateView {
     /// Returns the ids of every visible element carrying `label`, in ascending
     /// element-id order.
     ///
-    /// This mirrors the former owned-state `elements_with_label`. The
-    /// live state keeps a derived membership index; the merged view scans instead
-    /// (functional parity for now — P5b adds incremental membership maintenance).
+    /// This default is the merge-scan oracle; the live [`LayeredState`] impl
+    /// overrides it with an index-backed lookup.
     ///
     /// # Performance
     ///
@@ -2453,9 +2433,8 @@ pub(crate) trait StateView {
     /// Returns the ids of every visible relation of `relation_type`, in ascending
     /// relation-id order.
     ///
-    /// This mirrors the former owned-state `relations_with_type`; it scans
-    /// the merged relations rather than consulting a derived index (P5b adds
-    /// incremental maintenance).
+    /// This default is the merge-scan oracle; the live [`LayeredState`] impl
+    /// overrides it with an index-backed lookup.
     ///
     /// # Performance
     ///
@@ -2471,8 +2450,9 @@ pub(crate) trait StateView {
     /// Returns the subjects whose property under `key` equals `value`, in
     /// ascending subject order.
     ///
-    /// This mirrors the former owned-state `property_equal`: an unvalidated
-    /// scan over the merged visible properties.
+    /// An unvalidated scan over the merged visible properties. This default is
+    /// the merge-scan oracle; the live [`LayeredState`] impl overrides it with an
+    /// index-backed lookup.
     ///
     /// # Performance
     ///
@@ -2489,8 +2469,6 @@ pub(crate) trait StateView {
 
     /// Returns the subjects whose typed property under `key` equals `value`, after
     /// validating `value` against the key schema.
-    ///
-    /// This mirrors the former owned-state `typed_property_equal`.
     ///
     /// # Errors
     ///
@@ -2516,9 +2494,6 @@ pub(crate) trait StateView {
     /// Returns the subjects in `family` whose typed property under `key` equals
     /// `value`, after validating both the family and the value type.
     ///
-    /// This mirrors
-    /// the former owned-state `typed_property_equal_for_family`.
-    ///
     /// # Errors
     ///
     /// Returns [`DbError::UnknownPropertyKey`], [`DbError::WrongPropertyFamily`],
@@ -2543,8 +2518,7 @@ pub(crate) trait StateView {
     /// Returns the subjects whose ordered property under `key` falls within the
     /// inclusive range `[min, max]`, in ascending subject order.
     ///
-    /// This mirrors the former owned-state `property_range`: an unvalidated
-    /// scan over the merged visible properties.
+    /// An unvalidated scan over the merged visible properties.
     ///
     /// # Performance
     ///
@@ -2568,8 +2542,7 @@ pub(crate) trait StateView {
     /// Returns the subjects whose typed property under `key` falls within the
     /// inclusive range `[min, max]`, after validating both bounds.
     ///
-    /// This mirrors the former owned-state `typed_property_range`; an
-    /// inverted range (`min > max`) yields an empty result without scanning.
+    /// An inverted range (`min > max`) yields an empty result without scanning.
     ///
     /// # Errors
     ///
@@ -2599,9 +2572,6 @@ pub(crate) trait StateView {
     /// Returns the subjects matching an ordered typed property tuple: a subject is
     /// returned only when it carries every `keys[i]` equal to `values[i]`, in
     /// ascending subject order.
-    ///
-    /// This mirrors
-    /// the former owned-state `typed_property_composite_equal`.
     ///
     /// # Errors
     ///
@@ -2642,8 +2612,6 @@ pub(crate) trait StateView {
     /// Validates a lookup `value`'s type against the merged catalog's schema for
     /// `key`.
     ///
-    /// This mirrors the private the former owned-state `validate_lookup_value`.
-    ///
     /// # Errors
     ///
     /// Returns [`DbError::UnknownPropertyKey`] when `key` is absent from the
@@ -2675,9 +2643,7 @@ pub(crate) trait StateView {
     /// Validates a lookup `value`'s type and subject `family` against the merged
     /// catalog's schema for `key`.
     ///
-    /// This mirrors
-    /// the former owned-state `validate_lookup_value_for_family` and
-    /// delegates entirely to the merged catalog returned by [`Self::catalog`].
+    /// Delegates entirely to the merged catalog returned by [`Self::catalog`].
     ///
     /// # Errors
     ///
@@ -2717,8 +2683,7 @@ pub(crate) trait StateView {
     ///
     /// This materializes one entry per visible `(subject, key)` pair so a
     /// per-subject predicate (e.g. composite equality) can test every key of a
-    /// subject together. It is the merged analogue of the nested property map the
-    /// live `DatabaseState` already holds.
+    /// subject together.
     ///
     /// # Performance
     ///
@@ -3104,11 +3069,11 @@ impl<L: OverlayLayer> StateView for LayeredState<'_, L> {
     }
 }
 
-/// Merge-SCAN oracles: the pre-P5 lookup implementations, kept under
+/// Merge-SCAN oracles: the scan lookup implementations, kept under
 /// `#[cfg(test)]` so the index-backed [`StateView`] overrides can be
 /// differential-tested against them. Each scans the full merged visible set and
-/// filters, exactly as the former default-trait implementations did; the
-/// index-backed methods MUST return the same result for every input.
+/// filters; the index-backed methods MUST return the same result for every
+/// input.
 ///
 /// # Performance
 ///
@@ -3584,11 +3549,10 @@ fn proof_zero_next_ids() -> NextIds {
 
 /// Test-only base builders shared by the freeze, backing, and overlay tests.
 ///
-/// `DatabaseState` (the old owned whole-DB model) is gone, so test fixtures now
-/// build a base by accumulating a [`WriteOverlay`] over an empty base and
-/// freezing the merged view through [`crate::freeze::freeze_view`] — the exact
-/// path `create`/`checkpoint` run. These helpers are compiled only under
-/// `cfg(test)`.
+/// Test fixtures build a base by accumulating a [`WriteOverlay`] over an empty
+/// base and freezing the merged view through [`crate::freeze::freeze_view`] —
+/// the exact path `create`/`checkpoint` run. These helpers are compiled only
+/// under `cfg(test)`.
 ///
 /// # Performance
 ///
@@ -3729,7 +3693,7 @@ pub(crate) mod test_support {
 
     /// Builds a small `(BaseRecords, Overlay)` pair the freeze test merges: an
     /// empty base under an overlay holding two created elements and a property,
-    /// so the frozen view is non-trivial without needing a `DatabaseState`.
+    /// so the frozen view is non-trivial.
     ///
     /// # Performance
     ///

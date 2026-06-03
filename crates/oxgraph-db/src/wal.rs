@@ -81,7 +81,7 @@ pub(crate) struct CommitFrame {
 /// This is the raw recovered prefix only. Deriving the live `commit_seq` (and the
 /// rest of the linearization story the [`SuperblockRecord`] doc promises is
 /// "derived from the valid prefix of the delta-log") from these frames is the
-/// caller's responsibility, wired in the P4 commit/recovery path; `ReplayOutcome`
+/// caller's responsibility in the commit/recovery path; `ReplayOutcome`
 /// deliberately exposes the recovered frames and frontier rather than computing
 /// it here.
 ///

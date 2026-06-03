@@ -630,7 +630,7 @@ enum IndexOp {
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(MERGE_CASES))]
 
-    /// Differential test for the P5 index-backed lookups: a random delta applied
+    /// Differential test for the index-backed lookups: a random delta applied
     /// to a `WriteOverlay` makes every index-backed `StateView` lookup
     /// (`elements_with_label`, `relations_with_type`, `property_equal`,
     /// `property_range`, `typed_property_composite_equal`) return EXACTLY what the

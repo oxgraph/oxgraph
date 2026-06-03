@@ -7,7 +7,7 @@
 //! (`begin_read` clones the `Arc`); writes layer a fresh [`WriteOverlay`] over
 //! the current snapshot, append a WAL frame on commit, and publish a new
 //! snapshot. The whole read/query/projection surface resolves through the merged
-//! [`StateView`] of the pinned snapshot; the old owned whole-DB state is gone.
+//! [`StateView`] of the pinned snapshot.
 
 use std::{
     borrow::Cow,

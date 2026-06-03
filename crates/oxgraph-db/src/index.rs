@@ -1,19 +1,15 @@
 //! Real (index-backed) membership and property lookups for the merged state.
 //!
-//! Before P5 the [`crate::overlay::StateView`] membership and property lookups
-//! were correct merge-SCANS: every lookup walked the full base + overlay set and
-//! filtered. This module replaces that implementation — under the SAME
-//! [`crate::overlay::StateView`] method signatures — with index-backed lookups
-//! that run in `O(log n + matches)`, not `O(n)`.
+//! The [`crate::overlay::StateView`] membership and property lookups are
+//! index-backed, running in `O(log n + matches)`, not `O(n)`.
 //!
 //! Two pieces compose, mirroring the base/overlay split of the state model:
 //!
 //! * [`BaseIndex`] — derived postings built ONCE in RAM from the immutable
-//!   [`crate::overlay::BaseRecords`] of one generation (like the former
-//!   `rebuild_membership_indexes`): a per-`(key, value)` equality map (which drives equality +
-//!   range via the ordered [`crate::PropertyValue`] key, and composite via per-key posting
-//!   intersection), plus label and relation-type membership maps. It is `Arc`-shared by every
-//!   reader of a generation, so `begin_read` stays `O(1)`.
+//!   [`crate::overlay::BaseRecords`] of one generation: a per-`(key, value)` equality map (which
+//!   drives equality + range via the ordered [`crate::PropertyValue`] key, and composite via
+//!   per-key posting intersection), plus label and relation-type membership maps. It is
+//!   `Arc`-shared by every reader of a generation, so `begin_read` stays `O(1)`.
 //! * [`OverlayIndex`] — incremental deltas the overlay maintains as the writer mutates:
 //!   `added`/`removed` postings per posting key. A lookup then computes `(base ∪ added) \ removed`
 //!   over only the affected postings, so a base-only id costs `O(log n + matches)` and an
@@ -58,9 +54,9 @@ type EqualityKey = (PropertyKeyId, PropertyValue);
 ///
 /// Every map here is rebuilt in RAM at [`Self::from_records`] from the owned
 /// [`crate::overlay::BaseRecords`]; nothing is persisted into the base file (the
-/// base format carries reserved `SECTION_INDEX_*` sections, but P5 rebuilds in
-/// RAM — the simpler default — so those stay unused). One build per generation,
-/// `Arc`-shared thereafter.
+/// base format carries reserved `SECTION_INDEX_*` sections that stay unused —
+/// the index is rebuilt in RAM). One build per generation, `Arc`-shared
+/// thereafter.
 ///
 /// # Performance
 ///
