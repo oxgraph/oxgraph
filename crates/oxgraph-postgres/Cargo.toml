@@ -18,21 +18,21 @@ serde = ["dep:serde"]
 bench-fixture = ["std"]
 
 [dependencies]
-oxgraph-algo = { version = "0.2.0", path = "../oxgraph-algo", default-features = false, features = [
+oxgraph-algo = { version = "0.2.4", path = "../oxgraph-algo", default-features = false, features = [
   "alloc",
 ] }
-oxgraph-csc = { version = "0.2.0", path = "../oxgraph-csc" }
-oxgraph-csr = { version = "0.2.0", path = "../oxgraph-csr", features = ["build"] }
-oxgraph-graph = { version = "0.2.0", path = "../oxgraph-graph" }
-oxgraph-snapshot = { version = "0.2.0", path = "../oxgraph-snapshot", features = ["alloc"] }
+oxgraph-csc = { version = "0.2.4", path = "../oxgraph-csc" }
+oxgraph-csr = { version = "0.2.4", path = "../oxgraph-csr", features = ["build"] }
+oxgraph-graph = { version = "0.2.4", path = "../oxgraph-graph" }
+oxgraph-snapshot = { version = "0.2.4", path = "../oxgraph-snapshot", features = ["alloc"] }
 serde = { version = "1.0.228", optional = true, features = ["derive"] }
 yoke = { workspace = true }
 zerocopy = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
-oxgraph-csc = { version = "0.2.0", path = "../oxgraph-csc" }
-oxgraph-csr = { version = "0.2.0", path = "../oxgraph-csr", features = ["build"] }
+oxgraph-csc = { version = "0.2.4", path = "../oxgraph-csc" }
+oxgraph-csr = { version = "0.2.4", path = "../oxgraph-csr", features = ["build"] }
 proptest = { workspace = true }
 
 [[bench]]
