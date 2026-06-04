@@ -3,9 +3,11 @@
 use core::hash::{Hash, Hasher};
 
 use crate::{
-    CheckpointGeneration, CommitSeq, ElementId, IncidenceId, IndexId, LabelId, ProjectionElementId,
-    ProjectionId, ProjectionIncidenceId, ProjectionRelationId, PropertyFamily, PropertyKeyId,
-    PropertySubject, PropertyType, RelationId, RelationTypeId, RoleId, TransactionId, wire,
+    CheckpointGeneration, CommitSeq, ElementId, IncidenceId, IndexId, LabelId, ProjectionId,
+    PropertyFamily, PropertyKeyId, PropertySubject, PropertyType, PropertyValue, RelationId,
+    RelationTypeId, RoleId, TransactionId,
+    projection::{ProjectionElementId, ProjectionIncidenceId, ProjectionRelationId},
+    wire,
 };
 
 /// Deterministic proof hasher for ID newtype hash/equality checks.
@@ -296,12 +298,18 @@ fn any_op(op_kind: u32) -> wire::MutationOp {
 macro_rules! prove_op_roundtrip {
     ($name:ident, $op_kind:path) => {
         /// Proves the named op kind round-trips through byte encoding.
+        ///
+        /// The op's bytes are taken as the fixed-size [`IntoBytes`] slice (NOT a
+        /// heap `Vec`): a `Vec` makes the slice length symbolic to the model
+        /// checker, which then unwinds `memcmp` unboundedly. The slice length is
+        /// `size_of::<MutationOp>()`, so the unwind bound below is constant.
         #[kani::proof]
+        #[kani::unwind(72)]
         fn $name() {
             use zerocopy::{FromBytes, IntoBytes};
             let op = any_op($op_kind);
-            let bytes = op.as_bytes().to_vec();
-            let Ok(decoded) = wire::MutationOp::read_from_bytes(bytes.as_slice()) else {
+            let bytes = op.as_bytes();
+            let Ok(decoded) = wire::MutationOp::read_from_bytes(bytes) else {
                 assert!(false);
                 return;
             };
@@ -425,6 +433,9 @@ fn single_record_framing_consistent() {
 /// exactly when it is visible (present in the overlay as a set value, or present
 /// in the base with no overlay tombstone/override). Bounded to three ids so the
 /// model checker terminates.
+// CBMC-heavy (BTreeMap merge path blow-up); opt-in via `--features kani-heavy`.
+// The merged-visible-set contract is verified fast by `merge_matches_oracle`.
+#[cfg(feature = "kani-heavy")]
 #[kani::proof]
 #[kani::unwind(8)]
 fn overlay_merge_is_total_and_duplicate_free() {
@@ -504,6 +515,9 @@ fn overlay_merge_is_total_and_duplicate_free() {
 /// absent id makes it absent (a no-op against the visible set when the base
 /// also lacks it), and tombstoning the same id twice yields the same single
 /// tombstone and the same `None` read as tombstoning it once. Bounded to one id.
+// CBMC-heavy (BTreeMap merge path blow-up); opt-in via `--features kani-heavy`.
+// The tombstone-idempotence contract is exercised by `merge_matches_oracle`.
+#[cfg(feature = "kani-heavy")]
 #[kani::proof]
 #[kani::unwind(6)]
 fn overlay_tombstone_is_idempotent() {
@@ -546,6 +560,10 @@ fn overlay_tombstone_is_idempotent() {
 /// `Overlay::with_applied`: a child overlay built from a parent plus a writer
 /// delta that allocates one element has a strictly greater `next_element`
 /// watermark than the parent, and the rest of the watermark never regresses.
+// CBMC-heavy (`with_applied` BTreeMap merge path blow-up); opt-in via
+// `--features kani-heavy`. The watermark-monotonicity contract is exercised by
+// `merge_matches_oracle` (which constructs child overlays via `with_applied`).
+#[cfg(feature = "kani-heavy")]
 #[kani::proof]
 #[kani::unwind(4)]
 fn overlay_watermark_monotonic_under_apply() {
@@ -570,4 +588,32 @@ fn overlay_watermark_monotonic_under_apply() {
     // The other allocators never regress.
     assert_eq!(child.next_ids().relation, parent.next_ids().relation);
     assert_eq!(child.next_ids().role, parent.next_ids().role);
+}
+
+/// Proves `PropertyValue::try_from::<u64>` narrows exactly when the value fits
+/// `i64`, agreeing with the checked standard conversion (and never panicking).
+///
+/// The assertion compares the narrowed `i64` scalar, NOT the `PropertyValue`:
+/// `PropertyValue`'s derived `PartialEq` includes its `Text(String)` arm, which
+/// the model checker unwinds as an unbounded `memcmp` over a symbolic-length
+/// string — even though this conversion only ever yields `Integer`/`None`.
+#[kani::proof]
+fn property_value_try_from_u64_matches_checked() {
+    let raw: u64 = kani::any();
+    match PropertyValue::try_from(raw) {
+        Ok(PropertyValue::Integer(got)) => assert_eq!(Some(got), i64::try_from(raw).ok()),
+        Ok(_) => assert!(false, "u64 conversion must yield Integer or an error"),
+        Err(_) => assert!(i64::try_from(raw).is_err()),
+    }
+}
+
+/// Proves `PropertyValue::as_count` agrees with the checked `usize` conversion
+/// for every `i64` (total: it never panics and only narrows when in range).
+#[kani::proof]
+fn property_value_as_count_matches_checked() {
+    let raw: i64 = kani::any();
+    assert_eq!(
+        PropertyValue::Integer(raw).as_count(),
+        usize::try_from(raw).ok()
+    );
 }

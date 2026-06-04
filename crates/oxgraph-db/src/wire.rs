@@ -37,10 +37,17 @@ use crate::{
 /// [`DbHeaderRecord::format_version`]. A reader that does not recognize the
 /// value rejects the store rather than guessing the layout.
 ///
+/// Bumped to `2` when the derived [`crate::index::BaseIndex`] postings became a
+/// persisted, borrow-at-open structure: a base written under the `1` format
+/// lacks the five `SECTION_INDEX_*`/`SECTION_CSR_OUT`/`SECTION_CSC_IN`/
+/// `SECTION_INDEX_RELATION_TYPE` posting sections and cannot be opened (there is
+/// no rebuild-from-records fallback on the production path), so it is rejected
+/// with [`crate::DbError::UnsupportedFormat`].
+///
 /// # Performance
 ///
 /// `perf: unspecified`; this is a compile-time constant.
-pub(crate) const OXGDB_FORMAT_VERSION: u32 = 1;
+pub(crate) const OXGDB_FORMAT_VERSION: u32 = 2;
 
 /// Section version recorded on every OXGDB section entry. Bumped independently
 /// of [`OXGDB_FORMAT_VERSION`] when a single section's record layout changes.
@@ -207,18 +214,61 @@ pub(crate) const SECTION_CSC_IN: u32 = 0x0331;
 ///
 /// `perf: unspecified`; this is a compile-time constant.
 pub(crate) const SECTION_HYPER_BCSR: u32 = 0x0332;
-/// Physical equality/composite index postings.
+/// Physical equality/composite index postings: the persisted
+/// [`crate::index::BaseIndex`] `property_equality` posting map. Holds a
+/// directory of [`EqualityDirEntry`] records (sorted by `(key_id,
+/// PropertyValue)`) plus a flat `[U64<LE>]` subject value pool; the directory's
+/// text bytes are sliced out of [`SECTION_INDEX_EQUALITY_TEXT`]. Borrowed
+/// zero-copy at open instead of rebuilt from records.
 ///
 /// # Performance
 ///
 /// `perf: unspecified`; this is a compile-time constant.
 pub(crate) const SECTION_INDEX_EQUALITY: u32 = 0x0340;
-/// Physical label and relation-type membership postings.
+/// Physical label membership postings: the persisted
+/// [`crate::index::BaseIndex`] `label_members` posting map as a directory of
+/// [`PostingDirEntry`] records (sorted by label id) plus a flat `[U64<LE>]`
+/// element value pool.
 ///
 /// # Performance
 ///
 /// `perf: unspecified`; this is a compile-time constant.
 pub(crate) const SECTION_INDEX_LABEL_POSTINGS: u32 = 0x0341;
+/// Physical relation-type membership postings: the persisted
+/// [`crate::index::BaseIndex`] `relation_type_members` posting map as a
+/// directory of [`PostingDirEntry`] records (sorted by relation-type id) plus a
+/// flat `[U64<LE>]` relation value pool.
+///
+/// # Performance
+///
+/// `perf: unspecified`; this is a compile-time constant.
+pub(crate) const SECTION_INDEX_RELATION_TYPE_POSTINGS: u32 = 0x0342;
+/// Concatenated UTF-8 text-value bytes for the equality index directory; every
+/// [`EqualityDirEntry`] whose value is text references this section by
+/// `(text_off, text_len)`.
+///
+/// # Performance
+///
+/// `perf: unspecified`; this is a compile-time constant.
+pub(crate) const SECTION_INDEX_EQUALITY_TEXT: u32 = 0x0343;
+/// Physical element reverse-adjacency postings: the persisted
+/// [`crate::index::BaseIndex`] `element_incidences` posting map as a directory
+/// of [`PostingDirEntry`] records (sorted by element id) plus a flat `[U64<LE>]`
+/// incidence value pool.
+///
+/// # Performance
+///
+/// `perf: unspecified`; this is a compile-time constant.
+pub(crate) const SECTION_INDEX_ELEMENT_INCIDENCES: u32 = SECTION_CSR_OUT;
+/// Physical relation reverse-adjacency postings: the persisted
+/// [`crate::index::BaseIndex`] `relation_incidences` posting map as a directory
+/// of [`PostingDirEntry`] records (sorted by relation id) plus a flat
+/// `[U64<LE>]` incidence value pool.
+///
+/// # Performance
+///
+/// `perf: unspecified`; this is a compile-time constant.
+pub(crate) const SECTION_INDEX_RELATION_INCIDENCES: u32 = SECTION_CSC_IN;
 
 /// Every section kind this store emits, used by the compile-time band check
 /// below and available to tooling that wants to enumerate the layout.
@@ -226,7 +276,7 @@ pub(crate) const SECTION_INDEX_LABEL_POSTINGS: u32 = 0x0341;
 /// # Performance
 ///
 /// `perf: unspecified`; this is a compile-time constant.
-pub(crate) const ALL_SECTION_KINDS: [u32; 24] = [
+pub(crate) const ALL_SECTION_KINDS: [u32; 26] = [
     SECTION_DB_HEADER,
     SECTION_STRING_TABLE,
     SECTION_CATALOG_ROLES,
@@ -246,11 +296,13 @@ pub(crate) const ALL_SECTION_KINDS: [u32; 24] = [
     SECTION_IDENTITY_MAP,
     SECTION_PROPERTY_RECORDS,
     SECTION_PROPERTY_TEXT,
-    SECTION_CSR_OUT,
-    SECTION_CSC_IN,
+    SECTION_INDEX_ELEMENT_INCIDENCES,
+    SECTION_INDEX_RELATION_INCIDENCES,
     SECTION_HYPER_BCSR,
     SECTION_INDEX_EQUALITY,
     SECTION_INDEX_LABEL_POSTINGS,
+    SECTION_INDEX_RELATION_TYPE_POSTINGS,
+    SECTION_INDEX_EQUALITY_TEXT,
 ];
 
 // Every OXGDB section kind must live inside the container's reserved
@@ -578,6 +630,69 @@ pub(crate) struct PropertyWire {
     /// Byte length of a text value in [`SECTION_PROPERTY_TEXT`]; unused
     /// otherwise.
     pub(crate) text_len: U32<LE>,
+}
+
+/// One directory entry of a simple persisted posting map (`label_members`,
+/// `relation_type_members`, `element_incidences`, `relation_incidences`):
+/// `key` is the posting key (a canonical id) and `(members_off, members_len)`
+/// slices that key's ascending member-id run out of the section's trailing flat
+/// `[U64<LE>]` value pool. Entries are written ascending by `key`, so a borrowed
+/// reader binary-searches them, exactly matching the owned `BTreeMap` order.
+///
+/// # Performance
+///
+/// Copying is `O(1)`; the record is a fixed-size value type.
+#[derive(Clone, Copy, Debug, FromBytes, Immutable, IntoBytes, KnownLayout)]
+#[repr(C)]
+pub(crate) struct PostingDirEntry {
+    /// Posting key (a canonical id: label, relation-type, element, or relation).
+    pub(crate) key: U64<LE>,
+    /// Start index of this posting's members in the value pool, in `u64` words.
+    pub(crate) members_off: U64<LE>,
+    /// Number of member ids this posting holds, in `u64` words.
+    pub(crate) members_len: U64<LE>,
+}
+
+/// One directory entry of the persisted `property_equality` posting map. The key
+/// is `(key_id, PropertyValue)`: `value_tag` is the [`property_type_tag`] of the
+/// value, `value_scalar` holds the boolean (`0`/`1`) or `i64`-as-`u64` payload,
+/// and `(text_off, text_len)` slices a UTF-8 text value out of
+/// [`SECTION_INDEX_EQUALITY_TEXT`] (unused for non-text values).
+/// `(members_off, members_len)` slices this pair's ascending subject run out of
+/// the section's trailing flat `[U64<LE>]` value pool, where each subject is
+/// encoded as a `(kind, id)` word pair via [`encode_subject`].
+///
+/// Entries are written in `(key_id, PropertyValue)` order — the EXACT order the
+/// owned `BTreeMap<(PropertyKeyId, PropertyValue), …>` uses (the derived
+/// [`crate::PropertyValue`] `Ord` is `Boolean < Integer < Text`, and
+/// `Boolean(false)` is the global minimum) — so a borrowed reader binary-searches
+/// for equality and a range over one key stays a contiguous directory slice.
+///
+/// # Performance
+///
+/// Copying is `O(1)`; the record is a fixed-size value type.
+#[derive(Clone, Copy, Debug, FromBytes, Immutable, IntoBytes, KnownLayout)]
+#[repr(C)]
+pub(crate) struct EqualityDirEntry {
+    /// Property-key id of this posting's `(key, value)` pair.
+    pub(crate) key_id: U64<LE>,
+    /// Value-type tag of the pair's value (see [`property_type_tag`]).
+    pub(crate) value_tag: U32<LE>,
+    /// Reserved word kept zero so the record has no implicit padding.
+    pub(crate) reserved: U32<LE>,
+    /// Boolean (`0`/`1`) or `i64`-as-`u64` scalar; unused for text values.
+    pub(crate) value_scalar: U64<LE>,
+    /// Byte offset of a text value in [`SECTION_INDEX_EQUALITY_TEXT`].
+    pub(crate) text_off: U64<LE>,
+    /// Byte length of a text value in [`SECTION_INDEX_EQUALITY_TEXT`].
+    pub(crate) text_len: U64<LE>,
+    /// Start index of this pair's subjects in the value pool, in `u64` words
+    /// (each subject is a two-word `(kind, id)` pair from [`encode_subject`]).
+    pub(crate) members_off: U64<LE>,
+    /// Number of `u64` WORDS this pair's subject run occupies (two per subject),
+    /// so the read side slices the whole run and `chunks_exact(2)` recovers each
+    /// `(kind, id)` subject.
+    pub(crate) members_len: U64<LE>,
 }
 
 /// Base content-integrity trailer record. Exactly one occupies
@@ -965,6 +1080,10 @@ mod tests {
     /// scopes depend on.
     #[test]
     fn new_records_have_no_padding() {
+        // 3 * 8 (u64 fields) = 24.
+        assert_eq!(size_of::<PostingDirEntry>(), 24);
+        // 6 * 8 (u64 fields) + 2 * 4 (u32 fields incl. reserved) = 56.
+        assert_eq!(size_of::<EqualityDirEntry>(), 6 * 8 + 2 * 4);
         assert_eq!(size_of::<BaseTrailer>(), 8);
         // 8 (magic) + 5 * 8 (u64 fields) + 4 * 4 (u32 fields incl. pad) = 64.
         assert_eq!(size_of::<SuperblockRecord>(), 64);

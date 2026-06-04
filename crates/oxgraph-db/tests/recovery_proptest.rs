@@ -7,10 +7,10 @@ use std::{
 };
 
 use oxgraph_db::{
-    Database, DbError, GraphProjectionDefinition, HypergraphProjectionDefinition, IndexDefinition,
-    IndexLookup, ProjectionDefinition, PropertyFamily, PropertySubject, PropertyType,
-    PropertyValue, QueryLanguage, RelationId, RoleId, TraversalDirection, TraversalOptions,
-    TraversalRow,
+    CommitOutcome, Db, DbError, Direction, GraphProjectionDefinition,
+    HypergraphProjectionDefinition, IndexDefinition, Int, Key, Match, ProjectionDefinition,
+    PropertyFamily, PropertySubject, PropertyType, PropertyValue, RelationId, RoleId,
+    TraversedNode, Walk,
 };
 use oxgraph_graph::{ElementSuccessors, LocalElementIdentity, TopologyCounts};
 use oxgraph_hyper::DirectedHyperedgeParticipants;
@@ -53,10 +53,10 @@ proptest! {
         let path = temp_path("recovery");
         prop_io(clean(&path))?;
 
-        let mut database = prop_db(Database::create(&path))?;
+        let mut database = prop_db(Db::create(&path))?;
         let expected = prop_db(load_generated(&mut database, element_count, &edge_specs))?;
-        let reopened = prop_db(Database::open(&path))?;
-        let read = reopened.begin_read();
+        let reopened = prop_db(Db::open(&path))?;
+        let read = reopened.reader();
         prop_assert_eq!(read.element_count(), element_count);
         prop_assert_eq!(read.relation_count(), edge_specs.len());
         prop_assert_eq!(read.incidence_count(), edge_specs.len() * 2);
@@ -81,9 +81,9 @@ proptest! {
         let path = temp_path("graph-projection");
         prop_io(clean(&path))?;
 
-        let mut database = prop_db(Database::create(&path))?;
+        let mut database = prop_db(Db::create(&path))?;
         let expected = prop_db(load_generated(&mut database, element_count, &edge_specs))?;
-        let read = database.begin_read();
+        let read = database.reader();
         let graph = prop_db(read.graph_projection(expected.graph_projection))?;
 
         for (slot, element) in expected.elements.iter().copied().enumerate() {
@@ -109,13 +109,13 @@ proptest! {
         let path = temp_path("hyper-projection");
         prop_io(clean(&path))?;
 
-        let mut database = prop_db(Database::create(&path))?;
+        let mut database = prop_db(Db::create(&path))?;
         let expected = prop_db(load_one_hyperedge(&mut database, element_count, target_count))?;
-        let read = database.begin_read();
+        let read = database.reader();
         let hyper = prop_db(read.hypergraph_projection(expected.hyper_projection))?;
         prop_assert_eq!(hyper.relation_count(), 1);
         let target_seen = hyper
-            .target_participants(oxgraph_db::ProjectionRelationId::new(0))
+            .target_participants(oxgraph_db::projection::ProjectionRelationId::new(0))
             .count();
         prop_assert_eq!(target_seen, target_count.min(element_count - 1));
         prop_io(clean(&path))?;
@@ -126,35 +126,37 @@ proptest! {
         let path = temp_path("property-index");
         prop_io(clean(&path))?;
 
-        let mut database = prop_db(Database::create(&path))?;
-        let mut writer = prop_db(database.begin_write())?;
-        let key = prop_db(writer.register_property_key(
-            "rank",
-            PropertyFamily::Element,
-            PropertyType::Integer,
-        ))?;
-        let index = prop_db(writer.define_index(
-            "rank_eq",
-            IndexDefinition::PropertyEquality { key },
-        ))?;
-        let mut expected = Vec::new();
-        for value in &values {
-            let element = prop_db(writer.create_element())?;
-            prop_db(writer.set_property(
-                PropertySubject::Element(element),
-                key,
-                PropertyValue::Integer(*value),
-            ))?;
-            if *value == values[0] {
-                expected.push(PropertySubject::Element(element));
+        let mut database = prop_db(Db::create(&path))?;
+        let (index, expected) = prop_db(database.write(|writer| {
+            let key = writer.register_property_key(
+                "rank",
+                PropertyFamily::Element,
+                PropertyType::Integer,
+            )?;
+            let index = writer.define_index(
+                "rank_eq",
+                IndexDefinition::PropertyEquality { key },
+            )?;
+            let mut expected = Vec::new();
+            for value in &values {
+                let element = writer.create_element()?;
+                writer.set(
+                    PropertySubject::Element(element),
+                    Key::<Int>::from_id(key),
+                    *value,
+                )?;
+                if *value == values[0] {
+                    expected.push(PropertySubject::Element(element));
+                }
             }
-        }
-        prop_db(writer.commit())?;
+            Ok((index, expected))
+        }))?
+        .0;
 
-        let read = database.begin_read();
-        let observed = prop_db(read.lookup_index(
+        let read = database.reader();
+        let observed = prop_db(read.lookup(
             index,
-            IndexLookup::Equal(&PropertyValue::Integer(values[0])),
+            Match::Equal(&PropertyValue::Integer(values[0])),
         ))?;
         prop_assert_eq!(observed, expected);
         prop_io(clean(&path))?;
@@ -169,51 +171,53 @@ proptest! {
         let path = temp_path("composite-index");
         prop_io(clean(&path))?;
 
-        let mut database = prop_db(Database::create(&path))?;
-        let mut writer = prop_db(database.begin_write())?;
-        let left_key = prop_db(writer.register_property_key(
-            "left",
-            PropertyFamily::Element,
-            PropertyType::Integer,
-        ))?;
-        let right_key = prop_db(writer.register_property_key(
-            "right",
-            PropertyFamily::Element,
-            PropertyType::Integer,
-        ))?;
-        let index = prop_db(writer.define_index(
-            "left_right",
-            IndexDefinition::CompositeEquality {
-                keys: vec![left_key, right_key],
-            },
-        ))?;
-        let mut expected = Vec::new();
-        for (left, right) in &values {
-            let element = prop_db(writer.create_element())?;
-            prop_db(writer.set_property(
-                PropertySubject::Element(element),
-                left_key,
-                PropertyValue::Integer(*left),
-            ))?;
-            prop_db(writer.set_property(
-                PropertySubject::Element(element),
-                right_key,
-                PropertyValue::Integer(*right),
-            ))?;
-            if *left == target_left && *right == target_right {
-                expected.push(PropertySubject::Element(element));
+        let mut database = prop_db(Db::create(&path))?;
+        let (index, expected) = prop_db(database.write(|writer| {
+            let left_key = writer.register_property_key(
+                "left",
+                PropertyFamily::Element,
+                PropertyType::Integer,
+            )?;
+            let right_key = writer.register_property_key(
+                "right",
+                PropertyFamily::Element,
+                PropertyType::Integer,
+            )?;
+            let index = writer.define_index(
+                "left_right",
+                IndexDefinition::CompositeEquality {
+                    keys: vec![left_key, right_key],
+                },
+            )?;
+            let mut expected = Vec::new();
+            for (left, right) in &values {
+                let element = writer.create_element()?;
+                writer.set(
+                    PropertySubject::Element(element),
+                    Key::<Int>::from_id(left_key),
+                    *left,
+                )?;
+                writer.set(
+                    PropertySubject::Element(element),
+                    Key::<Int>::from_id(right_key),
+                    *right,
+                )?;
+                if *left == target_left && *right == target_right {
+                    expected.push(PropertySubject::Element(element));
+                }
             }
-        }
-        prop_db(writer.commit())?;
+            Ok((index, expected))
+        }))?
+        .0;
 
         let lookup_values = [
             PropertyValue::Integer(target_left),
             PropertyValue::Integer(target_right),
         ];
-        let read = database.begin_read();
-        let observed = prop_db(read.lookup_index(
+        let read = database.reader();
+        let observed = prop_db(read.lookup(
             index,
-            IndexLookup::CompositeEqual(&lookup_values),
+            Match::Composite(&lookup_values),
         ))?;
         prop_assert_eq!(observed, expected);
         prop_io(clean(&path))?;
@@ -224,26 +228,28 @@ proptest! {
         let path = temp_path("property-type-errors");
         prop_io(clean(&path))?;
 
-        let mut database = prop_db(Database::create(&path))?;
-        let mut writer = prop_db(database.begin_write())?;
-        let key = prop_db(writer.register_property_key(
-            "rank",
-            PropertyFamily::Element,
-            PropertyType::Integer,
-        ))?;
-        let index = prop_db(writer.define_index(
-            "rank_eq",
-            IndexDefinition::PropertyEquality { key },
-        ))?;
-        let element = prop_db(writer.create_element())?;
-        prop_db(writer.set_property(
-            PropertySubject::Element(element),
-            key,
-            PropertyValue::Integer(value),
-        ))?;
-        prop_db(writer.commit())?;
+        let mut database = prop_db(Db::create(&path))?;
+        let (key, index) = prop_db(database.write(|writer| {
+            let key = writer.register_property_key(
+                "rank",
+                PropertyFamily::Element,
+                PropertyType::Integer,
+            )?;
+            let index = writer.define_index(
+                "rank_eq",
+                IndexDefinition::PropertyEquality { key },
+            )?;
+            let element = writer.create_element()?;
+            writer.set(
+                PropertySubject::Element(element),
+                Key::<Int>::from_id(key),
+                value,
+            )?;
+            Ok((key, index))
+        }))?
+        .0;
 
-        let read = database.begin_read();
+        let read = database.reader();
         let equal_type_error = matches!(
             read.lookup_property_equal(key, &PropertyValue::Text("wrong".to_owned())),
             Err(DbError::PropertyTypeMismatch { .. }),
@@ -259,9 +265,9 @@ proptest! {
         );
         prop_assert!(range_type_error);
         let index_type_error = matches!(
-            read.lookup_index(
+            read.lookup(
                 index,
-                IndexLookup::Equal(&PropertyValue::Text("wrong".to_owned())),
+                Match::Equal(&PropertyValue::Text("wrong".to_owned())),
             ),
             Err(DbError::PropertyTypeMismatch { .. }),
         );
@@ -277,9 +283,9 @@ proptest! {
         let path = temp_path("projection-index");
         prop_io(clean(&path))?;
 
-        let mut database = prop_db(Database::create(&path))?;
+        let mut database = prop_db(Db::create(&path))?;
         let expected = prop_db(load_generated(&mut database, element_count, &edge_specs))?;
-        let read = database.begin_read();
+        let read = database.reader();
         let mut graph_expected = BTreeSet::new();
         let mut hyper_expected = BTreeSet::new();
         for (source, target) in &edge_specs {
@@ -298,13 +304,13 @@ proptest! {
             hyper_expected.insert(PropertySubject::Incidence(*incidence));
         }
 
-        let graph_observed = prop_db(read.lookup_index(
+        let graph_observed = prop_db(read.lookup(
             expected.graph_projection_index,
-            IndexLookup::All,
+            Match::All,
         ))?;
-        let hyper_observed = prop_db(read.lookup_index(
+        let hyper_observed = prop_db(read.lookup(
             expected.hyper_projection_index,
-            IndexLookup::All,
+            Match::All,
         ))?;
         prop_assert_eq!(
             graph_observed,
@@ -329,23 +335,22 @@ proptest! {
         let path = temp_path("graph-traversal");
         prop_io(clean(&path))?;
 
-        let mut database = prop_db(Database::create(&path))?;
+        let mut database = prop_db(Db::create(&path))?;
         let expected = prop_db(load_generated(&mut database, element_count, &edge_specs))?;
-        let read = database.begin_read();
+        let read = database.reader();
         let seed_slot = edge_specs[0].0 % element_count;
-        let options = TraversalOptions {
+        let options = Walk {
             max_depth,
             direction,
             limit,
             include_start,
         };
-        let observed = prop_db(read.traverse_graph(
+        let observed = prop_db(read.walk(
             expected.graph_projection,
             &[expected.elements[seed_slot]],
             options,
         ))?
-        .rows()
-        .to_vec();
+        .nodes;
         let reference = reference_graph_traversal(
             element_count,
             &edge_specs,
@@ -375,15 +380,16 @@ proptest! {
         let path = temp_path("tombstone");
         prop_io(clean(&path))?;
 
-        let mut database = prop_db(Database::create(&path))?;
+        let mut database = prop_db(Db::create(&path))?;
         let expected = prop_db(load_generated(&mut database, element_count, &edge_specs))?;
         let removed_slot = tombstone_slot % element_count;
         let removed = expected.elements[removed_slot];
-        let mut writer = prop_db(database.begin_write())?;
-        prop_db(writer.tombstone_element(removed))?;
-        prop_db(writer.commit())?;
+        prop_db(database.write(|writer| {
+            writer.tombstone(removed)?;
+            Ok(())
+        }))?;
 
-        let read = database.begin_read();
+        let read = database.reader();
         let reference = edge_specs
             .iter()
             .map(|(source, target)| {
@@ -404,19 +410,19 @@ proptest! {
         let path = temp_path("invalid-incidence");
         prop_io(clean(&path))?;
 
-        let mut database = prop_db(Database::create(&path))?;
-        let mut writer = prop_db(database.begin_write())?;
-        let element = prop_db(writer.create_element())?;
-        let result = writer.create_incidence(
-            RelationId::new(missing_relation),
-            element,
-            RoleId::new(missing_role),
-        );
-        prop_assert!(
-            matches!(result, Err(DbError::UnknownRelation { .. })),
-            "expected unknown relation"
-        );
-        writer.rollback();
+        let mut database = prop_db(Db::create(&path))?;
+        let mut unknown_relation = false;
+        let _ = database.write(|writer| {
+            let element = writer.create_element()?;
+            let result = writer.create_incidence(
+                RelationId::new(missing_relation),
+                element,
+                RoleId::new(missing_role),
+            );
+            unknown_relation = matches!(result, Err(DbError::UnknownRelation { .. }));
+            Err::<(), DbError>(DbError::EmptyQuery)
+        });
+        prop_assert!(unknown_relation, "expected unknown relation");
         prop_io(clean(&path))?;
     }
 
@@ -425,17 +431,18 @@ proptest! {
         let path = temp_path("empty-rollback");
         prop_io(clean(&path))?;
 
-        let mut database = prop_db(Database::create(&path))?;
+        let mut database = prop_db(Db::create(&path))?;
         for _index in 0..empty_commits {
-            let writer = prop_db(database.begin_write())?;
-            prop_assert_eq!(prop_db(writer.commit())?.get(), 0);
+            let ((), outcome) = prop_db(database.write(|_writer| Ok(())))?;
+            prop_assert!(matches!(outcome, CommitOutcome::Empty));
         }
-        let mut writer = prop_db(database.begin_write())?;
-        prop_db(writer.create_element())?;
-        writer.rollback();
+        let _ = database.write(|writer| {
+            writer.create_element()?;
+            Err::<(), DbError>(DbError::EmptyQuery)
+        });
 
-        let reopened = prop_db(Database::open(&path))?;
-        let read = reopened.begin_read();
+        let reopened = prop_db(Db::open(&path))?;
+        let read = reopened.reader();
         prop_assert_eq!(read.element_count(), 0);
         prop_assert_eq!(read.relation_count(), 0);
         prop_assert_eq!(read.incidence_count(), 0);
@@ -447,8 +454,8 @@ proptest! {
         let path = temp_path("query-prepare");
         prop_io(clean(&path))?;
 
-        let database = prop_db(Database::create(&path))?;
-        let result = database.prepare(QueryLanguage::Oxql, &query);
+        let database = prop_db(Db::create(&path))?;
+        let result = database.prepare(&query);
         match query.trim() {
             "" => prop_assert!(matches!(result, Err(DbError::EmptyQuery))),
             "MATCH ELEMENTS" | "MATCH RELATIONS" | "MATCH INCIDENCES" | "CATALOG" => {
@@ -465,11 +472,11 @@ proptest! {
 }
 
 /// Generates traversal directions.
-fn traversal_direction_strategy() -> impl Strategy<Value = TraversalDirection> {
+fn traversal_direction_strategy() -> impl Strategy<Value = Direction> {
     prop_oneof![
-        Just(TraversalDirection::Outgoing),
-        Just(TraversalDirection::Incoming),
-        Just(TraversalDirection::Both),
+        Just(Direction::Outgoing),
+        Just(Direction::Incoming),
+        Just(Direction::Both),
     ]
 }
 
@@ -479,8 +486,8 @@ fn reference_graph_traversal(
     edge_specs: &[(usize, usize)],
     elements: &[oxgraph_db::ElementId],
     seed_slot: usize,
-    options: TraversalOptions,
-) -> Vec<TraversalRow> {
+    options: Walk,
+) -> Vec<TraversedNode> {
     if options.limit == 0 {
         return Vec::new();
     }
@@ -505,9 +512,11 @@ fn reference_graph_traversal(
         }
         let next_depth = depth + 1;
         let reached_limit = match options.direction {
-            TraversalDirection::Outgoing => traversal.visit_neighbors(&outgoing[slot], next_depth),
-            TraversalDirection::Incoming => traversal.visit_neighbors(&incoming[slot], next_depth),
-            TraversalDirection::Both => {
+            Direction::Outgoing => traversal.visit_neighbors(&outgoing[slot], next_depth),
+            Direction::Incoming => traversal.visit_neighbors(&incoming[slot], next_depth),
+            // `Direction::Both` and any future non-exhaustive direction expand
+            // both adjacency sides.
+            _both => {
                 traversal.visit_neighbors(&outgoing[slot], next_depth)
                     || traversal.visit_neighbors(&incoming[slot], next_depth)
             }
@@ -530,7 +539,7 @@ struct ReferenceTraversal<'elements> {
     /// FIFO frontier of generated slots and depths.
     queue: VecDeque<(usize, usize)>,
     /// Emitted rows.
-    rows: Vec<TraversalRow>,
+    rows: Vec<TraversedNode>,
     /// Seed slot.
     seed_slot: usize,
 }
@@ -554,7 +563,7 @@ impl<'elements> ReferenceTraversal<'elements> {
 
     /// Emits the seed row.
     fn push_start(&mut self) {
-        self.rows.push(TraversalRow {
+        self.rows.push(TraversedNode {
             element: self.elements[self.seed_slot],
             depth: 0,
         });
@@ -577,7 +586,7 @@ impl<'elements> ReferenceTraversal<'elements> {
                 continue;
             }
             self.queue.push_back((*neighbor, depth));
-            self.rows.push(TraversalRow {
+            self.rows.push(TraversedNode {
                 element: self.elements[*neighbor],
                 depth,
             });
@@ -589,7 +598,7 @@ impl<'elements> ReferenceTraversal<'elements> {
     }
 
     /// Finishes traversal into rows.
-    fn finish(self) -> Vec<TraversalRow> {
+    fn finish(self) -> Vec<TraversedNode> {
         self.rows
     }
 }
@@ -614,126 +623,134 @@ struct ExpectedIds {
 
 /// Loads a generated binary edge fixture.
 fn load_generated(
-    database: &mut Database,
+    database: &mut Db,
     element_count: usize,
     edge_specs: &[(usize, usize)],
 ) -> Result<ExpectedIds, DbError> {
-    let mut writer = database.begin_write()?;
-    let source = writer.register_role("source")?;
-    let target = writer.register_role("target")?;
-    let edge_type = writer.register_relation_type("Edge")?;
-    let mut elements = Vec::with_capacity(element_count);
-    for _index in 0..element_count {
-        elements.push(writer.create_element()?);
-    }
-    let mut relations = Vec::with_capacity(edge_specs.len());
-    let mut incidences = Vec::with_capacity(edge_specs.len() * 2);
-    for (source_slot, target_slot) in edge_specs {
-        let relation = writer.create_relation()?;
-        writer.set_relation_type(relation, edge_type)?;
-        let source_incidence =
-            writer.create_incidence(relation, elements[*source_slot % element_count], source)?;
-        let target_incidence =
-            writer.create_incidence(relation, elements[*target_slot % element_count], target)?;
-        relations.push(relation);
-        incidences.push(source_incidence);
-        incidences.push(target_incidence);
-    }
-    let graph_projection =
-        writer.define_projection(ProjectionDefinition::Graph(GraphProjectionDefinition {
-            name: "edge_graph".to_owned(),
-            relation_types: BTreeSet::from([edge_type]),
-            source_role: source,
-            target_role: target,
-        }))?;
-    let hyper_projection = writer.define_projection(ProjectionDefinition::Hypergraph(
-        HypergraphProjectionDefinition {
-            name: "edge_hyper".to_owned(),
-            relation_types: BTreeSet::from([edge_type]),
-            source_roles: BTreeSet::from([source]),
-            target_roles: BTreeSet::from([target]),
-        },
-    ))?;
-    let graph_projection_index = writer.define_index(
-        "edge_graph_projection",
-        IndexDefinition::Projection {
-            projection: graph_projection,
-        },
-    )?;
-    let hyper_projection_index = writer.define_index(
-        "edge_hyper_projection",
-        IndexDefinition::Projection {
-            projection: hyper_projection,
-        },
-    )?;
-    writer.commit()?;
-    Ok(ExpectedIds {
-        elements,
-        relations,
-        incidences,
-        graph_projection,
-        hyper_projection,
-        graph_projection_index,
-        hyper_projection_index,
-    })
+    let (expected, _outcome) = database.write(|writer| {
+        let source = writer.register_role("source")?;
+        let target = writer.register_role("target")?;
+        let edge_type = writer.register_relation_type("Edge")?;
+        let mut elements = Vec::with_capacity(element_count);
+        for _index in 0..element_count {
+            elements.push(writer.create_element()?);
+        }
+        let mut relations = Vec::with_capacity(edge_specs.len());
+        let mut incidences = Vec::with_capacity(edge_specs.len() * 2);
+        for (source_slot, target_slot) in edge_specs {
+            let relation = writer.create_relation()?;
+            writer.set_relation_type(relation, edge_type)?;
+            let source_incidence = writer.create_incidence(
+                relation,
+                elements[*source_slot % element_count],
+                source,
+            )?;
+            let target_incidence = writer.create_incidence(
+                relation,
+                elements[*target_slot % element_count],
+                target,
+            )?;
+            relations.push(relation);
+            incidences.push(source_incidence);
+            incidences.push(target_incidence);
+        }
+        let graph_projection =
+            writer.define_projection(ProjectionDefinition::Graph(GraphProjectionDefinition {
+                name: "edge_graph".to_owned(),
+                relation_types: BTreeSet::from([edge_type]),
+                source_role: source,
+                target_role: target,
+            }))?;
+        let hyper_projection = writer.define_projection(ProjectionDefinition::Hypergraph(
+            HypergraphProjectionDefinition {
+                name: "edge_hyper".to_owned(),
+                relation_types: BTreeSet::from([edge_type]),
+                source_roles: BTreeSet::from([source]),
+                target_roles: BTreeSet::from([target]),
+            },
+        ))?;
+        let graph_projection_index = writer.define_index(
+            "edge_graph_projection",
+            IndexDefinition::Projection {
+                projection: graph_projection,
+            },
+        )?;
+        let hyper_projection_index = writer.define_index(
+            "edge_hyper_projection",
+            IndexDefinition::Projection {
+                projection: hyper_projection,
+            },
+        )?;
+        Ok(ExpectedIds {
+            elements,
+            relations,
+            incidences,
+            graph_projection,
+            hyper_projection,
+            graph_projection_index,
+            hyper_projection_index,
+        })
+    })?;
+    Ok(expected)
 }
 
 /// Loads one directed hyperedge fixture.
 fn load_one_hyperedge(
-    database: &mut Database,
+    database: &mut Db,
     element_count: usize,
     target_count: usize,
 ) -> Result<ExpectedIds, DbError> {
-    let mut writer = database.begin_write()?;
-    let source = writer.register_role("source")?;
-    let target = writer.register_role("target")?;
-    let event_type = writer.register_relation_type("Event")?;
-    let mut elements = Vec::with_capacity(element_count);
-    for _index in 0..element_count {
-        elements.push(writer.create_element()?);
-    }
-    let relation = writer.create_relation()?;
-    writer.set_relation_type(relation, event_type)?;
-    let mut incidences = Vec::with_capacity(target_count.min(element_count - 1) + 1);
-    incidences.push(writer.create_incidence(relation, elements[0], source)?);
-    for element in elements.iter().skip(1).take(target_count) {
-        incidences.push(writer.create_incidence(relation, *element, target)?);
-    }
-    let graph_projection =
-        writer.define_projection(ProjectionDefinition::Graph(GraphProjectionDefinition {
-            name: "event_graph".to_owned(),
-            relation_types: BTreeSet::new(),
-            source_role: source,
-            target_role: target,
-        }))?;
-    let hyper_projection = writer.define_projection(ProjectionDefinition::Hypergraph(
-        HypergraphProjectionDefinition {
-            name: "event_hyper".to_owned(),
-            relation_types: BTreeSet::from([event_type]),
-            source_roles: BTreeSet::from([source]),
-            target_roles: BTreeSet::from([target]),
-        },
-    ))?;
-    let graph_projection_index = writer.define_index(
-        "event_graph_projection",
-        IndexDefinition::Projection {
-            projection: graph_projection,
-        },
-    )?;
-    let hyper_projection_index = writer.define_index(
-        "event_hyper_projection",
-        IndexDefinition::Projection {
-            projection: hyper_projection,
-        },
-    )?;
-    writer.commit()?;
-    Ok(ExpectedIds {
-        elements,
-        relations: vec![relation],
-        incidences,
-        graph_projection,
-        hyper_projection,
-        graph_projection_index,
-        hyper_projection_index,
-    })
+    let (expected, _outcome) = database.write(|writer| {
+        let source = writer.register_role("source")?;
+        let target = writer.register_role("target")?;
+        let event_type = writer.register_relation_type("Event")?;
+        let mut elements = Vec::with_capacity(element_count);
+        for _index in 0..element_count {
+            elements.push(writer.create_element()?);
+        }
+        let relation = writer.create_relation()?;
+        writer.set_relation_type(relation, event_type)?;
+        let mut incidences = Vec::with_capacity(target_count.min(element_count - 1) + 1);
+        incidences.push(writer.create_incidence(relation, elements[0], source)?);
+        for element in elements.iter().skip(1).take(target_count) {
+            incidences.push(writer.create_incidence(relation, *element, target)?);
+        }
+        let graph_projection =
+            writer.define_projection(ProjectionDefinition::Graph(GraphProjectionDefinition {
+                name: "event_graph".to_owned(),
+                relation_types: BTreeSet::new(),
+                source_role: source,
+                target_role: target,
+            }))?;
+        let hyper_projection = writer.define_projection(ProjectionDefinition::Hypergraph(
+            HypergraphProjectionDefinition {
+                name: "event_hyper".to_owned(),
+                relation_types: BTreeSet::from([event_type]),
+                source_roles: BTreeSet::from([source]),
+                target_roles: BTreeSet::from([target]),
+            },
+        ))?;
+        let graph_projection_index = writer.define_index(
+            "event_graph_projection",
+            IndexDefinition::Projection {
+                projection: graph_projection,
+            },
+        )?;
+        let hyper_projection_index = writer.define_index(
+            "event_hyper_projection",
+            IndexDefinition::Projection {
+                projection: hyper_projection,
+            },
+        )?;
+        Ok(ExpectedIds {
+            elements,
+            relations: vec![relation],
+            incidences,
+            graph_projection,
+            hyper_projection,
+            graph_projection_index,
+            hyper_projection_index,
+        })
+    })?;
+    Ok(expected)
 }

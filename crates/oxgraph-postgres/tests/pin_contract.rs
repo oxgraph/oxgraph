@@ -30,8 +30,8 @@ fn snapshot_rebuild_roundtrip_status() -> Result<(), oxgraph_postgres::PostgresG
     ];
     let bytes = SnapshotRebuild::from_catalog_and_edges(&catalog, &edges, 1_700_000_000)?;
     let engine = EngineBuilder::new().snapshot_owned(bytes).build()?;
-    assert_eq!(engine.status().node_count, 3);
-    assert_eq!(engine.status().edge_count, 2);
+    assert_eq!(engine.stats().node_count, 3);
+    assert_eq!(engine.stats().edge_count, 2);
     Ok(())
 }
 
@@ -147,8 +147,8 @@ fn dual_topology_dense_edges_loads_engine() -> Result<(), oxgraph_postgres::Post
 
     let bytes = DualTopologySnapshot::from_dense_u32_edges(&[(0, 1), (1, 2)], 0)?;
     let mut engine = EngineBuilder::new().snapshot_owned(bytes).build()?;
-    assert_eq!(engine.status().node_count, 3);
-    assert_eq!(engine.status().edge_count, 2);
+    assert_eq!(engine.stats().node_count, 3);
+    assert_eq!(engine.stats().edge_count, 2);
     let visited = engine.visited_count(
         0,
         oxgraph_postgres::TraverseLimits::bounded(LIMIT_10),

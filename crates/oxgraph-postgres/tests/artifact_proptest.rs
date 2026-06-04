@@ -55,7 +55,7 @@ proptest! {
         let snapshot = load_snapshot_bytes(&bytes).map_err(|error| TestCaseError::fail(error.to_string()))?;
         prop_assert!(snapshot.section(oxgraph_postgres::SNAPSHOT_KIND_PG_METADATA).is_some());
         let engine = EngineBuilder::new().snapshot_owned(bytes).build().map_err(|error| TestCaseError::fail(error.to_string()))?;
-        prop_assert_eq!(engine.status().node_count as usize, node_count);
+        prop_assert_eq!(engine.stats().node_count as usize, node_count);
     }
 
     #[test]

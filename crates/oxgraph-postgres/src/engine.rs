@@ -144,7 +144,7 @@ impl Engine {
 
     /// Returns operational status for admin surfaces.
     #[must_use]
-    pub fn status(&self) -> EngineStatus {
+    pub fn stats(&self) -> EngineStatus {
         let metadata = &self.inner.backing_cart().metadata;
         EngineStatus {
             node_count: metadata.node_count.get(),
@@ -328,7 +328,7 @@ impl Engine {
     /// Returns sync overlay health for admin surfaces.
     #[must_use]
     pub fn sync_health(&self) -> SyncHealth {
-        let status = self.status();
+        let status = self.stats();
         SyncHealth {
             overlay_edges: status.overlay_edge_count,
             tombstoned_edges: status.tombstoned_edges,

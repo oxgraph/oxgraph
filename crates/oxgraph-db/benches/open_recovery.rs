@@ -17,8 +17,7 @@ use std::{fmt::Display, path::Path};
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use oxgraph_db::{
-    CheckpointPolicy, Database, DbError, PropertyFamily, PropertySubject, PropertyType,
-    PropertyValue,
+    CheckpointPolicy, Db, DbError, Int, Key, PropertyFamily, PropertySubject, PropertyType,
 };
 
 /// Unwraps a benchmark `Result`, panicking with `context` on error (benches must
@@ -56,21 +55,22 @@ fn clean(path: &Path) {
 /// (so the delta-log is empty and open cost is dominated by the base term).
 fn create_folded_base(path: &Path, element_count: usize) -> Result<(), DbError> {
     clean(path);
-    let mut database = Database::create(path)?;
+    let mut database = Db::create(path)?;
     database.set_checkpoint_policy(CheckpointPolicy::Manual);
-    let mut writer = database.begin_write()?;
-    let rank_key =
-        writer.register_property_key("rank", PropertyFamily::Element, PropertyType::Integer)?;
-    for index in 0..element_count {
-        let element = writer.create_element()?;
-        writer.set_property(
-            PropertySubject::Element(element),
-            rank_key,
-            PropertyValue::Integer(i64::try_from(index).map_err(|_error| DbError::IdOverflow)?),
-        )?;
-    }
-    writer.commit()?;
-    database.checkpoint()?;
+    database.write(|writer| {
+        let rank_key =
+            writer.register_property_key("rank", PropertyFamily::Element, PropertyType::Integer)?;
+        for index in 0..element_count {
+            let element = writer.create_element()?;
+            writer.set(
+                PropertySubject::Element(element),
+                Key::<Int>::from_id(rank_key),
+                i64::try_from(index).map_err(|_error| DbError::IdOverflow)?,
+            )?;
+        }
+        Ok(())
+    })?;
+    database.compact()?;
     Ok(())
 }
 
@@ -80,12 +80,13 @@ fn create_folded_base(path: &Path, element_count: usize) -> Result<(), DbError> 
 /// folded away.
 fn create_log_tail(path: &Path, frame_count: usize) -> Result<(), DbError> {
     clean(path);
-    let mut database = Database::create(path)?;
+    let mut database = Db::create(path)?;
     database.set_checkpoint_policy(CheckpointPolicy::Manual);
     for _ in 0..frame_count {
-        let mut writer = database.begin_write()?;
-        writer.create_element()?;
-        writer.commit()?;
+        database.write(|writer| {
+            writer.create_element()?;
+            Ok(())
+        })?;
     }
     Ok(())
 }
@@ -101,7 +102,7 @@ fn bench_open_over_base(c: &mut Criterion) {
             "benchmark fixture should build",
         );
         group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, _size| {
-            b.iter(|| unwrap(Database::open(&path), "database should open"));
+            b.iter(|| unwrap(Db::open(&path), "database should open"));
         });
     }
     group.finish();
@@ -121,7 +122,7 @@ fn bench_open_over_log_tail(c: &mut Criterion) {
             BenchmarkId::from_parameter(frames),
             &frames,
             |b, _frames| {
-                b.iter(|| unwrap(Database::open(&path), "database should open"));
+                b.iter(|| unwrap(Db::open(&path), "database should open"));
             },
         );
     }
