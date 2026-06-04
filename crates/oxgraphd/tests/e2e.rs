@@ -5,7 +5,7 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
-use oxgraph_db::Database;
+use oxgraph_db::Db;
 
 /// Per-process path counter.
 static NEXT_PATH: AtomicU64 = AtomicU64::new(0);
@@ -17,7 +17,7 @@ static NEXT_PATH: AtomicU64 = AtomicU64::new(0);
     reason = "test harness reads error fields through derived Debug when a Result test fails"
 )]
 enum TestError {
-    /// Database error.
+    /// Db error.
     Db(oxgraph_db::DbError),
     /// Facade error.
     Facade(oxgraphd::OxgraphdError),
@@ -70,10 +70,11 @@ fn cli_covers_create_status_query_explain_and_validate() -> Result<(), TestError
     ])?;
     assert!(create.contains("\"ok\":true"));
 
-    let mut database = Database::open(&path)?;
-    let mut writer = database.begin_write()?;
-    writer.create_element()?;
-    writer.commit()?;
+    let mut database = Db::open(&path)?;
+    database.write(|writer| {
+        writer.create_element()?;
+        Ok(())
+    })?;
 
     let status = oxgraphd::run_cli(vec![
         "db".to_owned(),
@@ -117,7 +118,7 @@ fn http_facade_covers_status_query_explain_compact_and_validate() -> Result<(), 
     let path = temp_path("http");
     clean(&path)?;
 
-    Database::create(&path)?;
+    Db::create(&path)?;
     let status = oxgraphd::serve_http_request(&path, "GET /v1/status HTTP/1.1\r\n\r\n");
     assert!(status.contains("200 OK"));
     assert!(status.contains("\"elements\":0"));

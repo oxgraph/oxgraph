@@ -14,21 +14,26 @@
 //! [`freeze_view`] is `O(catalog + topology + properties)` plus one
 //! `O(base bytes)` trailer CRC scan.
 
+use std::collections::{BTreeMap, BTreeSet};
+
 use oxgraph_snapshot::{Snapshot, SnapshotBuilder};
 use zerocopy::{
-    IntoBytes,
+    FromBytes, IntoBytes,
     byteorder::{LE, U32, U64},
 };
 
 use crate::{
-    Catalog, DbError, IndexId, LabelId, ProjectionId, PropertyKeyId, PropertyValue, RelationTypeId,
-    RoleId,
+    Catalog, DbError, ElementId, IncidenceId, IndexId, LabelId, ProjectionId, PropertyKeyId,
+    PropertySubject, PropertyValue, RelationId, RelationTypeId, RoleId,
     catalog::{
         GraphProjectionDefinition, HypergraphProjectionDefinition, IndexDefinition,
         ProjectionDefinition, PropertyKeyDefinition,
     },
     crc,
+    index::OwnedBaseIndex,
     overlay::StateView,
+    state::{ElementRecord, IncidenceRecord, RelationRecord},
+    value::PropertyType,
     wire,
 };
 
@@ -238,6 +243,7 @@ pub(crate) fn freeze_view(view: &impl StateView, stamps: FreezeStamps) -> Result
     encode_catalog(&mut builder, view.catalog(), &mut strings)?;
     encode_topology(&mut builder, view)?;
     encode_properties(&mut builder, view)?;
+    encode_index(&mut builder, view)?;
     add_blob(&mut builder, wire::SECTION_STRING_TABLE, strings.bytes)?;
     // The trailer is added LAST so its payload is the final region in the byte
     // stream; its CRC then covers the entire prefix before it. The CRC field is
@@ -547,6 +553,242 @@ fn encode_properties(builder: &mut SnapshotBuilder, view: &impl StateView) -> Re
     add_blob(builder, wire::SECTION_PROPERTY_TEXT, text)
 }
 
+/// Builds the derived [`OwnedBaseIndex`] for this generation from the view's
+/// records and serializes each of its five postings into a directory + value-pool
+/// section, so the OPEN path borrows the postings instead of rebuilding them.
+///
+/// The index is a pure function of the records, so building it here and persisting
+/// it keeps open `O(1)`-per-posting (binary search + page faults) rather than
+/// `O(base)` (`from_records`).
+///
+/// # Errors
+///
+/// Returns [`DbError::InvalidStore`] when a posting offset/length exceeds the
+/// `u32`/`u64` wire bounds or section planning fails.
+///
+/// # Performance
+///
+/// This function is `O(base records + labels + properties)`: one index build plus
+/// one serialization pass.
+fn encode_index(builder: &mut SnapshotBuilder, view: &impl StateView) -> Result<(), DbError> {
+    let mut elements: BTreeMap<ElementId, ElementRecord> = BTreeMap::new();
+    for record in view.elements() {
+        elements.insert(record.id, record.into_owned());
+    }
+    let mut relations: BTreeMap<RelationId, RelationRecord> = BTreeMap::new();
+    for record in view.relations() {
+        relations.insert(record.id, record.into_owned());
+    }
+    let mut incidences: BTreeMap<IncidenceId, IncidenceRecord> = BTreeMap::new();
+    for record in view.incidences() {
+        incidences.insert(record.id, record.into_owned());
+    }
+    let mut properties: BTreeMap<PropertySubject, BTreeMap<PropertyKeyId, PropertyValue>> =
+        BTreeMap::new();
+    for (subject, key, value) in view.properties() {
+        properties
+            .entry(subject)
+            .or_default()
+            .insert(key, value.into_owned());
+    }
+    let index = OwnedBaseIndex::from_records(&elements, &relations, &incidences, &properties);
+    let (
+        label_members,
+        relation_type_members,
+        property_equality,
+        element_incidences,
+        relation_incidences,
+    ) = index.maps();
+
+    encode_simple_posting::<LabelId, ElementId>(
+        builder,
+        wire::SECTION_INDEX_LABEL_POSTINGS,
+        label_members,
+    )?;
+    encode_simple_posting::<RelationTypeId, RelationId>(
+        builder,
+        wire::SECTION_INDEX_RELATION_TYPE_POSTINGS,
+        relation_type_members,
+    )?;
+    encode_simple_posting::<ElementId, IncidenceId>(
+        builder,
+        wire::SECTION_INDEX_ELEMENT_INCIDENCES,
+        element_incidences,
+    )?;
+    encode_simple_posting::<RelationId, IncidenceId>(
+        builder,
+        wire::SECTION_INDEX_RELATION_INCIDENCES,
+        relation_incidences,
+    )?;
+    encode_equality_posting(builder, property_equality)
+}
+
+/// A canonical id (key or member) whose raw `u64` value the index posting
+/// serializer reads. Mirrors the read-side decode in [`crate::index`].
+///
+/// # Performance
+///
+/// [`Self::raw`] is `O(1)`.
+trait RawId: Copy {
+    /// Returns the raw `u64` value of this id.
+    ///
+    /// # Performance
+    ///
+    /// This function is `O(1)`.
+    fn raw(self) -> u64;
+}
+
+impl RawId for LabelId {
+    fn raw(self) -> u64 {
+        self.get()
+    }
+}
+
+impl RawId for RelationTypeId {
+    fn raw(self) -> u64 {
+        self.get()
+    }
+}
+
+impl RawId for ElementId {
+    fn raw(self) -> u64 {
+        self.get()
+    }
+}
+
+impl RawId for RelationId {
+    fn raw(self) -> u64 {
+        self.get()
+    }
+}
+
+impl RawId for IncidenceId {
+    fn raw(self) -> u64 {
+        self.get()
+    }
+}
+
+/// Serializes one simple posting map (`key -> ascending member set`) into a
+/// directory of [`wire::PostingDirEntry`] records (ascending by key, matching the
+/// `BTreeMap` order) plus a trailing flat `[U64<LE>]` member value pool. The
+/// directory and pool share one section: the directory comes first, the pool
+/// follows, and the entry `(members_off, members_len)` index INTO THE POOL (in
+/// `u64` words, relative to the pool start).
+///
+/// To keep both arrays in one section under the `add_section_typed` API, the
+/// directory is emitted as its own typed sub-array and the pool as a typed
+/// `[U64<LE>]` sub-array in the SAME kind via two record groups concatenated —
+/// here both are encoded into a single `Vec<U64<LE>>` framed by a leading
+/// directory-entry count. See [`split_posting_section`] for the read split.
+///
+/// # Errors
+///
+/// Returns [`DbError::InvalidStore`] when an offset/length exceeds the wire bounds
+/// or section planning fails.
+///
+/// # Performance
+///
+/// This function is `O(postings + members)`.
+fn encode_simple_posting<K, M>(
+    builder: &mut SnapshotBuilder,
+    kind: u32,
+    map: &BTreeMap<K, BTreeSet<M>>,
+) -> Result<(), DbError>
+where
+    K: RawId,
+    M: RawId,
+{
+    if map.is_empty() {
+        return Ok(());
+    }
+    let mut dir: Vec<wire::PostingDirEntry> = Vec::with_capacity(map.len());
+    let mut pool: Vec<U64<LE>> = Vec::new();
+    for (key, members) in map {
+        let members_off = pool.len() as u64;
+        pool.extend(members.iter().map(|member| U64::new(member.raw())));
+        let members_len = members.len() as u64;
+        dir.push(wire::PostingDirEntry {
+            key: U64::new(key.raw()),
+            members_off: U64::new(members_off),
+            members_len: U64::new(members_len),
+        });
+    }
+    add_framed_section(builder, kind, &dir, &pool)
+}
+
+/// Serializes the equality posting map (`(key, value) -> ascending subject set`)
+/// into a directory of [`wire::EqualityDirEntry`] records (in `(key_id,
+/// PropertyValue)` order, matching the `BTreeMap` order) plus a trailing flat
+/// `[U64<LE>]` subject value pool (two words per subject from
+/// [`wire::encode_subject`]) and a side text pool ([`wire::SECTION_INDEX_EQUALITY_TEXT`]).
+///
+/// # Errors
+///
+/// Returns [`DbError::InvalidStore`] when an offset/length exceeds the wire bounds
+/// or section planning fails.
+///
+/// # Performance
+///
+/// This function is `O(postings + subjects + text bytes)`.
+fn encode_equality_posting(
+    builder: &mut SnapshotBuilder,
+    map: &BTreeMap<(PropertyKeyId, PropertyValue), BTreeSet<PropertySubject>>,
+) -> Result<(), DbError> {
+    if map.is_empty() {
+        return Ok(());
+    }
+    let mut dir: Vec<wire::EqualityDirEntry> = Vec::with_capacity(map.len());
+    let mut pool: Vec<U64<LE>> = Vec::new();
+    let mut text: Vec<u8> = Vec::new();
+    for ((key, value), subjects) in map {
+        let (value_tag, value_scalar, text_off, text_len) = match value {
+            PropertyValue::Boolean(flag) => (
+                wire::property_type_tag(PropertyType::Boolean),
+                u64::from(*flag),
+                0,
+                0,
+            ),
+            PropertyValue::Integer(number) => (
+                wire::property_type_tag(PropertyType::Integer),
+                (*number).cast_unsigned(),
+                0,
+                0,
+            ),
+            PropertyValue::Text(string) => {
+                let off = text.len() as u64;
+                text.extend_from_slice(string.as_bytes());
+                (
+                    wire::property_type_tag(PropertyType::Text),
+                    0,
+                    off,
+                    string.len() as u64,
+                )
+            }
+        };
+        let members_off = pool.len() as u64;
+        for subject in subjects {
+            let (subject_kind, subject_id) = wire::encode_subject(*subject);
+            pool.push(U64::new(u64::from(subject_kind)));
+            pool.push(U64::new(subject_id));
+        }
+        // `members_len` counts POOL WORDS (two per subject), so the read side
+        // slices the whole run and `chunks_exact(2)` recovers the subjects.
+        let members_len = (pool.len() as u64) - members_off;
+        dir.push(wire::EqualityDirEntry {
+            key_id: U64::new(key.get()),
+            value_tag: U32::new(value_tag),
+            reserved: U32::new(0),
+            value_scalar: U64::new(value_scalar),
+            text_off: U64::new(text_off),
+            text_len: U64::new(text_len),
+            members_off: U64::new(members_off),
+            members_len: U64::new(members_len),
+        });
+    }
+    add_framed_section(builder, wire::SECTION_INDEX_EQUALITY, &dir, &pool)?;
+    add_blob(builder, wire::SECTION_INDEX_EQUALITY_TEXT, text)
+}
+
 /// Rebuilds the catalog from its record sections and the definition-body run.
 /// Shared with the base-attach path in [`crate::backing`], which borrows the same
 /// sections.
@@ -609,6 +851,101 @@ pub(crate) fn decode_catalog(
         )?;
     }
     Ok(catalog)
+}
+
+/// Byte length of the framing prefix on a posting section: two `u64` words
+/// giving the directory byte length and the pool byte length, so the read split
+/// reinterprets each sub-slice as its typed array.
+///
+/// # Performance
+///
+/// `perf: unspecified`; this is a compile-time constant.
+pub(crate) const POSTING_FRAME_PREFIX_LEN: usize = 2 * size_of::<U64<LE>>();
+
+/// Writes a framed posting section: a two-`u64` prefix `(directory byte length,
+/// pool byte length)` followed by the directory bytes and then the value-pool
+/// bytes, all in one section. The read split ([`split_posting_section`])
+/// reinterprets each region as its typed array.
+///
+/// Both `T` (a directory entry) and [`U64<LE>`] have alignment 1 (byteorder
+/// wrappers store raw bytes), so the concatenated regions reinterpret at any byte
+/// offset; the prefix is a whole number of `u64` words, keeping every region
+/// 8-byte aligned anyway.
+///
+/// # Errors
+///
+/// Returns [`DbError::InvalidStore`] when a region length exceeds the `u64`
+/// bounds or section planning fails.
+///
+/// # Performance
+///
+/// This function is `O(directory bytes + pool bytes)`.
+fn add_framed_section<T>(
+    builder: &mut SnapshotBuilder,
+    kind: u32,
+    dir: &[T],
+    pool: &[U64<LE>],
+) -> Result<(), DbError>
+where
+    T: zerocopy::IntoBytes + zerocopy::Immutable,
+{
+    let dir_bytes = dir.as_bytes();
+    let pool_bytes = pool.as_bytes();
+    let mut payload =
+        Vec::with_capacity(POSTING_FRAME_PREFIX_LEN + dir_bytes.len() + pool_bytes.len());
+    payload.extend_from_slice(U64::<LE>::new(dir_bytes.len() as u64).as_bytes());
+    payload.extend_from_slice(U64::<LE>::new(pool_bytes.len() as u64).as_bytes());
+    payload.extend_from_slice(dir_bytes);
+    payload.extend_from_slice(pool_bytes);
+    builder
+        .add_section(kind, wire::OXGDB_SECTION_VERSION, 3, payload)
+        .map_err(|error| DbError::invalid_store(error.to_string()))?;
+    Ok(())
+}
+
+/// Splits a framed posting section's raw bytes into its directory byte slice and
+/// its value-pool byte slice, using the two-`u64` length prefix. Shared with the
+/// borrowing open path in [`crate::backing`].
+///
+/// # Errors
+///
+/// Returns [`DbError::InvalidStore`] when the prefix is missing or the region
+/// lengths run past the section bytes.
+///
+/// # Performance
+///
+/// This function is `O(1)`.
+pub(crate) fn split_posting_section(bytes: &[u8]) -> Result<(&[u8], &[u8]), DbError> {
+    if bytes.is_empty() {
+        return Ok((&[], &[]));
+    }
+    let prefix = bytes
+        .get(..POSTING_FRAME_PREFIX_LEN)
+        .ok_or_else(|| DbError::invalid_store("posting section is missing its frame prefix"))?;
+    let dir_len_word =
+        U64::<LE>::ref_from_bytes(&prefix[..size_of::<U64<LE>>()]).map_err(|_error| {
+            DbError::invalid_store("posting section directory length is truncated")
+        })?;
+    let pool_len_word = U64::<LE>::ref_from_bytes(&prefix[size_of::<U64<LE>>()..])
+        .map_err(|_error| DbError::invalid_store("posting section pool length is truncated"))?;
+    let dir_len = usize::try_from(dir_len_word.get())
+        .map_err(|_overflow| DbError::invalid_store("posting section directory length overflow"))?;
+    let pool_len = usize::try_from(pool_len_word.get())
+        .map_err(|_overflow| DbError::invalid_store("posting section pool length overflow"))?;
+    let dir_start = POSTING_FRAME_PREFIX_LEN;
+    let dir_end = dir_start
+        .checked_add(dir_len)
+        .ok_or_else(|| DbError::invalid_store("posting section directory overflow"))?;
+    let pool_end = dir_end
+        .checked_add(pool_len)
+        .ok_or_else(|| DbError::invalid_store("posting section pool overflow"))?;
+    let dir = bytes
+        .get(dir_start..dir_end)
+        .ok_or_else(|| DbError::invalid_store("posting section directory out of bounds"))?;
+    let pool = bytes
+        .get(dir_end..pool_end)
+        .ok_or_else(|| DbError::invalid_store("posting section pool out of bounds"))?;
+    Ok((dir, pool))
 }
 
 /// Encodes a projection definition body into the shared `u64` run, returning

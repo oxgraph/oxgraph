@@ -2,7 +2,7 @@
 //!
 //! `oxgraph-db` is a product layer above the topology substrate. It owns
 //! durable database identity, cataloged physical projections, properties,
-//! indexes, native `OxQL` execution, the pinned Cypher profile, and embedded
+//! indexes, native `OxQL` execution, and embedded
 //! transaction semantics. Foundation crates remain storage- and
 //! meaning-neutral.
 #![expect(
@@ -20,11 +20,14 @@ pub(crate) mod id;
 pub(crate) mod index;
 pub(crate) mod lock;
 pub(crate) mod overlay;
-pub(crate) mod projection;
+pub mod projection;
 pub(crate) mod query;
+pub(crate) mod read;
+pub(crate) mod schema;
 pub(crate) mod state;
 pub(crate) mod storage;
 pub(crate) mod traversal;
+pub(crate) mod typed;
 pub(crate) mod value;
 pub(crate) mod wal;
 pub(crate) mod wire;
@@ -36,21 +39,19 @@ pub use crate::{
         PropertyKeyDefinition, RelationTypeDefinition, RoleDefinition,
     },
     database::{
-        CatalogSummary, CheckpointPolicy, Database, DatabaseStatus, IndexLookup, ReadPin,
-        ReadTransaction, WriteTransaction,
+        CatalogSummary, CheckpointPolicy, CommitOutcome, Db, Match, ReadPin, Reader, Stats, Writer,
     },
     error::DbError,
     id::{
         CheckpointGeneration, CommitSeq, ElementId, IncidenceId, IndexId, LabelId, ProjectionId,
         PropertyKeyId, RelationId, RelationTypeId, RoleId, TransactionId,
     },
-    projection::{
-        GraphProjection, HypergraphProjection, ProjectionElementId, ProjectionIncidenceId,
-        ProjectionRelationId,
-    },
-    query::{PreparedQuery, QueryLanguage, QueryResult, QueryRow, QueryValue},
+    query::{PreparedQuery, QueryResult, QueryRow, QueryValue},
+    read::{Element, Properties, Relation},
+    schema::{Bound, GraphProjectionSpec, Schema},
     state::{ElementRecord, IncidenceRecord, PropertySubject, RelationRecord},
-    traversal::{TraversalDirection, TraversalOptions, TraversalResult, TraversalRow},
+    traversal::{Direction, Subgraph, TraversedEdge, TraversedNode, Walk},
+    typed::{Assignable, Bool, EqualityIndex, Int, Key, RangeIndex, Readable, Text, ValueType},
     value::{PropertyType, PropertyValue},
 };
 

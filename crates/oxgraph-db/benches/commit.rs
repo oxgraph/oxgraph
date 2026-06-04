@@ -13,8 +13,7 @@ use std::{fmt::Display, path::Path};
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use oxgraph_db::{
-    CheckpointPolicy, Database, DbError, PropertyFamily, PropertySubject, PropertyType,
-    PropertyValue,
+    CheckpointPolicy, Db, DbError, Int, Key, PropertyFamily, PropertySubject, PropertyType,
 };
 
 /// Base sizes the commit benches sweep, spanning two decades so a flat
@@ -47,30 +46,31 @@ fn clean(path: &Path) {
 /// Creates a store whose base holds `element_count` ranked elements, folded into
 /// the base so subsequent commits layer over a large base. Auto-checkpointing is
 /// disabled so the measured commits never trigger a fold.
-fn create_database(path: &Path, element_count: usize) -> Result<Database, DbError> {
+fn create_database(path: &Path, element_count: usize) -> Result<Db, DbError> {
     clean(path);
-    let mut database = Database::create(path)?;
+    let mut database = Db::create(path)?;
     database.set_checkpoint_policy(CheckpointPolicy::Manual);
-    let mut writer = database.begin_write()?;
-    let rank_key =
-        writer.register_property_key("rank", PropertyFamily::Element, PropertyType::Integer)?;
-    for index in 0..element_count {
-        let element = writer.create_element()?;
-        writer.set_property(
-            PropertySubject::Element(element),
-            rank_key,
-            PropertyValue::Integer(i64::try_from(index).map_err(|_error| DbError::IdOverflow)?),
-        )?;
-    }
-    writer.commit()?;
-    database.checkpoint()?;
+    database.write(|writer| {
+        let rank_key =
+            writer.register_property_key("rank", PropertyFamily::Element, PropertyType::Integer)?;
+        for index in 0..element_count {
+            let element = writer.create_element()?;
+            writer.set(
+                PropertySubject::Element(element),
+                Key::<Int>::from_id(rank_key),
+                i64::try_from(index).map_err(|_error| DbError::IdOverflow)?,
+            )?;
+        }
+        Ok(())
+    })?;
+    database.compact()?;
     // The reopen inside `checkpoint` resets the policy; disable it again.
     database.set_checkpoint_policy(CheckpointPolicy::Manual);
     Ok(database)
 }
 
 /// Opens a fixture database, panicking on setup failure.
-fn database_or_panic(name: &str, element_count: usize) -> Database {
+fn database_or_panic(name: &str, element_count: usize) -> Db {
     let path = bench_path(name);
     unwrap(
         create_database(&path, element_count),
@@ -79,10 +79,14 @@ fn database_or_panic(name: &str, element_count: usize) -> Database {
 }
 
 /// Commits one fresh element against `database` (the measured unit of work).
-fn commit_one_element(database: &mut Database) {
-    let mut writer = unwrap(database.begin_write(), "writer should start");
-    unwrap(writer.create_element(), "element should create");
-    unwrap(writer.commit(), "transaction should commit");
+fn commit_one_element(database: &mut Db) {
+    unwrap(
+        database.write(|writer| {
+            writer.create_element()?;
+            Ok(())
+        }),
+        "transaction should commit",
+    );
 }
 
 /// Benchmarks a single-element dirty commit over growing base sizes; the
@@ -105,7 +109,9 @@ fn bench_begin_write_rollback(c: &mut Criterion) {
     for size in BASE_SIZES {
         let mut database = database_or_panic("rollback", size);
         group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, _size| {
-            b.iter(|| unwrap(database.begin_write(), "writer should start").rollback());
+            b.iter(|| {
+                let _ = database.write(|_writer| Err::<(), DbError>(DbError::EmptyQuery));
+            });
         });
     }
     group.finish();

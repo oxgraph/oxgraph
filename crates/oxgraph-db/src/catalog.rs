@@ -216,7 +216,7 @@ pub struct ProjectionEntry {
     pub definition: ProjectionDefinition,
 }
 
-/// Database catalog for names, schemas, projections, and indexes.
+/// Db catalog for names, schemas, projections, and indexes.
 ///
 /// # Performance
 ///

@@ -8,7 +8,7 @@ use std::{
     time::Duration,
 };
 
-use oxgraph_db::{Database, DbError, PreparedQuery, QueryLanguage};
+use oxgraph_db::{Db, DbError, PreparedQuery};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -19,8 +19,8 @@ use serde_json::json;
 /// Formatting is `O(message length)`.
 #[derive(Debug)]
 pub enum OxgraphdError {
-    /// Database operation failed.
-    Database {
+    /// Db operation failed.
+    Db {
         /// Source database error.
         source: DbError,
     },
@@ -46,7 +46,7 @@ pub enum OxgraphdError {
 impl fmt::Display for OxgraphdError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Database { source } => write!(formatter, "{source}"),
+            Self::Db { source } => write!(formatter, "{source}"),
             Self::Io { operation, source } => write!(formatter, "{operation} failed: {source}"),
             Self::Json { source } => write!(formatter, "json error: {source}"),
             Self::Usage { message } => formatter.write_str(message),
@@ -57,7 +57,7 @@ impl fmt::Display for OxgraphdError {
 impl std::error::Error for OxgraphdError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Database { source } => Some(source),
+            Self::Db { source } => Some(source),
             Self::Io { source, .. } => Some(source),
             Self::Json { source } => Some(source),
             Self::Usage { .. } => None,
@@ -67,7 +67,7 @@ impl std::error::Error for OxgraphdError {
 
 impl From<DbError> for OxgraphdError {
     fn from(source: DbError) -> Self {
-        Self::Database { source }
+        Self::Db { source }
     }
 }
 
@@ -313,7 +313,7 @@ fn dispatch_http(default_path: &Path, request: &str) -> Result<String, OxgraphdE
 
 /// Creates a database from HTTP.
 fn endpoint_create(default_path: &Path) -> Result<String, OxgraphdError> {
-    Database::create(default_path)?;
+    Db::create(default_path)?;
     Ok(json!({ "ok": true }).to_string())
 }
 
@@ -325,31 +325,31 @@ fn endpoint_status(default_path: &Path) -> Result<String, OxgraphdError> {
 /// Runs query from HTTP.
 fn endpoint_query(default_path: &Path, body: &str) -> Result<String, OxgraphdError> {
     let request: QueryRequest = serde_json::from_str(body)?;
-    let database = Database::open(default_path)?;
-    let read = database.begin_read();
+    let database = Db::open(default_path)?;
+    let read = database.reader();
     let prepared = prepare_request(&database, &request)?;
-    let result = read.execute(&prepared)?;
+    let result = read.run(&prepared)?;
     serde_json::to_string(&json!({ "ok": true, "result": result })).map_err(Into::into)
 }
 
 /// Explains query from HTTP.
 fn endpoint_explain(default_path: &Path, body: &str) -> Result<String, OxgraphdError> {
     let request: QueryRequest = serde_json::from_str(body)?;
-    let database = Database::open(default_path)?;
+    let database = Db::open(default_path)?;
     let prepared = prepare_request(&database, &request)?;
     Ok(json!({ "ok": true, "explain": prepared.explain() }).to_string())
 }
 
 /// Compacts a database from HTTP.
 fn endpoint_compact(default_path: &Path) -> Result<String, OxgraphdError> {
-    let mut database = Database::open(default_path)?;
+    let mut database = Db::open(default_path)?;
     database.compact()?;
     Ok(json!({ "ok": true }).to_string())
 }
 
 /// Validates a database from HTTP.
 fn endpoint_validate(default_path: &Path) -> Result<String, OxgraphdError> {
-    Database::validate_path(default_path)?;
+    Db::validate_path(default_path)?;
     Ok(json!({ "ok": true }).to_string())
 }
 
@@ -370,7 +370,7 @@ fn endpoint_indexes(default_path: &Path) -> Result<String, OxgraphdError> {
 
 /// Creates a database from CLI.
 fn command_create(path: &str) -> Result<String, OxgraphdError> {
-    Database::create(path)?;
+    Db::create(path)?;
     Ok(json!({ "ok": true, "path": path }).to_string())
 }
 
@@ -381,13 +381,13 @@ fn command_status(path: &str) -> Result<String, OxgraphdError> {
 
 /// Validates a database from CLI.
 fn command_validate(path: &str) -> Result<String, OxgraphdError> {
-    Database::validate_path(path)?;
+    Db::validate_path(path)?;
     Ok(json!({ "ok": true }).to_string())
 }
 
 /// Compacts a database from CLI.
 fn command_compact(path: &str) -> Result<String, OxgraphdError> {
-    let mut database = Database::open(path)?;
+    let mut database = Db::open(path)?;
     database.compact()?;
     Ok(json!({ "ok": true }).to_string())
 }
@@ -413,13 +413,13 @@ fn command_query(
     language: &str,
     query_parts: &[String],
 ) -> Result<String, OxgraphdError> {
-    let database = Database::open(path)?;
+    let database = Db::open(path)?;
     let request = QueryRequest {
         language: language.to_owned(),
         query: query_parts.join(" "),
     };
     let prepared = prepare_request(&database, &request)?;
-    let result = database.begin_read().execute(&prepared)?;
+    let result = database.reader().run(&prepared)?;
     serde_json::to_string(&json!({ "ok": true, "result": result })).map_err(Into::into)
 }
 
@@ -429,7 +429,7 @@ fn command_explain(
     language: &str,
     query_parts: &[String],
 ) -> Result<String, OxgraphdError> {
-    let database = Database::open(path)?;
+    let database = Db::open(path)?;
     let request = QueryRequest {
         language: language.to_owned(),
         query: query_parts.join(" "),
@@ -440,8 +440,8 @@ fn command_explain(
 
 /// Returns status JSON for a path.
 fn command_status_path(path: &Path) -> Result<String, OxgraphdError> {
-    let database = Database::open(path)?;
-    let status = database.status();
+    let database = Db::open(path)?;
+    let status = database.stats();
     Ok(json!({
         "ok": true,
         "visible_commit_seq": status.visible_commit_seq.get(),
@@ -463,8 +463,8 @@ fn command_status_path(path: &Path) -> Result<String, OxgraphdError> {
 
 /// Returns catalog JSON for a path.
 fn command_catalog_path(path: &Path) -> Result<String, OxgraphdError> {
-    let database = Database::open(path)?;
-    let read = database.begin_read();
+    let database = Db::open(path)?;
+    let read = database.reader();
     let catalog = read.catalog();
     Ok(json!({
         "ok": true,
@@ -478,8 +478,8 @@ fn command_catalog_path(path: &Path) -> Result<String, OxgraphdError> {
 
 /// Returns projection JSON for a path.
 fn command_projections_path(path: &Path) -> Result<String, OxgraphdError> {
-    let database = Database::open(path)?;
-    let read = database.begin_read();
+    let database = Db::open(path)?;
+    let read = database.reader();
     Ok(json!({
         "ok": true,
         "projections": read.catalog().projections().collect::<Vec<_>>()
@@ -489,8 +489,8 @@ fn command_projections_path(path: &Path) -> Result<String, OxgraphdError> {
 
 /// Returns index JSON for a path.
 fn command_indexes_path(path: &Path) -> Result<String, OxgraphdError> {
-    let database = Database::open(path)?;
-    let read = database.begin_read();
+    let database = Db::open(path)?;
+    let read = database.reader();
     Ok(json!({
         "ok": true,
         "indexes": read.catalog().indexes().collect::<Vec<_>>()
@@ -498,26 +498,15 @@ fn command_indexes_path(path: &Path) -> Result<String, OxgraphdError> {
     .to_string())
 }
 
-/// Prepares a request query.
-fn prepare_request(
-    database: &Database,
-    request: &QueryRequest,
-) -> Result<PreparedQuery, OxgraphdError> {
-    let language = parse_language(&request.language)?;
-    database
-        .prepare(language, &request.query)
-        .map_err(Into::into)
-}
-
-/// Parses a language token.
-fn parse_language(value: &str) -> Result<QueryLanguage, OxgraphdError> {
-    match value.to_ascii_lowercase().as_str() {
-        "oxql" => Ok(QueryLanguage::Oxql),
-        "cypher" => Ok(QueryLanguage::Cypher),
-        _other => Err(OxgraphdError::Usage {
-            message: "language must be oxql or cypher".to_owned(),
-        }),
+/// Prepares a request query. The engine speaks one query language (`OxQL`); the
+/// request's `language` field is validated for forward compatibility.
+fn prepare_request(database: &Db, request: &QueryRequest) -> Result<PreparedQuery, OxgraphdError> {
+    if !request.language.eq_ignore_ascii_case("oxql") {
+        return Err(OxgraphdError::Usage {
+            message: "language must be oxql".to_owned(),
+        });
     }
+    database.prepare(&request.query).map_err(Into::into)
 }
 
 /// Parses a raw HTTP request.

@@ -239,12 +239,12 @@ pub mod property {
 /// # Examples
 ///
 /// ```no_run
-/// use oxgraph::db::{Database, QueryLanguage};
+/// use oxgraph::db::Db;
 ///
 /// fn main() -> Result<(), oxgraph::db::DbError> {
-///     let database = Database::create("target/example.oxgdb")?;
-///     let prepared = database.prepare(QueryLanguage::Oxql, "MATCH ELEMENTS")?;
-///     let _rows = database.begin_read().execute(&prepared)?;
+///     let database = Db::create("target/example.oxgdb")?;
+///     let prepared = database.prepare("MATCH ELEMENTS")?;
+///     let _rows = database.reader().run(&prepared)?;
 ///     Ok(())
 /// }
 /// ```
@@ -254,19 +254,7 @@ pub mod property {
 /// `perf: unspecified`; this module re-exports another crate.
 #[cfg(feature = "db")]
 pub mod db {
-    pub use oxgraph_db::{
-        Catalog, CatalogSummary, CheckpointGeneration, CheckpointPolicy, CommitSeq, Database,
-        DatabaseStatus, DbError, ElementId, ElementRecord, GraphProjection,
-        GraphProjectionDefinition, HypergraphProjection, HypergraphProjectionDefinition,
-        IncidenceId, IncidenceRecord, IndexDefinition, IndexEntry, IndexId, IndexLookup,
-        LabelDefinition, LabelId, PreparedQuery, ProjectionDefinition, ProjectionElementId,
-        ProjectionEntry, ProjectionId, ProjectionIncidenceId, ProjectionRelationId, PropertyFamily,
-        PropertyKeyDefinition, PropertyKeyId, PropertySubject, PropertyType, PropertyValue,
-        QueryLanguage, QueryResult, QueryRow, QueryValue, ReadPin, ReadTransaction, RelationId,
-        RelationRecord, RelationTypeDefinition, RelationTypeId, RoleDefinition, RoleId,
-        TransactionId, TraversalDirection, TraversalOptions, TraversalResult, TraversalRow,
-        WriteTransaction,
-    };
+    pub use oxgraph_db::*;
 }
 
 /// Append/update graph builders.

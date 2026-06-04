@@ -26,8 +26,8 @@ use std::{fmt::Display, path::Path};
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use oxgraph_db::{
-    Database, DbError, IndexDefinition, IndexId, IndexLookup, PropertyFamily, PropertyKeyId,
-    PropertySubject, PropertyType, PropertyValue,
+    Db, DbError, IndexDefinition, IndexId, Int, Key, Match, PropertyFamily, PropertyKeyId,
+    PropertySubject, PropertyType, PropertyValue, Text,
 };
 
 /// Base sizes the lookup benches sweep, spanning two decades so a flat per-call
@@ -88,77 +88,78 @@ struct Fixture {
 /// chain keeps the same shape across sizes.
 fn create_fixture(path: &Path, element_count: usize) -> Result<Fixture, DbError> {
     clean(path);
-    let mut database = Database::create(path)?;
-    let mut writer = database.begin_write()?;
-    let source = writer.register_role("source")?;
-    let target = writer.register_role("target")?;
-    let edge_type = writer.register_relation_type("Edge")?;
-    let anchor_type = writer.register_relation_type("Anchor")?;
-    let anchor_label = writer.register_label("Anchor")?;
-    let rank_key =
-        writer.register_property_key("rank", PropertyFamily::Element, PropertyType::Integer)?;
-    let name_key =
-        writer.register_property_key("name", PropertyFamily::Element, PropertyType::Text)?;
-    let rank_index = writer.define_index(
-        "rank_eq",
-        IndexDefinition::PropertyEquality { key: rank_key },
-    )?;
-    writer.define_index(
-        "anchor_type_idx",
-        IndexDefinition::RelationType {
-            relation_type: anchor_type,
-        },
-    )?;
-    writer.define_index(
-        "anchor_label_idx",
-        IndexDefinition::Label {
-            label: anchor_label,
-        },
-    )?;
-    writer.define_index(
-        "rank_name",
-        IndexDefinition::CompositeEquality {
-            keys: vec![rank_key, name_key],
-        },
-    )?;
-    let mut elements = Vec::with_capacity(element_count);
-    for index in 0..element_count {
-        let element = writer.create_element()?;
-        let rank = i64::try_from(index).map_err(|_error| DbError::IdOverflow)?;
-        writer.set_property(
-            PropertySubject::Element(element),
-            rank_key,
-            PropertyValue::Integer(rank),
+    let mut database = Db::create(path)?;
+    let ((rank_key, rank_index), _outcome) = database.write(|writer| {
+        let source = writer.register_role("source")?;
+        let target = writer.register_role("target")?;
+        let edge_type = writer.register_relation_type("Edge")?;
+        let anchor_type = writer.register_relation_type("Anchor")?;
+        let anchor_label = writer.register_label("Anchor")?;
+        let rank_key =
+            writer.register_property_key("rank", PropertyFamily::Element, PropertyType::Integer)?;
+        let name_key =
+            writer.register_property_key("name", PropertyFamily::Element, PropertyType::Text)?;
+        let rank_index = writer.define_index(
+            "rank_eq",
+            IndexDefinition::PropertyEquality { key: rank_key },
         )?;
-        writer.set_property(
-            PropertySubject::Element(element),
-            name_key,
-            PropertyValue::Text(format!("e{index}")),
+        writer.define_index(
+            "anchor_type_idx",
+            IndexDefinition::RelationType {
+                relation_type: anchor_type,
+            },
         )?;
-        // Only the first `ANCHOR_COUNT` elements carry the rare label, so the
-        // label posting matches a fixed number of elements at every base size.
-        if index < ANCHOR_COUNT {
-            writer.add_element_label(element, anchor_label)?;
+        writer.define_index(
+            "anchor_label_idx",
+            IndexDefinition::Label {
+                label: anchor_label,
+            },
+        )?;
+        writer.define_index(
+            "rank_name",
+            IndexDefinition::CompositeEquality {
+                keys: vec![rank_key, name_key],
+            },
+        )?;
+        let mut elements = Vec::with_capacity(element_count);
+        for index in 0..element_count {
+            let element = writer.create_element()?;
+            let rank = i64::try_from(index).map_err(|_error| DbError::IdOverflow)?;
+            writer.set(
+                PropertySubject::Element(element),
+                Key::<Int>::from_id(rank_key),
+                rank,
+            )?;
+            writer.set(
+                PropertySubject::Element(element),
+                Key::<Text>::from_id(name_key),
+                format!("e{index}"),
+            )?;
+            // Only the first `ANCHOR_COUNT` elements carry the rare label, so the
+            // label posting matches a fixed number of elements at every base size.
+            if index < ANCHOR_COUNT {
+                writer.add_label(element, anchor_label)?;
+            }
+            elements.push(element);
         }
-        elements.push(element);
-    }
-    for (index, window) in elements.windows(2).enumerate() {
-        let relation = writer.create_relation()?;
-        // Every relation is an `Edge` (dense, keeps the chain shape); only the
-        // first `ANCHOR_COUNT` additionally carry the rare `Anchor` type the
-        // membership bench probes.
-        let relation_type = if index < ANCHOR_COUNT {
-            anchor_type
-        } else {
-            edge_type
-        };
-        writer.set_relation_type(relation, relation_type)?;
-        writer.create_incidence(relation, window[0], source)?;
-        writer.create_incidence(relation, window[1], target)?;
-    }
-    writer.commit()?;
+        for (index, window) in elements.windows(2).enumerate() {
+            let relation = writer.create_relation()?;
+            // Every relation is an `Edge` (dense, keeps the chain shape); only the
+            // first `ANCHOR_COUNT` additionally carry the rare `Anchor` type the
+            // membership bench probes.
+            let relation_type = if index < ANCHOR_COUNT {
+                anchor_type
+            } else {
+                edge_type
+            };
+            writer.set_relation_type(relation, relation_type)?;
+            writer.create_incidence(relation, window[0], source)?;
+            writer.create_incidence(relation, window[1], target)?;
+        }
+        Ok((rank_key, rank_index))
+    })?;
     // Fold the committed delta into the base so lookups hit the base index.
-    database.checkpoint()?;
+    database.compact()?;
     Ok(Fixture {
         rank_key,
         rank_index,
@@ -166,22 +167,19 @@ fn create_fixture(path: &Path, element_count: usize) -> Result<Fixture, DbError>
 }
 
 /// Opens a fixture database, panicking on setup failure.
-fn fixture_or_panic(name: &str, element_count: usize) -> (Database, Fixture) {
+fn fixture_or_panic(name: &str, element_count: usize) -> (Db, Fixture) {
     let path = bench_path(name);
     let fixture = unwrap(
         create_fixture(&path, element_count),
         "benchmark fixture should build",
     );
-    let database = unwrap(Database::open(&path), "benchmark fixture should open");
+    let database = unwrap(Db::open(&path), "benchmark fixture should open");
     (database, fixture)
 }
 
 /// Resolves a named index id from the fixture catalog.
-fn index_named(database: &Database, name: &str) -> IndexId {
-    unwrap_some(
-        database.begin_read().catalog().index_id(name),
-        "index defined",
-    )
+fn index_named(database: &Db, name: &str) -> IndexId {
+    unwrap_some(database.reader().catalog().index_id(name), "index defined")
 }
 
 /// Benchmarks property equality lookup across growing base sizes; the per-call
@@ -190,7 +188,7 @@ fn bench_property_equal(c: &mut Criterion) {
     let mut group = c.benchmark_group("db_property_equal_lookup");
     for size in BASE_SIZES {
         let (database, fixture) = fixture_or_panic("equal", size);
-        let read = database.begin_read();
+        let read = database.reader();
         let probe = PropertyValue::Integer(half(size));
         group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, _size| {
             b.iter(|| {
@@ -209,12 +207,12 @@ fn bench_index_equal(c: &mut Criterion) {
     let mut group = c.benchmark_group("db_index_equal_lookup");
     for size in BASE_SIZES {
         let (database, fixture) = fixture_or_panic("index-equal", size);
-        let read = database.begin_read();
+        let read = database.reader();
         let probe = PropertyValue::Integer(half(size));
         group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, _size| {
             b.iter(|| {
                 unwrap(
-                    read.lookup_index(fixture.rank_index, IndexLookup::Equal(&probe)),
+                    read.lookup(fixture.rank_index, Match::Equal(&probe)),
                     "index lookup",
                 )
             });
@@ -229,7 +227,7 @@ fn bench_property_range(c: &mut Criterion) {
     let mut group = c.benchmark_group("db_property_range_lookup_width100");
     for size in BASE_SIZES {
         let (database, fixture) = fixture_or_panic("range", size);
-        let read = database.begin_read();
+        let read = database.reader();
         let lo = PropertyValue::Integer(half(size));
         let hi = PropertyValue::Integer(half(size) + 100);
         group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, _size| {
@@ -244,7 +242,7 @@ fn bench_property_range(c: &mut Criterion) {
     group.finish();
 }
 
-/// Benchmarks an `IndexLookup::All` membership lookup (label / relation-type)
+/// Benchmarks an `Match::All` membership lookup (label / relation-type)
 /// resolved by the named index, across growing base sizes. The probed index is a
 /// RARE one ([`ANCHOR_COUNT`] carriers, fixed regardless of base), so the per-call
 /// time stays flat (`O(log n)` posting probe) rather than growing with the base.
@@ -252,15 +250,10 @@ fn bench_membership_all(c: &mut Criterion, group_name: &str, fixture_tag: &str, 
     let mut group = c.benchmark_group(group_name);
     for size in BASE_SIZES {
         let (database, _fixture) = fixture_or_panic(fixture_tag, size);
-        let read = database.begin_read();
+        let read = database.reader();
         let index = index_named(&database, index_name);
         group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, _size| {
-            b.iter(|| {
-                unwrap(
-                    read.lookup_index(index, IndexLookup::All),
-                    "membership lookup",
-                )
-            });
+            b.iter(|| unwrap(read.lookup(index, Match::All), "membership lookup"));
         });
     }
     group.finish();
@@ -288,7 +281,7 @@ fn bench_composite_equal(c: &mut Criterion) {
     let mut group = c.benchmark_group("db_composite_equal_lookup");
     for size in BASE_SIZES {
         let (database, _fixture) = fixture_or_panic("composite", size);
-        let read = database.begin_read();
+        let read = database.reader();
         let composite_index = index_named(&database, "rank_name");
         let target = half(size);
         let values = [
@@ -298,7 +291,7 @@ fn bench_composite_equal(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, _size| {
             b.iter(|| {
                 unwrap(
-                    read.lookup_index(composite_index, IndexLookup::CompositeEqual(&values)),
+                    read.lookup(composite_index, Match::Composite(&values)),
                     "composite lookup",
                 )
             });

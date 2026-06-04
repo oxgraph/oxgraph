@@ -108,6 +108,39 @@ impl PropertySubject {
     }
 }
 
+impl From<ElementId> for PropertySubject {
+    /// Wraps an element id as an element property subject.
+    ///
+    /// # Performance
+    ///
+    /// This function is `O(1)`.
+    fn from(id: ElementId) -> Self {
+        Self::Element(id)
+    }
+}
+
+impl From<RelationId> for PropertySubject {
+    /// Wraps a relation id as a relation property subject.
+    ///
+    /// # Performance
+    ///
+    /// This function is `O(1)`.
+    fn from(id: RelationId) -> Self {
+        Self::Relation(id)
+    }
+}
+
+impl From<IncidenceId> for PropertySubject {
+    /// Wraps an incidence id as an incidence property subject.
+    ///
+    /// # Performance
+    ///
+    /// This function is `O(1)`.
+    fn from(id: IncidenceId) -> Self {
+        Self::Incidence(id)
+    }
+}
+
 /// The nine monotonic id allocators, captured for the store header and every
 /// dirty commit's watermark op in a fixed order. Recovery folds the elementwise
 /// maximum of the base header and every replayed frame's watermark so a
