@@ -9,9 +9,9 @@ use std::{
 use oxgraph_algo::breadth_first_search;
 use oxgraph_db::{
     CommitOutcome, Db, DbError, Direction, GraphProjectionDefinition,
-    HypergraphProjectionDefinition, IndexDefinition, Int, Key, Match, ProjectionDefinition,
-    PropertyFamily, PropertySubject, PropertyType, PropertyValue, QueryValue, Text, TraversedNode,
-    Walk,
+    HypergraphProjectionDefinition, IndexDefinition, Int, Key, Match, PageRankConfig,
+    ProjectionDefinition, PropertyFamily, PropertySubject, PropertyType, PropertyValue, QueryValue,
+    Text, TraversedNode, Walk,
 };
 use oxgraph_graph::{
     CanonicalElementIdentity, ElementSuccessors, LocalElementIdentity, TopologyCounts,
@@ -375,6 +375,140 @@ fn graph_traversal_api_walks_directions_and_depth() -> Result<(), TestError> {
             },
         ],
     )?;
+
+    clean(&path)?;
+    Ok(())
+}
+
+#[test]
+fn personalized_pagerank_ranks_and_responds_to_seeds() -> Result<(), TestError> {
+    let (path, database, fixture) = create_traversal_database("graph-pagerank")?;
+    let read = database.reader();
+
+    let seeded = read.personalized_pagerank(
+        fixture.graph_projection,
+        &[fixture.alice],
+        PageRankConfig::new(0.85_f64, 1e-6_f64, 100),
+    )?;
+
+    // One score per projection element, ordered from highest rank to lowest.
+    assert!(!seeded.is_empty());
+    for window in seeded.windows(2) {
+        assert!(window[0].1 >= window[1].1);
+    }
+    // PageRank is a probability distribution over the visible elements.
+    let total: f64 = seeded.iter().map(|(_, rank)| rank).sum();
+    assert!(
+        (total - 1.0).abs() < 1e-6,
+        "ranks should sum to 1, got {total}"
+    );
+
+    // Seeding alice with the restart mass raises her rank above the
+    // uniform-teleport rank: personalization has an effect.
+    let uniform = read.personalized_pagerank(
+        fixture.graph_projection,
+        &[],
+        PageRankConfig::new(0.85_f64, 1e-6_f64, 100),
+    )?;
+    let rank_of = |ranks: &[(oxgraph_db::ElementId, f64)], element| {
+        ranks
+            .iter()
+            .find(|(candidate, _)| *candidate == element)
+            .map_or(0.0, |(_, rank)| *rank)
+    };
+    assert!(rank_of(&seeded, fixture.alice) > rank_of(&uniform, fixture.alice));
+
+    clean(&path)?;
+    Ok(())
+}
+
+#[test]
+fn longest_path_finds_the_longest_chain() -> Result<(), TestError> {
+    let path = temp_path("graph-longest-path");
+    clean(&path)?;
+    let mut database = Db::create(&path)?;
+    let (elements, projection) = build_chain_dag(&mut database)?;
+    let read = database.reader();
+
+    // Edges 0->1->2->3 plus a shortcut 0->2: the longest simple chain runs the
+    // full four-element path rather than the shortcut.
+    let chain = read.longest_path(projection, &elements)?;
+    assert_eq!(
+        chain,
+        vec![elements[0], elements[1], elements[2], elements[3]]
+    );
+
+    // An empty element set yields an empty path.
+    assert!(read.longest_path(projection, &[])?.is_empty());
+
+    clean(&path)?;
+    Ok(())
+}
+
+#[test]
+fn longest_path_rejects_cycles_and_unknown_elements() -> Result<(), TestError> {
+    let (path, database, fixture) = create_traversal_database("graph-longest-path-errors")?;
+    let read = database.reader();
+
+    // The calls projection is the cycle alice -> bob -> carol -> alice, so the
+    // induced subgraph over all three is cyclic; the algorithm error surfaces as
+    // a concrete DbError, never the cross-crate LongestPathError.
+    assert!(matches!(
+        read.longest_path(
+            fixture.graph_projection,
+            &[fixture.alice, fixture.bob, fixture.carol],
+        ),
+        Err(DbError::Traversal { .. })
+    ));
+
+    // `dave` participates in no Calls relation, so he is absent from the
+    // projection; both new methods reject him by id.
+    assert!(matches!(
+        read.longest_path(fixture.graph_projection, &[fixture.dave]),
+        Err(DbError::UnknownElement { id }) if id == fixture.dave
+    ));
+    assert!(matches!(
+        read.personalized_pagerank(
+            fixture.graph_projection,
+            &[fixture.dave],
+            PageRankConfig::new(0.85_f64, 1e-6_f64, 100),
+        ),
+        Err(DbError::UnknownElement { id }) if id == fixture.dave
+    ));
+
+    clean(&path)?;
+    Ok(())
+}
+
+#[test]
+fn personalized_pagerank_reflects_graph_structure() -> Result<(), TestError> {
+    let path = temp_path("graph-pagerank-structure");
+    clean(&path)?;
+    let mut database = Db::create(&path)?;
+    let (elements, projection) = build_chain_dag(&mut database)?;
+    let read = database.reader();
+
+    let rank_of = |ranks: &[(oxgraph_db::ElementId, f64)], element| {
+        ranks
+            .iter()
+            .find(|(candidate, _)| *candidate == element)
+            .map_or(0.0, |(_, rank)| *rank)
+    };
+
+    // In 0->{1,2}, 1->2, 2->3 the hub 2 (two incoming edges) outranks the source
+    // 0 (no incoming edges): rank propagates along edges and the element<->rank
+    // round-trip is pinned to specific nodes, not insertion order.
+    let ranks =
+        read.personalized_pagerank(projection, &[], PageRankConfig::new(0.85, 1e-6, 100))?;
+    assert!(rank_of(&ranks, elements[2]) > rank_of(&ranks, elements[0]));
+
+    // Seeding the source lifts it above its unseeded rank.
+    let seeded = read.personalized_pagerank(
+        projection,
+        &[elements[0]],
+        PageRankConfig::new(0.85, 1e-6, 100),
+    )?;
+    assert!(rank_of(&seeded, elements[0]) > rank_of(&ranks, elements[0]));
 
     clean(&path)?;
     Ok(())
@@ -954,6 +1088,39 @@ fn create_directed_relation(
     writer.create_incidence(relation, source, source_role)?;
     writer.create_incidence(relation, target, target_role)?;
     Ok(())
+}
+
+/// Builds a small DAG `0 -> 1 -> 2 -> 3` with a `0 -> 2` shortcut over a `calls`
+/// graph projection, returning the element ids and the projection id.
+fn build_chain_dag(
+    database: &mut Db,
+) -> Result<(Vec<oxgraph_db::ElementId>, oxgraph_db::ProjectionId), TestError> {
+    let (out, _outcome) = database.write(|writer| {
+        let source = writer.register_role("source")?;
+        let target = writer.register_role("target")?;
+        let edge_type = writer.register_relation_type("Calls")?;
+        let mut elements = Vec::with_capacity(4);
+        for _ in 0..4 {
+            elements.push(writer.create_element()?);
+        }
+        for (from, to) in [(0, 1), (1, 2), (2, 3), (0, 2)] {
+            create_directed_relation(
+                writer,
+                edge_type,
+                (source, target),
+                (elements[from], elements[to]),
+            )?;
+        }
+        let projection =
+            writer.define_projection(ProjectionDefinition::Graph(GraphProjectionDefinition {
+                name: "calls".to_owned(),
+                relation_types: BTreeSet::from([edge_type]),
+                source_role: source,
+                target_role: target,
+            }))?;
+        Ok((elements, projection))
+    })?;
+    Ok(out)
 }
 
 /// Asserts graph traversal rows.
