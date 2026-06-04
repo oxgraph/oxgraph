@@ -1495,9 +1495,10 @@ impl Reader {
     /// # Errors
     ///
     /// Returns [`DbError`] when the projection is unknown, is not a graph, cannot
-    /// be materialized, a seed is not part of the projection, or `PageRank`
-    /// rejects the configuration (the [`PageRankConfig`] was invalid or the power
-    /// iteration did not converge).
+    /// be materialized, or `PageRank` rejects the configuration (the
+    /// [`PageRankConfig`] was invalid or the power iteration did not converge).
+    /// Seeds absent from the projection are ignored rather than erroring; with no
+    /// resolvable seed this is the uniform-teleport rank.
     ///
     /// # Performance
     ///
@@ -1517,11 +1518,12 @@ impl Reader {
         })?;
 
         let mut personalization = vec![0.0_f64; bound];
+        let mut seeded = false;
         for &seed in seeds {
-            let local = graph
-                .local_element_id(seed)
-                .ok_or(DbError::UnknownElement { id: seed })?;
-            personalization[graph.element_index(local)] = 1.0;
+            if let Some(local) = graph.local_element_id(seed) {
+                personalization[graph.element_index(local)] = 1.0;
+                seeded = true;
+            }
         }
 
         let mut ranks = vec![0.0_f64; bound];
@@ -1531,7 +1533,7 @@ impl Reader {
             &Uniform,
             (0..element_count).map(ProjectionElementId::new),
             config,
-            (!seeds.is_empty()).then_some(personalization.as_slice()),
+            seeded.then_some(personalization.as_slice()),
             &mut ranks,
             &mut workspace,
         )
@@ -1568,8 +1570,9 @@ impl Reader {
     /// # Errors
     ///
     /// Returns [`DbError`] when the projection is unknown, is not a graph, cannot
-    /// be materialized, a listed element is not part of the projection, or the
-    /// induced subgraph contains a cycle.
+    /// be materialized, or the induced subgraph contains a cycle. Elements absent
+    /// from the projection are ignored, so the chain is computed over the present
+    /// subset.
     ///
     /// # Performance
     ///
@@ -1586,12 +1589,8 @@ impl Reader {
         let graph = self.graph_projection(projection)?;
         let locals = elements
             .iter()
-            .map(|&element| {
-                graph
-                    .local_element_id(element)
-                    .ok_or(DbError::UnknownElement { id: element })
-            })
-            .collect::<Result<Vec<ProjectionElementId>, DbError>>()?;
+            .filter_map(|&element| graph.local_element_id(element))
+            .collect::<Vec<ProjectionElementId>>();
         let path = longest_path_dag(&graph, &locals)
             .map_err(|_| DbError::traversal("longest path found a cycle"))?;
         Ok(path

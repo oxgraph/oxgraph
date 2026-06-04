@@ -446,7 +446,7 @@ fn longest_path_finds_the_longest_chain() -> Result<(), TestError> {
 }
 
 #[test]
-fn longest_path_rejects_cycles_and_unknown_elements() -> Result<(), TestError> {
+fn longest_path_rejects_cycles_and_ignores_unknown_elements() -> Result<(), TestError> {
     let (path, database, fixture) = create_traversal_database("graph-longest-path-errors")?;
     let read = database.reader();
 
@@ -462,19 +462,21 @@ fn longest_path_rejects_cycles_and_unknown_elements() -> Result<(), TestError> {
     ));
 
     // `dave` participates in no Calls relation, so he is absent from the
-    // projection; both new methods reject him by id.
-    assert!(matches!(
-        read.longest_path(fixture.graph_projection, &[fixture.dave]),
-        Err(DbError::UnknownElement { id }) if id == fixture.dave
-    ));
-    assert!(matches!(
-        read.personalized_pagerank(
-            fixture.graph_projection,
-            &[fixture.dave],
-            PageRankConfig::new(0.85_f64, 1e-6_f64, 100),
-        ),
-        Err(DbError::UnknownElement { id }) if id == fixture.dave
-    ));
+    // projection; absent elements are ignored rather than erroring. With only an
+    // absent element the longest path is empty and the rank falls back to uniform.
+    assert_eq!(
+        read.longest_path(fixture.graph_projection, &[fixture.dave])?,
+        Vec::new()
+    );
+    assert!(
+        !read
+            .personalized_pagerank(
+                fixture.graph_projection,
+                &[fixture.dave],
+                PageRankConfig::new(0.85_f64, 1e-6_f64, 100),
+            )?
+            .is_empty()
+    );
 
     clean(&path)?;
     Ok(())
