@@ -55,8 +55,8 @@ arrow-schema = "58.2.0"
 arrow-select = "58.2.0"
 crc32c = "0.6.8"
 memmap2 = "0.9.8"
-yoke = { version = "0.8.2", features = ["derive"] }
-zerocopy = { version = "0.8.48", default-features = false, features = ["derive"] }
+yoke = { version = "0.8.3", features = ["derive"] }
+zerocopy = { version = "0.8.50", default-features = false, features = ["derive"] }
 
 # Dev / test
 criterion = { version = "0.8.2", default-features = false, features = [
@@ -67,7 +67,7 @@ criterion = { version = "0.8.2", default-features = false, features = [
 proptest = "1.11.0"
 saphyr-parser = "0.0.6"
 serde = { version = "1.0.228", features = ["derive"] }
-serde_json = "1.0.145"
+serde_json = "1.0.150"
 
 [workspace.lints.rust]
 rust_2024_compatibility = { level = "deny", priority = -1 }
