@@ -45,7 +45,7 @@ impl EngineStatusReport {
     /// Builds a report from a loaded engine.
     #[must_use]
     pub fn from_engine(engine: &Engine) -> Self {
-        let status = engine.status();
+        let status = engine.stats();
         let health = engine.sync_health();
         Self {
             loaded: true,

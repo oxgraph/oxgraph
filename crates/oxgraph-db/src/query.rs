@@ -1,9 +1,5 @@
-//! Native `OxQL` and pinned Cypher-profile query execution.
+//! Native `OxQL` query execution.
 
-use oxgraph_graph::{
-    CanonicalElementIdentity, CanonicalRelationIdentity, EdgeSourceGraph, EdgeTargetGraph,
-    TopologyCounts,
-};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -12,22 +8,9 @@ use crate::{
     catalog::{ProjectionDefinition, PropertyFamily},
     overlay::StateView,
     projection::GraphProjection,
-    traversal::{self, TraversalDirection, TraversalOptions},
+    traversal::{self, Direction, Walk},
     value::parse_value_token,
 };
-
-/// Query frontend language.
-///
-/// # Performance
-///
-/// Copying and comparing are `O(1)`.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
-pub enum QueryLanguage {
-    /// Native topology-first `OxQL` profile.
-    Oxql,
-    /// Pinned Cypher language profile over property-graph projections.
-    Cypher,
-}
 
 /// Prepared query plan.
 ///
@@ -36,8 +19,6 @@ pub enum QueryLanguage {
 /// Cloning is `O(query length)`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PreparedQuery {
-    /// Source language.
-    language: QueryLanguage,
     /// Original query text.
     text: String,
     /// Physical plan.
@@ -55,35 +36,17 @@ impl PreparedQuery {
     /// # Performance
     ///
     /// This function is `O(query length + catalog lookup cost)`.
-    pub(crate) fn prepare(
-        language: QueryLanguage,
-        query: &str,
-        state: &impl StateView,
-    ) -> Result<Self, DbError> {
+    pub(crate) fn prepare(query: &str, state: &impl StateView) -> Result<Self, DbError> {
         let trimmed = query.trim();
         if trimmed.is_empty() {
             return Err(DbError::EmptyQuery);
         }
-        let logical = match language {
-            QueryLanguage::Oxql => parse_oxql(trimmed)?,
-            QueryLanguage::Cypher => parse_cypher(trimmed)?,
-        };
+        let logical = parse_oxql(trimmed)?;
         let plan = bind_and_lower(logical, state)?;
         Ok(Self {
-            language,
             text: trimmed.to_owned(),
             plan,
         })
-    }
-
-    /// Returns the query language.
-    ///
-    /// # Performance
-    ///
-    /// This method is `O(1)`.
-    #[must_use]
-    pub const fn language(&self) -> QueryLanguage {
-        self.language
     }
 
     /// Returns the source query text.
@@ -179,7 +142,7 @@ impl QueryRow {
     }
 }
 
-/// Query value variants used by `OxQL` and the pinned Cypher profile.
+/// Query value variants used by `OxQL`.
 ///
 /// # Performance
 ///
@@ -246,12 +209,7 @@ enum QueryPlan {
         /// Canonical starting element.
         element: ElementId,
         /// Traversal options.
-        options: TraversalOptions,
-    },
-    /// Cypher directed edge triple scan.
-    CypherDirectedTriples {
-        /// Graph projection ID.
-        projection: ProjectionId,
+        options: Walk,
     },
     /// Catalog metadata scan.
     CatalogScan,
@@ -334,9 +292,6 @@ impl QueryPlan {
                 "oxql graph projection {projection} walk from {element} depth {} direction {:?} limit {}",
                 options.max_depth, options.direction, options.limit,
             ),
-            Self::CypherDirectedTriples { projection } => {
-                format!("cypher directed triple scan projection={projection}")
-            }
             Self::CatalogScan => "catalog metadata scan".to_owned(),
         }
     }
@@ -362,9 +317,6 @@ impl QueryPlan {
                 element,
                 options,
             } => execute_graph_walk(state, *projection, *element, *options),
-            Self::CypherDirectedTriples { projection } => {
-                execute_cypher_triples(state, *projection)
-            }
             Self::CatalogScan => Ok(scan_catalog(state)),
         }
     }
@@ -376,8 +328,7 @@ impl QueryPlan {
 /// driven and never touch the catalog; they produce one of these ops carrying
 /// raw names and literals. [`bind_and_lower`] then resolves names to catalog
 /// IDs, validates value families/types, and produces the physical
-/// [`QueryPlan`]. Cypher node and label scans lower onto the shared element ops
-/// rather than duplicating them.
+/// [`QueryPlan`].
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum LogicalOp {
     /// Scan all elements.
@@ -412,10 +363,8 @@ enum LogicalOp {
         /// Unparsed element-ID token.
         element: String,
         /// Parsed traversal options.
-        options: TraversalOptions,
+        options: Walk,
     },
-    /// Scan the first graph projection as directed source/relation/target triples.
-    CypherDirectedTriples,
     /// Filter elements by a compound property predicate.
     ElementWhere {
         /// Unbound predicate tree carrying raw key names and value tokens.
@@ -525,7 +474,7 @@ fn parse_oxql(query: &str) -> Result<LogicalOp, DbError> {
             Ok(LogicalOp::GraphWalk {
                 projection: tokens[1].to_owned(),
                 element: tokens[3].to_owned(),
-                options: TraversalOptions::default(),
+                options: Walk::default(),
             })
         }
         [
@@ -544,33 +493,14 @@ fn parse_oxql(query: &str) -> Result<LogicalOp, DbError> {
     }
 }
 
-/// Parses the pinned Cypher language profile into a logical operation.
-fn parse_cypher(query: &str) -> Result<LogicalOp, DbError> {
-    if query == "MATCH (n) RETURN n" {
-        return Ok(LogicalOp::ElementScan);
-    }
-    if query == "MATCH (n)-[r]->(m) RETURN n,r,m" {
-        return Ok(LogicalOp::CypherDirectedTriples);
-    }
-    if let Some(label) = query
-        .strip_prefix("MATCH (n:")
-        .and_then(|rest| rest.strip_suffix(") RETURN n"))
-    {
-        return Ok(LogicalOp::ElementLabelScan {
-            label: label.to_owned(),
-        });
-    }
-    Err(DbError::unsupported("unsupported Cypher profile query"))
-}
-
 /// Parses the optional `DIRECTION`/`LIMIT` clauses of an `OxQL` graph walk.
 fn parse_graph_walk(tokens: &[&str], upper: &[String]) -> Result<LogicalOp, DbError> {
     let max_depth = tokens[6]
         .parse::<usize>()
         .map_err(|_error| DbError::unsupported("walk depth must be an integer"))?;
-    let mut options = TraversalOptions {
+    let mut options = Walk {
         max_depth,
-        ..TraversalOptions::default()
+        ..Walk::default()
     };
     let mut saw_direction = false;
     let mut saw_limit = false;
@@ -604,11 +534,11 @@ fn parse_graph_walk(tokens: &[&str], upper: &[String]) -> Result<LogicalOp, DbEr
 }
 
 /// Parses one `OxQL` graph walk direction.
-fn parse_walk_direction(direction: &str) -> Result<TraversalDirection, DbError> {
+fn parse_walk_direction(direction: &str) -> Result<Direction, DbError> {
     match direction {
-        "OUTGOING" => Ok(TraversalDirection::Outgoing),
-        "INCOMING" => Ok(TraversalDirection::Incoming),
-        "BOTH" => Ok(TraversalDirection::Both),
+        "OUTGOING" => Ok(Direction::Outgoing),
+        "INCOMING" => Ok(Direction::Incoming),
+        "BOTH" => Ok(Direction::Both),
         _direction => Err(DbError::unsupported(
             "walk direction must be outgoing, incoming, or both",
         )),
@@ -797,9 +727,6 @@ fn bind_and_lower(op: LogicalOp, state: &impl StateView) -> Result<QueryPlan, Db
             element,
             options,
         } => lower_graph_walk(&projection, &element, options, state),
-        LogicalOp::CypherDirectedTriples => Ok(QueryPlan::CypherDirectedTriples {
-            projection: first_graph_projection(state)?,
-        }),
         LogicalOp::ElementWhere { predicate } => Ok(QueryPlan::ElementFilter {
             predicate: bind_predicate(predicate, state)?,
         }),
@@ -810,7 +737,7 @@ fn bind_and_lower(op: LogicalOp, state: &impl StateView) -> Result<QueryPlan, Db
 fn lower_graph_walk(
     projection: &str,
     element: &str,
-    options: TraversalOptions,
+    options: Walk,
     state: &impl StateView,
 ) -> Result<QueryPlan, DbError> {
     let projection = state
@@ -944,35 +871,15 @@ fn execute_graph_walk(
     state: &impl StateView,
     projection: ProjectionId,
     element: ElementId,
-    options: TraversalOptions,
+    options: Walk,
 ) -> Result<QueryResult, DbError> {
     let graph = graph_projection(state, projection)?;
-    let traversal = traversal::traverse_graph_projection(&graph, &[element], options)?;
-    let rows = traversal
-        .rows()
+    let subgraph = traversal::walk_graph_projection(&graph, &[element], options)?;
+    let rows = subgraph
+        .nodes
         .iter()
-        .map(|row| QueryRow::single(QueryValue::Element(row.element)))
+        .map(|node| QueryRow::single(QueryValue::Element(node.element)))
         .collect();
-    Ok(QueryResult::new(rows))
-}
-
-/// Executes the Cypher directed triple profile.
-fn execute_cypher_triples(
-    state: &impl StateView,
-    projection: ProjectionId,
-) -> Result<QueryResult, DbError> {
-    let graph = graph_projection(state, projection)?;
-    let mut rows = Vec::with_capacity(graph.relation_count());
-    for index in 0..graph.relation_count() {
-        let edge = projection_relation(index)?;
-        rows.push(QueryRow {
-            values: vec![
-                QueryValue::Element(graph.canonical_element_id(graph.source(edge))),
-                QueryValue::Relation(graph.canonical_relation_id(edge)),
-                QueryValue::Element(graph.canonical_element_id(graph.target(edge))),
-            ],
-        });
-    }
     Ok(QueryResult::new(rows))
 }
 
@@ -993,23 +900,4 @@ fn graph_projection(
             Err(DbError::invalid_projection("projection is not a graph"))
         }
     }
-}
-
-/// Finds the first graph projection in catalog order.
-fn first_graph_projection(state: &impl StateView) -> Result<ProjectionId, DbError> {
-    state
-        .catalog()
-        .projections()
-        .find_map(|entry| match &entry.definition {
-            ProjectionDefinition::Graph(_definition) => Some(entry.id),
-            ProjectionDefinition::Hypergraph(_definition) => None,
-        })
-        .ok_or_else(|| DbError::unsupported("Cypher profile requires a graph projection"))
-}
-
-/// Builds a projection relation ID for query execution.
-fn projection_relation(index: usize) -> Result<crate::ProjectionRelationId, DbError> {
-    u32::try_from(index)
-        .map(crate::ProjectionRelationId::new)
-        .map_err(|_error| DbError::IdOverflow)
 }

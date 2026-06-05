@@ -1,35 +1,43 @@
 //! Embedded `OxGraph` database engine API.
 //!
-//! This is the integration layer over the base+overlay+WAL core. A [`Database`]
+//! This is the integration layer over the base+overlay+WAL core. A [`Db`]
 //! holds the current `Arc<Snapshot>` (one immutable base generation plus the
 //! frozen overlay published over it), the open append-only delta-log, and the
 //! recovered id/transaction watermarks. Reads pin the current snapshot in `O(1)`
-//! (`begin_read` clones the `Arc`); writes layer a fresh [`WriteOverlay`] over
+//! (`reader` clones the `Arc`); writes layer a fresh [`WriteOverlay`] over
 //! the current snapshot, append a WAL frame on commit, and publish a new
 //! snapshot. The whole read/query/projection surface resolves through the merged
 //! [`StateView`] of the pinned snapshot.
 
 use std::{
     borrow::Cow,
+    collections::BTreeSet,
     path::{Path, PathBuf},
     sync::Arc,
 };
 
+use oxgraph_algo::{
+    PageRankConfig, PageRankError, PageRankWorkspace, Uniform, longest_path_dag,
+    pagerank_graph_with_workspace,
+};
+use oxgraph_graph::{CanonicalElementIdentity, ElementIndex, LocalElementIdentity};
+
 use crate::{
-    Catalog, CheckpointGeneration, CommitSeq, DbError, ElementId, ElementRecord, GraphProjection,
-    HypergraphProjection, IncidenceId, IncidenceRecord, IndexId, LabelId, PreparedQuery,
-    ProjectionDefinition, ProjectionId, PropertyKeyId, PropertySubject, PropertyType,
-    PropertyValue, QueryLanguage, QueryResult, RelationId, RelationRecord, RelationTypeId, RoleId,
+    Bound, Catalog, CheckpointGeneration, CommitSeq, DbError, Element, ElementId,
+    GraphProjectionDefinition, GraphProjectionSpec, IncidenceId, IncidenceRecord, IndexId, LabelId,
+    PreparedQuery, ProjectionDefinition, ProjectionId, Properties, PropertyKeyId, PropertySubject,
+    PropertyType, PropertyValue, QueryResult, Relation, RelationId, RelationTypeId, RoleId, Schema,
     TransactionId,
     backing::Base,
     catalog::{IndexDefinition, PropertyFamily},
     freeze::{self, FreezeStamps},
     lock::WriterLock,
     overlay::{Overlay, Snapshot, StateView, WriteOverlay},
-    projection,
+    projection::{self, GraphProjection, HypergraphProjection, ProjectionElementId},
     state::NextIds,
     storage,
-    traversal::{self, TraversalOptions, TraversalResult},
+    traversal::{self, Direction, Subgraph, Walk},
+    typed::{Assignable, EqualityIndex, Key, ValueType},
     wal,
     wire::SuperblockRecord,
 };
@@ -37,14 +45,14 @@ use crate::{
 /// Lookup input for a cataloged index.
 ///
 /// This type makes index lookup shape explicit: membership indexes accept
-/// [`IndexLookup::All`], single-property indexes accept scalar equality or
+/// [`Match::All`], single-property indexes accept scalar equality or
 /// range inputs, and composite equality indexes accept an ordered value tuple.
 ///
 /// # Performance
 ///
 /// Copying this value is `O(1)`.
 #[derive(Clone, Copy, Debug)]
-pub enum IndexLookup<'value> {
+pub enum Match<'value> {
     /// Lookup every subject represented by a membership-style index.
     All,
     /// Lookup one scalar equality value.
@@ -57,7 +65,7 @@ pub enum IndexLookup<'value> {
         max: &'value PropertyValue,
     },
     /// Lookup one ordered composite equality tuple.
-    CompositeEqual(&'value [PropertyValue]),
+    Composite(&'value [PropertyValue]),
 }
 
 /// Auto-checkpoint policy: decides when a dirty commit should fold the
@@ -66,15 +74,15 @@ pub enum IndexLookup<'value> {
 ///
 /// The default is size-ratio: trigger when the delta-log grows past `factor`
 /// times the live base size (`factor` configurable). [`CheckpointPolicy::Manual`]
-/// disables auto-triggering entirely (checkpoint only via
-/// [`Database::checkpoint`]/[`Database::compact`]).
+/// disables auto-triggering entirely (folded only by an explicit
+/// [`Db::compact`]).
 ///
 /// # Performance
 ///
 /// Copying this value is `O(1)`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CheckpointPolicy {
-    /// Never auto-checkpoint; the caller drives [`Database::checkpoint`].
+    /// Never auto-checkpoint; the caller folds explicitly via [`Db::compact`].
     Manual,
     /// Auto-checkpoint after a dirty commit once the delta-log exceeds `factor`
     /// times the live base size (a small floor guards a tiny/empty base so the
@@ -131,6 +139,21 @@ impl Default for CheckpointPolicy {
     }
 }
 
+/// The durable result of a [`Db::write`]: whether a frame landed, and at which
+/// commit sequence.
+///
+/// # Performance
+///
+/// Copying this value is `O(1)`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum CommitOutcome {
+    /// The transaction made no changes; no WAL frame was appended.
+    Empty,
+    /// A durable frame landed at this commit sequence.
+    Committed(CommitSeq),
+}
+
 /// Builds the base filename for generation `generation`.
 ///
 /// # Performance
@@ -155,7 +178,7 @@ fn delta_file(generation: u64) -> String {
 ///
 /// Moving a handle is `O(1)`: it moves the current `Arc<Snapshot>` and the open
 /// delta-log handle.
-pub struct Database {
+pub struct Db {
     /// Root database directory.
     root: PathBuf,
     /// The current visible snapshot (base generation + published overlay),
@@ -171,7 +194,7 @@ pub struct Database {
     checkpoint_policy: CheckpointPolicy,
 }
 
-impl Database {
+impl Db {
     /// Creates a new empty OXGDB database at `path`.
     ///
     /// The create order is base-0 then empty delta-0.log then the writer lock
@@ -235,7 +258,7 @@ impl Database {
         let generation = superblock.base_generation.get();
 
         let base = Arc::new(Base::open(&root.join(base_file(generation)), false)?);
-        let base_records = Arc::new(crate::overlay::BaseRecords::from_view(base.get())?);
+        let base_records = Arc::new(crate::overlay::BaseRecords::open(&base)?);
         let base_header = *base.get().header();
         let base_catalog = base.get().catalog().clone();
         let base_next = NextIds::from_header(&base_header);
@@ -268,12 +291,16 @@ impl Database {
         write.set_next_ids(recovered_next);
         let overlay = Arc::new(write.freeze());
 
-        let snapshot = Arc::new(Snapshot::new(
+        // Reuse the records already decoded for replay instead of decoding the base
+        // a second time inside `Snapshot::new`: the pinned base is byte-identical, so
+        // the records (and their derived index) match. Halves open's base-decode cost.
+        let snapshot = Arc::new(Snapshot::with_shared_base_records(
             CheckpointGeneration::new(generation),
             CommitSeq::new(last_commit_seq),
             base,
             overlay,
-        )?);
+            base_records,
+        ));
 
         Ok(Self {
             root,
@@ -347,7 +374,7 @@ impl Database {
     ///
     /// This is the checkpoint primitive, exposed here so the existing `compact`
     /// API keeps its "rewrite the store compactly" contract. Auto-triggering is
-    /// configured separately via [`Database::set_checkpoint_policy`].
+    /// configured separately via [`Db::set_checkpoint_policy`].
     ///
     /// # Errors
     ///
@@ -380,7 +407,7 @@ impl Database {
     /// # Performance
     ///
     /// This method is `O(visible state bytes)`.
-    pub fn checkpoint(&mut self) -> Result<(), DbError> {
+    pub(crate) fn checkpoint(&mut self) -> Result<(), DbError> {
         self.checkpoint_inner(
             #[cfg(test)]
             CheckpointStop::Complete,
@@ -495,9 +522,9 @@ impl Database {
     /// This method is `O(visible state)` for the merged counts plus two `stat`
     /// syscalls for the file sizes.
     #[must_use]
-    pub fn status(&self) -> DatabaseStatus {
+    pub fn stats(&self) -> Stats {
         let view = self.current.view();
-        DatabaseStatus {
+        Stats {
             visible_commit_seq: self.current.lsn(),
             last_transaction_id: self.last_transaction_id,
             live_generation: CheckpointGeneration::new(self.base_generation),
@@ -527,8 +554,8 @@ impl Database {
     /// This method is `O(1)`: the reader clones the current `Arc<Snapshot>` and
     /// observes a fixed state even across later commits and checkpoints.
     #[must_use]
-    pub fn begin_read(&self) -> ReadTransaction {
-        ReadTransaction {
+    pub fn reader(&self) -> Reader {
+        Reader {
             snapshot: Arc::clone(&self.current),
         }
     }
@@ -545,7 +572,7 @@ impl Database {
     ///
     /// This method is `O(1)`: the writer layers a fresh empty write overlay over
     /// the current snapshot.
-    pub fn begin_write(&mut self) -> Result<WriteTransaction<'_>, DbError> {
+    pub(crate) fn begin_write(&mut self) -> Result<Writer<'_>, DbError> {
         let lock = WriterLock::acquire(&self.root)?;
         let transaction_id = self
             .last_transaction_id
@@ -560,13 +587,135 @@ impl Database {
         // writer reads every committed record; the parent overlay is never
         // mutated (the seed clones its maps).
         let delta = WriteOverlay::from_overlay(parent.overlay());
-        Ok(WriteTransaction {
+        Ok(Writer {
             database: self,
             parent,
             delta,
             transaction_id,
             lock,
         })
+    }
+
+    /// Runs `f` against a read transaction pinned to the current snapshot. The
+    /// primary read entry point.
+    ///
+    /// # Errors
+    ///
+    /// Propagates whatever error `f` returns.
+    ///
+    /// # Performance
+    ///
+    /// Entering is `O(1)` (an `Arc` clone); the total cost is `f`'s cost.
+    pub fn read<R>(&self, f: impl FnOnce(&Reader) -> Result<R, DbError>) -> Result<R, DbError> {
+        f(&self.reader())
+    }
+
+    /// Runs `f` against the single write transaction, committing on `Ok` and
+    /// rolling back on `Err` — control flow IS the commit protocol. Returns `f`'s
+    /// value with the [`CommitOutcome`] (whether a durable frame landed). The
+    /// primary write entry point.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError::WriterLockHeld`] when another writer holds the lock,
+    /// `f`'s error (after rolling back the staged delta), or a commit error.
+    ///
+    /// # Performance
+    ///
+    /// Begin is `O(1)`; commit is `O(change)`. A triggered auto-fold adds
+    /// `O(visible bytes)`.
+    pub fn write<R>(
+        &mut self,
+        f: impl FnOnce(&mut Writer<'_>) -> Result<R, DbError>,
+    ) -> Result<(R, CommitOutcome), DbError> {
+        let mut writer = self.begin_write()?;
+        // On `Err` the `?` drops `writer` here, releasing the lock and discarding
+        // the staged delta — no frame is appended (rollback).
+        let value = f(&mut writer)?;
+        let committed = !writer.delta.is_empty();
+        let lsn = writer.commit()?;
+        let outcome = if committed {
+            CommitOutcome::Committed(lsn)
+        } else {
+            CommitOutcome::Empty
+        };
+        Ok((value, outcome))
+    }
+
+    /// Resolves an already-applied [`Schema`] against the live catalog WITHOUT
+    /// writing, returning the [`Bound`] handle bag (for a store already
+    /// bootstrapped with this schema).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError::UnknownName`] when a declared item is absent.
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(declared items × log catalog)`.
+    pub fn bind(&self, schema: &Schema) -> Result<Bound, DbError> {
+        let view = self.current.view();
+        let catalog = view.catalog();
+        let mut bound = Bound::default();
+        for name in &schema.roles {
+            let id = catalog.role_id(name).ok_or_else(|| DbError::UnknownName {
+                kind: "role",
+                name: name.clone(),
+            })?;
+            bound.roles.insert(name.clone(), id);
+        }
+        for name in &schema.labels {
+            let id = catalog.label_id(name).ok_or_else(|| DbError::UnknownName {
+                kind: "label",
+                name: name.clone(),
+            })?;
+            bound.labels.insert(name.clone(), id);
+        }
+        for name in &schema.relation_types {
+            let id = catalog
+                .relation_type_id(name)
+                .ok_or_else(|| DbError::UnknownName {
+                    kind: "relation type",
+                    name: name.clone(),
+                })?;
+            bound.relation_types.insert(name.clone(), id);
+        }
+        for (name, _family, value_type) in &schema.keys {
+            let id = catalog
+                .property_key_id(name)
+                .ok_or_else(|| DbError::UnknownName {
+                    kind: "property key",
+                    name: name.clone(),
+                })?;
+            bound.keys.insert(name.clone(), (id, *value_type));
+        }
+        for (name, key_name) in &schema.equality_indexes {
+            let (_key_id, value_type) =
+                *bound
+                    .keys
+                    .get(key_name)
+                    .ok_or_else(|| DbError::UnknownName {
+                        kind: "property key",
+                        name: key_name.clone(),
+                    })?;
+            let id = catalog.index_id(name).ok_or_else(|| DbError::UnknownName {
+                kind: "index",
+                name: name.clone(),
+            })?;
+            bound
+                .equality_indexes
+                .insert(name.clone(), (id, value_type));
+        }
+        for spec in &schema.graph_projections {
+            let id = catalog
+                .projection_id(&spec.name)
+                .ok_or_else(|| DbError::UnknownName {
+                    kind: "projection",
+                    name: spec.name.clone(),
+                })?;
+            bound.projections.insert(spec.name.clone(), id);
+        }
+        Ok(bound)
     }
 
     /// Prepares a query against the current catalog.
@@ -578,8 +727,8 @@ impl Database {
     /// # Performance
     ///
     /// This method is `O(query length + catalog lookup cost)`.
-    pub fn prepare(&self, language: QueryLanguage, query: &str) -> Result<PreparedQuery, DbError> {
-        PreparedQuery::prepare(language, query, &self.current.view())
+    pub fn prepare(&self, query: &str) -> Result<PreparedQuery, DbError> {
+        PreparedQuery::prepare(query, &self.current.view())
     }
 }
 
@@ -594,7 +743,7 @@ fn file_len(path: &Path) -> u64 {
     std::fs::metadata(path).map_or(0, |meta| meta.len())
 }
 
-/// Test-only crash-injection point for [`Database::checkpoint_inner`]: stops the
+/// Test-only crash-injection point for [`Db::checkpoint_inner`]: stops the
 /// fold right after a chosen fsync so the crash-matrix test can reopen and assert
 /// the recovered state at each crash window.
 ///
@@ -743,7 +892,7 @@ fn write_superblock(
 ///
 /// Copying and comparing status is `O(1)`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct DatabaseStatus {
+pub struct Stats {
     /// Last visible commit sequence.
     pub visible_commit_seq: CommitSeq,
     /// Last writer transaction ID burned by this handle.
@@ -825,7 +974,7 @@ pub struct ReadPin {
 /// Read transaction over a pinned snapshot.
 ///
 /// A read transaction owns its own `Arc<Snapshot>` and never borrows the
-/// [`Database`], so it stays valid across a later `begin_write`/`checkpoint` on
+/// [`Db`], so it stays valid across a later `begin_write`/`checkpoint` on
 /// the same handle (it cloned the snapshot before the write borrowed `&mut`). It
 /// is [`Send`] + [`Sync`] (asserted below).
 ///
@@ -833,18 +982,38 @@ pub struct ReadPin {
 ///
 /// Creating and cloning a read transaction is `O(1)`: it shares the pinned
 /// snapshot through an `Arc`, not by copying.
-pub struct ReadTransaction {
+pub struct Reader {
     /// The pinned snapshot this reader observes.
     snapshot: Arc<Snapshot>,
 }
 
-/// `ReadTransaction` MUST be `Send + Sync`: it pins only an `Arc<Snapshot>`,
+/// Returns whether a [`Reader::neighbors`] walk should follow the edge from the
+/// incidence `from` (the queried element's incidence) to the incidence `to`
+/// (a candidate neighbor's incidence) under `direction`.
+///
+/// Endpoint roles are encoded by incidence-creation order: the source endpoint
+/// has the lower incidence id. `Outgoing` follows source→target (the queried
+/// element is the source, so `from < to`), `Incoming` follows target→source, and
+/// `Both` follows either side.
+///
+/// # Performance
+///
+/// This function is `O(1)`.
+const fn follow_direction(direction: Direction, from: IncidenceId, to: IncidenceId) -> bool {
+    match direction {
+        Direction::Outgoing => from.get() < to.get(),
+        Direction::Incoming => from.get() > to.get(),
+        Direction::Both => true,
+    }
+}
+
+/// `Reader` MUST be `Send + Sync`: it pins only an `Arc<Snapshot>`,
 /// which holds `Arc`-shared `Send + Sync` data (no `Rc`/`RefCell` reachable).
 const fn assert_send_sync<T: Send + Sync>() {}
-const _: () = assert_send_sync::<ReadTransaction>();
+const _: () = assert_send_sync::<Reader>();
 const _: () = assert_send_sync::<Arc<Snapshot>>();
 
-impl ReadTransaction {
+impl Reader {
     /// Returns this transaction's reader pin.
     ///
     /// # Performance
@@ -956,36 +1125,46 @@ impl ReadTransaction {
         self.snapshot.view().contains_incidence(id)
     }
 
-    /// Returns an element record, borrowed from the base for a base-only id and
-    /// owned for an overlay-supplied id.
+    /// Returns an owned element view — id, labels, and all properties read in one
+    /// call.
     ///
     /// # Performance
     ///
-    /// This method is `O(log change + log n)`.
+    /// This method is `O(log n + label count + property count)`.
     #[must_use]
-    pub fn element(&self, id: ElementId) -> Option<Cow<'_, ElementRecord>> {
-        self.snapshot.view().element_ref(id)
+    pub fn element(&self, id: ElementId) -> Option<Element> {
+        let view = self.snapshot.view();
+        let record = view.element_ref(id)?;
+        let labels = record.labels.iter().copied().collect();
+        let properties =
+            Properties::from_pairs(view.subject_properties(PropertySubject::Element(id)));
+        Some(Element::new(id, labels, properties))
     }
 
-    /// Returns a relation record (see [`Self::element`] for the borrow contract).
+    /// Returns an owned relation view — id, type, labels, and all properties read
+    /// in one call.
     ///
     /// # Performance
     ///
-    /// This method is `O(log change + log n)`.
+    /// This method is `O(log n + label count + property count)`.
     #[must_use]
-    pub fn relation(&self, id: RelationId) -> Option<Cow<'_, RelationRecord>> {
-        self.snapshot.view().relation_ref(id)
+    pub fn relation(&self, id: RelationId) -> Option<Relation> {
+        let view = self.snapshot.view();
+        let record = view.relation_ref(id)?;
+        let labels = record.labels.iter().copied().collect();
+        let properties =
+            Properties::from_pairs(view.subject_properties(PropertySubject::Relation(id)));
+        Some(Relation::new(id, record.relation_type, labels, properties))
     }
 
-    /// Returns an incidence record (see [`Self::element`] for the borrow
-    /// contract).
+    /// Returns an owned incidence record.
     ///
     /// # Performance
     ///
     /// This method is `O(log change + log n)`.
     #[must_use]
-    pub fn incidence(&self, id: IncidenceId) -> Option<Cow<'_, IncidenceRecord>> {
-        self.snapshot.view().incidence_ref(id)
+    pub fn incidence(&self, id: IncidenceId) -> Option<IncidenceRecord> {
+        self.snapshot.view().incidence_ref(id).map(Cow::into_owned)
     }
 
     /// Returns every visible incidence attached to an element, in ascending
@@ -1003,19 +1182,128 @@ impl ReadTransaction {
         self.snapshot.view().element_incidences(id)
     }
 
-    /// Returns one property value (see [`Self::element`] for the borrow
-    /// contract).
+    /// Returns a binary relation's two endpoint elements, ordered by ascending
+    /// incidence id.
+    ///
+    /// Reads the relation's incidences from the reverse-adjacency index and
+    /// returns the elements carried by its first two incidences in id order. A
+    /// relation with fewer than two visible incidences returns `None`. This
+    /// reports endpoints structurally, without consulting any projection's
+    /// source/target roles — use [`Self::neighbors`] when role direction matters.
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(degree)` over the relation's incidences.
+    #[must_use]
+    pub fn endpoints(&self, relation: RelationId) -> Option<(ElementId, ElementId)> {
+        let incidences = self.snapshot.view().relation_incidences(relation);
+        match incidences.as_slice() {
+            [first, second, ..] => Some((first.element, second.element)),
+            _too_few => None,
+        }
+    }
+
+    /// Returns the elements reachable from `element` along relations of
+    /// `relation_type`, in ascending element-id order.
+    ///
+    /// Direction selects the role `element` must play on each relation. Endpoint
+    /// roles are encoded by incidence-creation order: a binary relation's source
+    /// is its lower incidence id and its target the higher (see
+    /// [`Self::endpoints`]). `Outgoing` requires `element` to be the source (and
+    /// yields the target), `Incoming` requires it to be the target (and yields
+    /// the source), and `Both` yields the opposite endpoint either way. Resolved
+    /// over the reverse-adjacency index — each incidence of `element` whose
+    /// relation has the requested type contributes that relation's other
+    /// endpoint — so this works for any binary relation without a materialized
+    /// projection.
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(degree of element + sum of touched relation degrees)`.
+    #[must_use]
+    pub fn neighbors(
+        &self,
+        element: ElementId,
+        relation_type: RelationTypeId,
+        direction: Direction,
+    ) -> Vec<ElementId> {
+        let view = self.snapshot.view();
+        let mut neighbors = BTreeSet::new();
+        for incidence in view.element_incidences(element) {
+            let matches_type = view
+                .relation_ref(incidence.relation)
+                .is_some_and(|record| record.relation_type == Some(relation_type));
+            if !matches_type {
+                continue;
+            }
+            // The incidence id encodes the endpoint role: the source endpoint is
+            // created first (lower incidence id), the target second. Compare
+            // `element`'s incidence id against each other endpoint's to decide
+            // which side `element` is on, then follow per the requested direction.
+            neighbors.extend(
+                view.relation_incidences(incidence.relation)
+                    .into_iter()
+                    .filter(|other| other.element != element)
+                    .filter(|other| follow_direction(direction, incidence.id, other.id))
+                    .map(|other| other.element),
+            );
+        }
+        neighbors.into_iter().collect()
+    }
+
+    /// Returns one owned property value.
     ///
     /// # Performance
     ///
     /// This method is `O(log subjects + log keys)`.
     #[must_use]
-    pub fn property(
+    pub fn property(&self, subject: PropertySubject, key: PropertyKeyId) -> Option<PropertyValue> {
+        self.snapshot
+            .view()
+            .property_ref(subject, key)
+            .map(Cow::into_owned)
+    }
+
+    /// Returns the owned element whose value in `index` equals `value`, or `None`
+    /// when no element matches.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError`] when the index is unknown or is not an equality index.
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(log n + label count + property count)`.
+    pub fn element_by_key<T: ValueType>(
         &self,
-        subject: PropertySubject,
-        key: PropertyKeyId,
-    ) -> Option<Cow<'_, PropertyValue>> {
-        self.snapshot.view().property_ref(subject, key)
+        index: EqualityIndex<T>,
+        value: impl Assignable<T>,
+    ) -> Result<Option<Element>, DbError> {
+        let value = value.into_value()?;
+        let matched = self
+            .lookup(index.id(), Match::Equal(&value))?
+            .into_iter()
+            .find_map(|subject| match subject {
+                PropertySubject::Element(id) => Some(id),
+                PropertySubject::Relation(_) | PropertySubject::Incidence(_) => None,
+            });
+        Ok(matched.and_then(|id| self.element(id)))
+    }
+
+    /// Returns the number of subjects carried by a membership index (a label or
+    /// relation-type index).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError`] when the index is unknown or does not support
+    /// membership enumeration.
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(indexed family size)`.
+    pub fn count(&self, index: IndexId) -> Result<usize, DbError> {
+        self.lookup(index, Match::All)
+            .map(|subjects| subjects.len())
     }
 
     /// Looks up subjects with a property value.
@@ -1066,10 +1354,10 @@ impl ReadTransaction {
     /// # Performance
     ///
     /// This method is `O(indexed family size)`.
-    pub fn lookup_index(
+    pub fn lookup(
         &self,
         index: IndexId,
-        lookup: IndexLookup<'_>,
+        lookup: Match<'_>,
     ) -> Result<Vec<PropertySubject>, DbError> {
         let view = self.snapshot.view();
         let entry = view
@@ -1077,7 +1365,7 @@ impl ReadTransaction {
             .index(index)
             .ok_or(DbError::UnknownIndex { id: index })?;
         match (&entry.definition, lookup) {
-            (IndexDefinition::Label { label }, IndexLookup::All) => Ok(view
+            (IndexDefinition::Label { label }, Match::All) => Ok(view
                 .elements_with_label(*label)
                 .into_iter()
                 .map(PropertySubject::Element)
@@ -1085,7 +1373,7 @@ impl ReadTransaction {
             (IndexDefinition::Label { .. }, _lookup) => {
                 Err(DbError::unsupported("label index expects all lookup"))
             }
-            (IndexDefinition::RelationType { relation_type }, IndexLookup::All) => Ok(view
+            (IndexDefinition::RelationType { relation_type }, Match::All) => Ok(view
                 .relations_with_type(*relation_type)
                 .into_iter()
                 .map(PropertySubject::Relation)
@@ -1093,25 +1381,25 @@ impl ReadTransaction {
             (IndexDefinition::RelationType { .. }, _lookup) => Err(DbError::unsupported(
                 "relation type index expects all lookup",
             )),
-            (IndexDefinition::PropertyEquality { key }, IndexLookup::Equal(value)) => {
+            (IndexDefinition::PropertyEquality { key }, Match::Equal(value)) => {
                 view.typed_property_equal(*key, value)
             }
             (IndexDefinition::PropertyEquality { .. }, _lookup) => Err(DbError::unsupported(
                 "property equality index expects equality lookup",
             )),
-            (IndexDefinition::PropertyRange { key }, IndexLookup::Range { min, max }) => {
+            (IndexDefinition::PropertyRange { key }, Match::Range { min, max }) => {
                 view.typed_property_range(*key, min, max)
             }
             (IndexDefinition::PropertyRange { .. }, _lookup) => Err(DbError::unsupported(
                 "property range index expects range lookup",
             )),
-            (IndexDefinition::CompositeEquality { keys }, IndexLookup::CompositeEqual(values)) => {
+            (IndexDefinition::CompositeEquality { keys }, Match::Composite(values)) => {
                 view.typed_property_composite_equal(keys, values)
             }
             (IndexDefinition::CompositeEquality { .. }, _lookup) => Err(DbError::unsupported(
                 "composite equality index expects composite equality lookup",
             )),
-            (IndexDefinition::Projection { projection }, IndexLookup::All) => {
+            (IndexDefinition::Projection { projection }, Match::All) => {
                 self.projection_index_subjects(*projection)
             }
             (IndexDefinition::Projection { .. }, _lookup) => {
@@ -1166,10 +1454,13 @@ impl ReadTransaction {
         self.graph_projection(id)
     }
 
-    /// Traverses a cataloged graph projection from canonical seed elements.
+    /// Walks a cataloged graph projection from canonical seed elements,
+    /// returning the discovered nodes AND the projection edges among them.
     ///
-    /// Rows are unique canonical elements in BFS first-discovery order. Depth is
-    /// the shortest discovered hop count from any seed.
+    /// Nodes are unique canonical elements in BFS first-discovery order; depth is
+    /// the shortest discovered hop count from any seed. Edges connect two
+    /// discovered nodes, ordered deterministically and unique by relation, so the
+    /// [`Subgraph`] never references a node it omitted.
     ///
     /// # Errors
     ///
@@ -1179,17 +1470,133 @@ impl ReadTransaction {
     /// # Performance
     ///
     /// This method is `O(relation count * incidence count + visited edges)`.
-    pub fn traverse_graph(
+    pub fn walk(
         &self,
         projection: ProjectionId,
         seeds: &[ElementId],
-        options: TraversalOptions,
-    ) -> Result<TraversalResult, DbError> {
-        if seeds.is_empty() || options.limit == 0 {
-            return Ok(TraversalResult::new(Vec::new()));
+        walk: Walk,
+    ) -> Result<Subgraph, DbError> {
+        if seeds.is_empty() || walk.limit == 0 {
+            return Ok(Subgraph::default());
         }
         let graph = self.graph_projection(projection)?;
-        traversal::traverse_graph_projection(&graph, seeds, options)
+        traversal::walk_graph_projection(&graph, seeds, walk)
+    }
+
+    /// Ranks a cataloged graph projection by personalized `PageRank`, returning
+    /// every projection element paired with its rank, ordered highest first.
+    ///
+    /// `seeds` are the restart (teleport) set: rank mass returns to them on each
+    /// damping step, biasing the stationary distribution toward elements
+    /// reachable from the seeds (random walk with restart). The seed weights are
+    /// normalized internally, so passing the seed elements is sufficient. With no
+    /// seeds this is the uniform-teleport `PageRank` over the projection.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError`] when the projection is unknown, is not a graph, cannot
+    /// be materialized, or `PageRank` rejects the configuration (the
+    /// [`PageRankConfig`] was invalid or the power iteration did not converge).
+    /// Seeds absent from the projection are ignored rather than erroring; with no
+    /// resolvable seed this is the uniform-teleport rank.
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(relation count * incidence count + iterations *
+    /// (visible elements + visible edges) + visible elements * log(visible
+    /// elements))` — the trailing term is the final rank sort.
+    pub fn personalized_pagerank(
+        &self,
+        projection: ProjectionId,
+        seeds: &[ElementId],
+        config: PageRankConfig<f64>,
+    ) -> Result<Vec<(ElementId, f64)>, DbError> {
+        let graph = self.graph_projection(projection)?;
+        let bound = graph.element_bound();
+        let element_count = u32::try_from(bound).map_err(|_| {
+            DbError::traversal("projection exceeds the personalized pagerank index bound")
+        })?;
+
+        let mut personalization = vec![0.0_f64; bound];
+        let mut seeded = false;
+        for &seed in seeds {
+            if let Some(local) = graph.local_element_id(seed) {
+                personalization[graph.element_index(local)] = 1.0;
+                seeded = true;
+            }
+        }
+
+        let mut ranks = vec![0.0_f64; bound];
+        let mut workspace = PageRankWorkspace::for_graph(&graph);
+        pagerank_graph_with_workspace(
+            &graph,
+            &Uniform,
+            (0..element_count).map(ProjectionElementId::new),
+            config,
+            seeded.then_some(personalization.as_slice()),
+            &mut ranks,
+            &mut workspace,
+        )
+        .map_err(|error| {
+            DbError::traversal(match error {
+                PageRankError::InvalidDamping { .. }
+                | PageRankError::InvalidTolerance { .. }
+                | PageRankError::InvalidMaxIterations => "invalid pagerank configuration",
+                PageRankError::NonConverged { .. } => "personalized pagerank did not converge",
+                _ => "personalized pagerank failed",
+            })
+        })?;
+
+        let mut ranked: Vec<(ElementId, f64)> = (0..element_count)
+            .map(|index| {
+                let local = ProjectionElementId::new(index);
+                (
+                    graph.canonical_element_id(local),
+                    ranks[graph.element_index(local)],
+                )
+            })
+            .collect();
+        ranked.sort_by(|left, right| right.1.total_cmp(&left.1));
+        Ok(ranked)
+    }
+
+    /// Returns the longest chain of canonical elements along the projection's
+    /// outgoing edges within the subgraph induced by `elements`.
+    ///
+    /// Only edges whose endpoints are both in `elements` participate. The path
+    /// lists each element once from start to end; its length in edges is
+    /// `path.len() - 1`. An empty `elements` slice yields an empty path.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError`] when the projection is unknown, is not a graph, cannot
+    /// be materialized, or the induced subgraph contains a cycle. Elements absent
+    /// from the projection are ignored, so the chain is computed over the present
+    /// subset.
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(relation count * incidence count + visible elements +
+    /// visible edges)`.
+    pub fn longest_path(
+        &self,
+        projection: ProjectionId,
+        elements: &[ElementId],
+    ) -> Result<Vec<ElementId>, DbError> {
+        if elements.is_empty() {
+            return Ok(Vec::new());
+        }
+        let graph = self.graph_projection(projection)?;
+        let locals = elements
+            .iter()
+            .filter_map(|&element| graph.local_element_id(element))
+            .collect::<Vec<ProjectionElementId>>();
+        let path = longest_path_dag(&graph, &locals)
+            .map_err(|_| DbError::traversal("longest path found a cycle"))?;
+        Ok(path
+            .into_iter()
+            .map(|local| graph.canonical_element_id(local))
+            .collect())
     }
 
     /// Materializes a hypergraph projection.
@@ -1228,7 +1635,7 @@ impl ReadTransaction {
     /// # Performance
     ///
     /// This method is `O(plan output + projection build cost when used)`.
-    pub fn execute(&self, query: &PreparedQuery) -> Result<QueryResult, DbError> {
+    pub fn run(&self, query: &PreparedQuery) -> Result<QueryResult, DbError> {
         query.execute(&self.snapshot.view())
     }
 
@@ -1282,9 +1689,9 @@ impl ReadTransaction {
 /// # Performance
 ///
 /// Creating and moving a writer is `O(1)`; each mutation is `O(log change)`.
-pub struct WriteTransaction<'db> {
-    /// Database receiving the commit.
-    database: &'db mut Database,
+pub struct Writer<'db> {
+    /// Db receiving the commit.
+    database: &'db mut Db,
     /// Parent snapshot the writer layers over (its base + frozen overlay).
     parent: Arc<Snapshot>,
     /// Private mutable delta this writer accumulates.
@@ -1299,7 +1706,7 @@ pub struct WriteTransaction<'db> {
     lock: WriterLock,
 }
 
-impl WriteTransaction<'_> {
+impl Writer<'_> {
     /// Registers a structural incidence role.
     ///
     /// # Errors
@@ -1398,6 +1805,141 @@ impl WriteTransaction<'_> {
         self.delta.register_index(name.into(), definition)
     }
 
+    /// Applies a declarative [`Schema`] idempotently (register-or-get every
+    /// declared item), returning the resolved [`Bound`] handle bag. Re-applying
+    /// the same schema reuses existing ids; a name that already exists with a
+    /// conflicting shape is a [`DbError::SchemaConflict`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError`] on a shape conflict, an undeclared referenced name (an
+    /// index's key, a projection's role/type), or id-allocation failure.
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(declared items × log catalog)`.
+    pub fn apply_schema(&mut self, schema: &Schema) -> Result<Bound, DbError> {
+        let mut bound = Bound::default();
+        for name in &schema.roles {
+            let id = match self.merged().catalog().role_id(name) {
+                Some(id) => id,
+                None => self.register_role(name.clone())?,
+            };
+            bound.roles.insert(name.clone(), id);
+        }
+        for name in &schema.labels {
+            let id = match self.merged().catalog().label_id(name) {
+                Some(id) => id,
+                None => self.register_label(name.clone())?,
+            };
+            bound.labels.insert(name.clone(), id);
+        }
+        for name in &schema.relation_types {
+            let id = match self.merged().catalog().relation_type_id(name) {
+                Some(id) => id,
+                None => self.register_relation_type(name.clone())?,
+            };
+            bound.relation_types.insert(name.clone(), id);
+        }
+        for (name, family, value_type) in &schema.keys {
+            let id = self.register_key_or_get(name, *family, *value_type)?;
+            bound.keys.insert(name.clone(), (id, *value_type));
+        }
+        for (name, key_name) in &schema.equality_indexes {
+            let (key_id, value_type) =
+                *bound
+                    .keys
+                    .get(key_name)
+                    .ok_or_else(|| DbError::UnknownName {
+                        kind: "property key",
+                        name: key_name.clone(),
+                    })?;
+            let id = match self.merged().catalog().index_id(name) {
+                Some(id) => id,
+                None => self.define_index(
+                    name.clone(),
+                    IndexDefinition::PropertyEquality { key: key_id },
+                )?,
+            };
+            bound
+                .equality_indexes
+                .insert(name.clone(), (id, value_type));
+        }
+        for spec in &schema.graph_projections {
+            let id = match self.merged().catalog().projection_id(&spec.name) {
+                Some(id) => id,
+                None => self.define_graph_projection(spec, &bound)?,
+            };
+            bound.projections.insert(spec.name.clone(), id);
+        }
+        Ok(bound)
+    }
+
+    /// Registers a property key, or returns the existing id when the name is
+    /// already present with a matching family and value type.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError::SchemaConflict`] when the name exists with a different
+    /// family or value type.
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(log catalog)`.
+    fn register_key_or_get(
+        &mut self,
+        name: &str,
+        family: PropertyFamily,
+        value_type: PropertyType,
+    ) -> Result<PropertyKeyId, DbError> {
+        let Some(existing) = self.merged().catalog().property_key_id(name) else {
+            return self.register_property_key(name.to_owned(), family, value_type);
+        };
+        let matches = self
+            .merged()
+            .catalog()
+            .property_key(existing)
+            .is_some_and(|def| def.family == family && def.value_type == value_type);
+        if matches {
+            Ok(existing)
+        } else {
+            Err(DbError::SchemaConflict {
+                name: name.to_owned(),
+                reason: "property key family/value type differs from the existing catalog entry",
+            })
+        }
+    }
+
+    /// Defines a graph projection from a spec, resolving its relation-type and
+    /// role names through `bound`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError::UnknownName`] when a referenced role/type is unbound, or
+    /// a definition error.
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(relation-type count × log catalog)`.
+    fn define_graph_projection(
+        &mut self,
+        spec: &GraphProjectionSpec,
+        bound: &Bound,
+    ) -> Result<ProjectionId, DbError> {
+        let mut relation_types = BTreeSet::new();
+        for name in &spec.relation_types {
+            relation_types.insert(bound.relation_type(name)?);
+        }
+        let source_role = bound.role(&spec.source_role)?;
+        let target_role = bound.role(&spec.target_role)?;
+        self.define_projection(ProjectionDefinition::Graph(GraphProjectionDefinition {
+            name: spec.name.clone(),
+            relation_types,
+            source_role,
+            target_role,
+        }))
+    }
+
     /// Creates a canonical element.
     ///
     /// # Errors
@@ -1454,18 +1996,20 @@ impl WriteTransaction<'_> {
     ///
     /// # Performance
     ///
-    /// This method is `O(incidence count)`.
-    pub fn tombstone_element(&mut self, id: ElementId) -> Result<(), DbError> {
+    /// This method is `O(log n + degree)` via the reverse-adjacency index.
+    pub(crate) fn tombstone_element(&mut self, id: ElementId) -> Result<(), DbError> {
         self.require_element(id)?;
-        let base = self.parent.base_records();
-        self.delta.tombstone_element(base, id);
-        // Cascade: every incidence referencing the element is tombstoned too.
+        // Cascade: every incidence on the element — resolved in O(log n + degree)
+        // through the reverse-adjacency index, not a full incidence scan — is
+        // tombstoned too.
         let incidences: Vec<IncidenceId> = self
             .merged()
-            .incidences()
-            .filter(|record| record.element == id)
+            .element_incidences(id)
+            .into_iter()
             .map(|record| record.id)
             .collect();
+        let base = self.parent.base_records();
+        self.delta.tombstone_element(base, id);
         for incidence in incidences {
             self.delta
                 .tombstone_incidence(self.parent.base_records(), incidence);
@@ -1481,17 +2025,19 @@ impl WriteTransaction<'_> {
     ///
     /// # Performance
     ///
-    /// This method is `O(incidence count)`.
-    pub fn tombstone_relation(&mut self, id: RelationId) -> Result<(), DbError> {
+    /// This method is `O(log n + degree)` via the reverse-adjacency index.
+    pub(crate) fn tombstone_relation(&mut self, id: RelationId) -> Result<(), DbError> {
         self.require_relation(id)?;
-        let base = self.parent.base_records();
-        self.delta.tombstone_relation(base, id);
+        // Cascade: every incidence in the relation — resolved in O(log n + degree)
+        // through the reverse-adjacency index, not a full incidence scan.
         let incidences: Vec<IncidenceId> = self
             .merged()
-            .incidences()
-            .filter(|record| record.relation == id)
+            .relation_incidences(id)
+            .into_iter()
             .map(|record| record.id)
             .collect();
+        let base = self.parent.base_records();
+        self.delta.tombstone_relation(base, id);
         for incidence in incidences {
             self.delta
                 .tombstone_incidence(self.parent.base_records(), incidence);
@@ -1508,7 +2054,7 @@ impl WriteTransaction<'_> {
     /// # Performance
     ///
     /// This method is `O(log incidence change)`.
-    pub fn tombstone_incidence(&mut self, id: IncidenceId) -> Result<(), DbError> {
+    pub(crate) fn tombstone_incidence(&mut self, id: IncidenceId) -> Result<(), DbError> {
         self.require_incidence(id)?;
         self.delta
             .tombstone_incidence(self.parent.base_records(), id);
@@ -1524,7 +2070,11 @@ impl WriteTransaction<'_> {
     /// # Performance
     ///
     /// This method is `O(log element change + log label count)`.
-    pub fn add_element_label(&mut self, element: ElementId, label: LabelId) -> Result<(), DbError> {
+    pub(crate) fn add_element_label(
+        &mut self,
+        element: ElementId,
+        label: LabelId,
+    ) -> Result<(), DbError> {
         self.require_element(element)?;
         self.require_label(label)?;
         self.delta
@@ -1541,7 +2091,7 @@ impl WriteTransaction<'_> {
     /// # Performance
     ///
     /// This method is `O(log relation change + log label count)`.
-    pub fn add_relation_label(
+    pub(crate) fn add_relation_label(
         &mut self,
         relation: RelationId,
         label: LabelId,
@@ -1584,7 +2134,7 @@ impl WriteTransaction<'_> {
     /// # Performance
     ///
     /// This method is `O(log subject change + log key count)`.
-    pub fn set_property(
+    pub(crate) fn set_property(
         &mut self,
         subject: PropertySubject,
         key: PropertyKeyId,
@@ -1626,7 +2176,7 @@ impl WriteTransaction<'_> {
     /// # Performance
     ///
     /// This method is `O(log subject change + log key count)`.
-    pub fn remove_property(
+    pub(crate) fn remove_property(
         &mut self,
         subject: PropertySubject,
         key: PropertyKeyId,
@@ -1638,6 +2188,228 @@ impl WriteTransaction<'_> {
         self.delta
             .remove_property(self.parent.base_records(), subject, key);
         Ok(())
+    }
+
+    /// Resolves the property key an equality index covers.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError::UnknownIndex`] when `index` is unknown, or an
+    /// unsupported-query error when it is not a property-equality index.
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(log index count)`.
+    fn equality_index_key(&self, index: IndexId) -> Result<PropertyKeyId, DbError> {
+        let view = self.merged();
+        let entry = view
+            .catalog()
+            .index(index)
+            .ok_or(DbError::UnknownIndex { id: index })?;
+        match &entry.definition {
+            IndexDefinition::PropertyEquality { key } => Ok(*key),
+            _other => Err(DbError::unsupported(
+                "reconcile requires a property-equality index",
+            )),
+        }
+    }
+
+    /// Inserts or updates the element whose value under `index` equals `value`,
+    /// returning its canonical id — reused when an element already carries that
+    /// identity value (id stable across reconcile), freshly minted (a never-reused
+    /// id, with the identity property set) otherwise.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError`] when `index` is not an equality index or the value
+    /// type mismatches the key schema.
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(log n + value length)` — a probe plus, on a miss, a mint.
+    pub fn upsert_element<T: ValueType>(
+        &mut self,
+        index: EqualityIndex<T>,
+        value: impl Assignable<T>,
+    ) -> Result<ElementId, DbError> {
+        let value = value.into_value()?;
+        let key = self.equality_index_key(index.id())?;
+        let existing = self
+            .merged()
+            .property_equal(key, &value)
+            .into_iter()
+            .find_map(|subject| match subject {
+                PropertySubject::Element(id) => Some(id),
+                PropertySubject::Relation(_) | PropertySubject::Incidence(_) => None,
+            });
+        if let Some(id) = existing {
+            return Ok(id);
+        }
+        let element = self.create_element()?;
+        self.set_property(PropertySubject::Element(element), key, value)?;
+        Ok(element)
+    }
+
+    /// Inserts or updates the relation whose value under `index` equals `value`,
+    /// returning its canonical id. On a miss it mints the relation, sets its type
+    /// and identity property, and creates one incidence per `(element, role)`
+    /// endpoint; on a hit the existing relation (with its endpoints) is reused
+    /// unchanged — the identity value encodes the endpoints, so they are immutable.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError`] when `index` is not an equality index, the value type
+    /// mismatches, or an endpoint element does not exist.
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(log n + endpoints)` — a probe plus, on a miss, a mint.
+    pub fn upsert_relation<T: ValueType>(
+        &mut self,
+        index: EqualityIndex<T>,
+        value: impl Assignable<T>,
+        relation_type: RelationTypeId,
+        endpoints: &[(ElementId, RoleId)],
+    ) -> Result<RelationId, DbError> {
+        let value = value.into_value()?;
+        let key = self.equality_index_key(index.id())?;
+        let existing = self
+            .merged()
+            .property_equal(key, &value)
+            .into_iter()
+            .find_map(|subject| match subject {
+                PropertySubject::Relation(id) => Some(id),
+                PropertySubject::Element(_) | PropertySubject::Incidence(_) => None,
+            });
+        if let Some(id) = existing {
+            return Ok(id);
+        }
+        let relation = self.create_relation()?;
+        self.set_relation_type(relation, relation_type)?;
+        self.set_property(PropertySubject::Relation(relation), key, value)?;
+        for (element, role) in endpoints {
+            self.create_incidence(relation, *element, *role)?;
+        }
+        Ok(relation)
+    }
+
+    /// Tombstones every subject carried by `index` whose identity value is NOT in
+    /// `keep`, cascading each subject's incidences in `O(degree)` via the
+    /// reverse-adjacency index. The prune half of a reconcile: after upserting
+    /// every desired subject, `retain` removes the vanished complement.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError`] when `index` is not an equality index or a `keep` value
+    /// type mismatches the key schema.
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(family size + removed × degree)`.
+    pub fn retain<T: ValueType, V: Assignable<T> + Copy>(
+        &mut self,
+        index: EqualityIndex<T>,
+        keep: &[V],
+    ) -> Result<(), DbError> {
+        let key = self.equality_index_key(index.id())?;
+        let mut keep_values: BTreeSet<PropertyValue> = BTreeSet::new();
+        for value in keep {
+            keep_values.insert((*value).into_value()?);
+        }
+        let stale: Vec<PropertySubject> = self
+            .merged()
+            .property_key_subjects(key)
+            .into_iter()
+            .filter(|(_subject, value)| !keep_values.contains(value))
+            .map(|(subject, _value)| subject)
+            .collect();
+        for subject in stale {
+            match subject {
+                PropertySubject::Element(id) => self.tombstone_element(id)?,
+                PropertySubject::Relation(id) => self.tombstone_relation(id)?,
+                PropertySubject::Incidence(id) => self.tombstone_incidence(id)?,
+            }
+        }
+        Ok(())
+    }
+
+    /// Sets a typed property on a subject; the value type is checked at compile
+    /// time against the key.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError`] when the subject is absent, the value is out of range,
+    /// or the value type mismatches the key schema.
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(log change + log keys)`.
+    pub fn set<T: ValueType>(
+        &mut self,
+        subject: impl Into<PropertySubject>,
+        key: Key<T>,
+        value: impl Assignable<T>,
+    ) -> Result<(), DbError> {
+        self.set_property(subject.into(), key.id(), value.into_value()?)
+    }
+
+    /// Removes a typed property from a subject.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError`] when the subject is absent or the key is unknown.
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(log change + log keys)`.
+    pub fn unset<T: ValueType>(
+        &mut self,
+        subject: impl Into<PropertySubject>,
+        key: Key<T>,
+    ) -> Result<(), DbError> {
+        self.remove_property(subject.into(), key.id())
+    }
+
+    /// Adds a label to an element or relation subject.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError`] when the subject is absent, the label is unknown, or
+    /// the subject is an incidence (incidences carry no labels).
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(log change + log labels)`.
+    pub fn add_label(
+        &mut self,
+        subject: impl Into<PropertySubject>,
+        label: LabelId,
+    ) -> Result<(), DbError> {
+        match subject.into() {
+            PropertySubject::Element(id) => self.add_element_label(id, label),
+            PropertySubject::Relation(id) => self.add_relation_label(id, label),
+            PropertySubject::Incidence(_) => {
+                Err(DbError::unsupported("incidences do not carry labels"))
+            }
+        }
+    }
+
+    /// Tombstones any subject by id, cascading a relation's or element's
+    /// incidences in `O(degree)` via the reverse-adjacency index.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError`] when the subject is not visible.
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(log change + degree)`.
+    pub fn tombstone(&mut self, subject: impl Into<PropertySubject>) -> Result<(), DbError> {
+        match subject.into() {
+            PropertySubject::Element(id) => self.tombstone_element(id),
+            PropertySubject::Relation(id) => self.tombstone_relation(id),
+            PropertySubject::Incidence(id) => self.tombstone_incidence(id),
+        }
     }
 
     /// Commits this write transaction durably.
@@ -1668,7 +2440,7 @@ impl WriteTransaction<'_> {
     /// folds, so the base is byte-identical within the generation), so it neither
     /// re-decodes the base nor rebuilds the index. A triggered fold adds
     /// `O(visible state bytes)` on top.
-    pub fn commit(self) -> Result<CommitSeq, DbError> {
+    pub(crate) fn commit(self) -> Result<CommitSeq, DbError> {
         if self.delta.is_empty() {
             // Non-dirty commit: no append, no publish, no durable id advance.
             return Ok(self.parent.lsn());
@@ -1711,19 +2483,12 @@ impl WriteTransaction<'_> {
         self.database.current = Arc::new(snapshot);
         self.database.last_transaction_id = self.transaction_id;
         // Release the writer lock before any auto-fold so the fold can re-acquire
-        // it (a partial move out of `self`, legal because `WriteTransaction` has
-        // no `Drop` impl; the remaining `&mut Database` borrow stays live).
+        // it (a partial move out of `self`, legal because `Writer` has
+        // no `Drop` impl; the remaining `&mut Db` borrow stays live).
         drop(self.lock);
         self.database.maybe_auto_checkpoint()?;
         Ok(lsn)
     }
-
-    /// Drops this write transaction without committing.
-    ///
-    /// # Performance
-    ///
-    /// This method is `O(1)` excluding staged-delta drop cost.
-    pub fn rollback(self) {}
 
     /// Returns the merged read view this writer sees (overlay over base).
     ///
@@ -1969,6 +2734,354 @@ mod tests {
         path
     }
 
+    /// Manual measurement harness (run with
+    /// `cargo test -p oxgraph-db --release -- --ignored open_latency_large_base
+    /// --nocapture`): builds a folded base at roughly the measured-problem scale
+    /// (>=100k elements, >=300k relations, properties), then times `Db::open`.
+    /// Open must be dominated by the record decode + page faults, NOT the
+    /// `O(base)` index rebuild the prior design paid — the index is borrowed.
+    /// Number of element/relation records the open-latency harness builds and the
+    /// number of timed open runs it averages.
+    #[cfg(not(debug_assertions))]
+    const OPEN_LATENCY_ELEMENTS: usize = 100_000;
+    /// Relations the open-latency harness builds (each with two incidences).
+    #[cfg(not(debug_assertions))]
+    const OPEN_LATENCY_RELATIONS: usize = 320_000;
+    /// Timed open runs the open-latency harness averages.
+    #[cfg(not(debug_assertions))]
+    const OPEN_LATENCY_RUNS: u32 = 5;
+
+    /// Populates `database` with `OPEN_LATENCY_ELEMENTS` ranked elements and
+    /// `OPEN_LATENCY_RELATIONS` weighted relations (two incidences each).
+    #[cfg(not(debug_assertions))]
+    fn populate_large_store(database: &mut Db) {
+        database.set_checkpoint_policy(CheckpointPolicy::Manual);
+        database
+            .write(|writer| {
+                let rank = writer.register_property_key(
+                    "rank",
+                    PropertyFamily::Element,
+                    PropertyType::Integer,
+                )?;
+                let weight = writer.register_property_key(
+                    "weight",
+                    PropertyFamily::Relation,
+                    PropertyType::Integer,
+                )?;
+                let role = writer.register_role("party")?;
+                let mut elements = Vec::with_capacity(OPEN_LATENCY_ELEMENTS);
+                for index in 0..OPEN_LATENCY_ELEMENTS {
+                    let element = writer.create_element()?;
+                    writer.set_property(
+                        PropertySubject::Element(element),
+                        rank,
+                        PropertyValue::Integer(i64::try_from(index % 997).unwrap_or(0)),
+                    )?;
+                    elements.push(element);
+                }
+                for index in 0..OPEN_LATENCY_RELATIONS {
+                    let relation = writer.create_relation()?;
+                    writer.set_property(
+                        PropertySubject::Relation(relation),
+                        weight,
+                        PropertyValue::Integer(i64::try_from(index % 503).unwrap_or(0)),
+                    )?;
+                    let source = elements[index % OPEN_LATENCY_ELEMENTS];
+                    let target = elements[(index + 1) % OPEN_LATENCY_ELEMENTS];
+                    writer.create_incidence(relation, source, role)?;
+                    writer.create_incidence(relation, target, role)?;
+                }
+                Ok(())
+            })
+            .expect("populate");
+        // Fold everything into the base so open pays the base term, not log replay.
+        database.compact().expect("compact");
+    }
+
+    /// Mean elapsed time of `OPEN_LATENCY_RUNS` full `Db::open` calls on `path`.
+    #[cfg(not(debug_assertions))]
+    fn mean_open_ms(path: &std::path::Path) -> f64 {
+        let mut total = std::time::Duration::ZERO;
+        for _run in 0..OPEN_LATENCY_RUNS {
+            let start = std::time::Instant::now();
+            let opened = Db::open(path).expect("timed open");
+            total += start.elapsed();
+            drop(opened);
+        }
+        total.as_secs_f64() * 1000.0 / f64::from(OPEN_LATENCY_RUNS)
+    }
+
+    /// Mean elapsed time of the prior design's open-time heavy work — record
+    /// decode + `from_records` index rebuild (`BaseRecords::from_view`) — over
+    /// `OPEN_LATENCY_RUNS` runs, the BEFORE proxy for the borrowed open.
+    #[cfg(not(debug_assertions))]
+    fn mean_old_from_view_ms(path: &std::path::Path) -> f64 {
+        let superblock = wal::read_superblock(path).expect("superblock");
+        let base_path = path.join(base_file(superblock.base_generation.get()));
+        let mut total = std::time::Duration::ZERO;
+        for _run in 0..OPEN_LATENCY_RUNS {
+            let base = Base::open(&base_path, false).expect("base open");
+            let start = std::time::Instant::now();
+            let records =
+                crate::overlay::BaseRecords::from_view(base.get()).expect("old from_view");
+            total += start.elapsed();
+            drop(records);
+            drop(base);
+        }
+        total.as_secs_f64() * 1000.0 / f64::from(OPEN_LATENCY_RUNS)
+    }
+
+    /// Manual measurement harness (run with
+    /// `cargo test -p oxgraph-db --release -- --ignored open_latency_large_base
+    /// --nocapture`): builds a folded base at roughly the measured-problem scale
+    /// (>=100k elements, >=300k relations, properties), then times `Db::open`.
+    /// Open must be dominated by the record decode + page faults, NOT the
+    /// `O(base)` index rebuild the prior design paid — the index is borrowed.
+    /// Debug builds skip it (the open-time `debug_assert!` differential check
+    /// would itself rebuild the index and skew the timing); run in `--release`.
+    #[test]
+    #[ignore = "manual perf measurement; run explicitly with --release --ignored --nocapture"]
+    #[cfg(not(debug_assertions))]
+    fn open_latency_large_base() {
+        let path = temp_store("open-latency");
+        let mut database = Db::create(&path).expect("create");
+        populate_large_store(&mut database);
+        drop(database);
+
+        let _warm = Db::open(&path).expect("warm open");
+        let after_ms = mean_open_ms(&path);
+        let before_ms = mean_old_from_view_ms(&path);
+
+        println!(
+            "open_latency_large_base: {OPEN_LATENCY_ELEMENTS} elements, \
+             {OPEN_LATENCY_RELATIONS} relations, {} incidences, {} properties",
+            OPEN_LATENCY_RELATIONS * 2,
+            OPEN_LATENCY_ELEMENTS + OPEN_LATENCY_RELATIONS,
+        );
+        println!("  BEFORE open work (decode + from_records rebuild): {before_ms:.1} ms / open");
+        println!("  AFTER  full Db::open (decode + BORROWED index):   {after_ms:.1} ms / open");
+
+        let _ = std::fs::remove_dir_all(&path);
+    }
+
+    #[test]
+    fn reconcile_upserts_reuse_or_mint_and_retain_prunes_the_complement() {
+        let path = temp_store("reconcile");
+        let mut database = Db::create(&path).expect("create");
+        let index = {
+            let mut writer = database.begin_write().expect("begin write");
+            let key = writer
+                .register_property_key("stable_key", PropertyFamily::Element, PropertyType::Text)
+                .expect("key");
+            let index = writer
+                .define_index(
+                    "element_stable_key_eq",
+                    IndexDefinition::PropertyEquality { key },
+                )
+                .expect("index");
+            writer.commit().expect("commit schema");
+            index
+        };
+        let eq = EqualityIndex::<crate::Text>::from_id(index);
+
+        let (a1, b1) = {
+            let mut writer = database.begin_write().expect("begin write");
+            let a = writer.upsert_element(eq, "a").expect("upsert a");
+            let b = writer.upsert_element(eq, "b").expect("upsert b");
+            writer.commit().expect("commit");
+            (a, b)
+        };
+
+        let (a2, c1) = {
+            let mut writer = database.begin_write().expect("begin write");
+            let a = writer.upsert_element(eq, "a").expect("re-upsert a");
+            let c = writer.upsert_element(eq, "c").expect("upsert c");
+            writer.retain(eq, &["a", "c"]).expect("retain");
+            writer.commit().expect("commit");
+            (a, c)
+        };
+
+        assert_eq!(a1, a2, "an unchanged identity reuses its element id");
+        assert_ne!(c1, a1);
+        assert_ne!(c1, b1);
+
+        let read = database.reader();
+        assert!(read.contains_element(a1), "kept a");
+        assert!(read.contains_element(c1), "kept c");
+        assert!(!read.contains_element(b1), "retain tombstoned b");
+        assert_eq!(
+            read.element_by_key(eq, "a")
+                .expect("lookup a")
+                .map(|element| element.id),
+            Some(a1)
+        );
+        assert!(
+            read.element_by_key(eq, "b").expect("lookup b").is_none(),
+            "b is not resolvable after the prune"
+        );
+        let _ = std::fs::remove_dir_all(&path);
+    }
+
+    #[test]
+    fn write_closure_commits_on_ok_rolls_back_on_err_and_reports_outcome() {
+        let path = temp_store("write-closure");
+        let mut database = Db::create(&path).expect("create");
+
+        // Ok with a change → committed; the read closure observes it.
+        let (id, outcome) = database
+            .write(|writer| {
+                let id = writer.create_element()?;
+                Ok(id)
+            })
+            .expect("write");
+        assert!(matches!(outcome, CommitOutcome::Committed(_)));
+        database
+            .read(|read| {
+                assert!(read.contains_element(id));
+                Ok(())
+            })
+            .expect("read");
+
+        // A no-op write reports Empty (no frame appended).
+        let ((), outcome) = database.write(|_writer| Ok(())).expect("empty write");
+        assert_eq!(outcome, CommitOutcome::Empty);
+
+        // An Err from the closure rolls back the staged delta.
+        let before = database
+            .read(|read| Ok(read.element_count()))
+            .expect("count");
+        let result = database.write(|writer| {
+            writer.create_element()?;
+            Err::<(), DbError>(DbError::EmptyQuery)
+        });
+        assert!(result.is_err());
+        let after = database
+            .read(|read| Ok(read.element_count()))
+            .expect("count");
+        assert_eq!(before, after, "the failed write staged nothing durable");
+
+        let _ = std::fs::remove_dir_all(&path);
+    }
+
+    #[test]
+    fn re_setting_an_unchanged_property_value_is_a_no_op_commit() {
+        // The reconcile/reindex contract: re-asserting a property's existing value
+        // must log NO mutation, so an incremental reconcile that re-sets every
+        // property of every unchanged subject stays O(change). Without the no-op
+        // gate the commit logs the whole graph every reindex.
+        let path = temp_store("set-noop");
+        let mut database = Db::create(&path).expect("create");
+        let schema = Schema::new().key::<crate::Text>("name", PropertyFamily::Element);
+
+        // Create an element and set its name (a real change → committed).
+        let id = database
+            .write(|writer| {
+                let bound = writer.apply_schema(&schema)?;
+                let name = bound.key::<crate::Text>("name")?;
+                let id = writer.create_element()?;
+                writer.set(id, name, "alpha")?;
+                Ok(id)
+            })
+            .expect("first write")
+            .0;
+
+        // Re-asserting the SAME value mutates nothing → the commit is Empty.
+        let ((), outcome) = database
+            .write(|writer| {
+                let bound = writer.apply_schema(&schema)?;
+                let name = bound.key::<crate::Text>("name")?;
+                writer.set(id, name, "alpha")?;
+                Ok(())
+            })
+            .expect("idempotent set");
+        assert_eq!(
+            outcome,
+            CommitOutcome::Empty,
+            "re-setting the same property value must log no mutation"
+        );
+
+        // Setting a DIFFERENT value is a real change → committed, and visible.
+        let ((), outcome) = database
+            .write(|writer| {
+                let bound = writer.apply_schema(&schema)?;
+                let name = bound.key::<crate::Text>("name")?;
+                writer.set(id, name, "beta")?;
+                Ok(())
+            })
+            .expect("changed set");
+        assert!(matches!(outcome, CommitOutcome::Committed(_)));
+        let name = database
+            .bind(&schema)
+            .expect("bind")
+            .key::<crate::Text>("name")
+            .expect("name key");
+        let value = database
+            .read(|read| {
+                Ok(read
+                    .element(id)
+                    .and_then(|element| element.properties().get::<crate::Text, String>(name)))
+            })
+            .expect("read");
+        assert_eq!(value.as_deref(), Some("beta"));
+
+        let _ = std::fs::remove_dir_all(&path);
+    }
+
+    #[test]
+    fn schema_apply_is_idempotent_and_bind_resolves_typed_handles() {
+        let path = temp_store("schema");
+        let mut database = Db::create(&path).expect("create");
+        let schema = Schema::new()
+            .label("function")
+            .key::<crate::Text>("name", PropertyFamily::Element)
+            .equality_index("name_eq", "name");
+
+        // First apply registers the catalog and upserts two elements by identity.
+        let (alpha, beta) = database
+            .write(|writer| {
+                let bound = writer.apply_schema(&schema)?;
+                let name_eq = bound.equality_index::<crate::Text>("name_eq")?;
+                let function = bound.label("function")?;
+                let alpha = writer.upsert_element(name_eq, "alpha")?;
+                writer.add_label(alpha, function)?;
+                let beta = writer.upsert_element(name_eq, "beta")?;
+                Ok((alpha, beta))
+            })
+            .expect("apply + write")
+            .0;
+        assert_ne!(alpha, beta);
+
+        // Re-applying the same schema is idempotent: nothing new registers, so the
+        // commit is empty.
+        let (_bound, outcome) = database
+            .write(|writer| writer.apply_schema(&schema))
+            .expect("re-apply");
+        assert_eq!(
+            outcome,
+            CommitOutcome::Empty,
+            "re-applying a schema registers nothing new"
+        );
+
+        // bind() resolves the schema read-only on a reopened store; the typed
+        // handle round-trips, and a wrong value type is rejected.
+        let reopened = Db::open(&path).expect("open");
+        let bound = reopened.bind(&schema).expect("bind");
+        let name_eq = bound
+            .equality_index::<crate::Text>("name_eq")
+            .expect("typed index");
+        assert!(
+            bound.equality_index::<crate::Int>("name_eq").is_err(),
+            "a wrong-value-type handle request is a SchemaConflict"
+        );
+        let found = reopened
+            .read(|read| read.element_by_key(name_eq, "alpha"))
+            .expect("read")
+            .expect("alpha present");
+        assert_eq!(found.id, alpha);
+
+        let _ = std::fs::remove_dir_all(&path);
+    }
+
     /// The exact logical state the crash-matrix asserts recovery preserves: the
     /// visible element ids, the rank-keyed property values, and the `Person`
     /// label membership.
@@ -1992,7 +3105,7 @@ mod tests {
 
     /// Builds a committed fixture: 8 elements, each ranked `index * 100`, the
     /// even-indexed ones labelled `Person`. Returns the fixture ids.
-    fn build_fixture(database: &mut Database) -> Fixture {
+    fn build_fixture(database: &mut Db) -> Fixture {
         let mut writer = database.begin_write().expect("begin write");
         let rank = writer
             .register_property_key("rank", PropertyFamily::Element, PropertyType::Integer)
@@ -2001,16 +3114,14 @@ mod tests {
         for index in 0..8u64 {
             let element = writer.create_element().expect("element");
             writer
-                .set_property(
-                    PropertySubject::Element(element),
-                    rank,
-                    PropertyValue::Integer(i64::try_from(index).expect("index") * 100),
+                .set(
+                    element,
+                    Key::<crate::Int>::from_id(rank),
+                    i64::try_from(index).expect("index") * 100,
                 )
                 .expect("set rank");
             if index % 2 == 0 {
-                writer
-                    .add_element_label(element, person)
-                    .expect("add label");
+                writer.add_label(element, person).expect("add label");
             }
         }
         writer.commit().expect("commit fixture");
@@ -2018,8 +3129,8 @@ mod tests {
     }
 
     /// Reads the logical state through the index-backed read surface.
-    fn read_logical(database: &Database, fixture: &Fixture) -> LogicalState {
-        let read = database.begin_read();
+    fn read_logical(database: &Db, fixture: &Fixture) -> LogicalState {
+        let read = database.reader();
         let elements = read.element_ids();
         let rank_eq_500 = read
             .lookup_property_equal(fixture.rank, &PropertyValue::Integer(500))
@@ -2041,9 +3152,9 @@ mod tests {
     ///
     /// The probe element is rolled back, so it does not perturb the logical state
     /// the surrounding test re-reads.
-    fn assert_no_id_reuse_across_fold(database: &mut Database) {
+    fn assert_no_id_reuse_across_fold(database: &mut Db) {
         let max_existing = database
-            .begin_read()
+            .reader()
             .element_ids()
             .into_iter()
             .map(ElementId::get)
@@ -2057,8 +3168,8 @@ mod tests {
             "the next minted id must be one past the max existing id (watermark \
              survived the fold; ids are never reused)",
         );
-        // Roll the probe back so it leaves no trace in the logical state.
-        writer.rollback();
+        // Drop the probe writer so it leaves no trace in the logical state.
+        drop(writer);
     }
 
     /// CHECKPOINT-CRASH-MATRIX: a crash after each fsync point in `checkpoint`
@@ -2077,7 +3188,7 @@ mod tests {
             CheckpointStop::Complete,
         ] {
             let path = temp_store(&format!("crash-{stop:?}"));
-            let mut database = Database::create(&path).expect("create");
+            let mut database = Db::create(&path).expect("create");
             let fixture = build_fixture(&mut database);
             let before = read_logical(&database, &fixture);
             let before_generation = database.base_generation;
@@ -2090,7 +3201,7 @@ mod tests {
                 .expect("checkpoint stop returns ok");
             drop(database);
 
-            let mut recovered = Database::open(&path).expect("reopen after crash");
+            let mut recovered = Db::open(&path).expect("reopen after crash");
             let after = read_logical(&recovered, &fixture);
             assert_eq!(
                 after, before,
@@ -2118,7 +3229,7 @@ mod tests {
 
             // A second open is idempotent (orphan files from a partial crash do
             // not derail a repeat recovery).
-            let reopened = Database::open(&path).expect("second reopen");
+            let reopened = Db::open(&path).expect("second reopen");
             assert_eq!(read_logical(&reopened, &fixture), before);
 
             drop(reopened);
@@ -2135,7 +3246,7 @@ mod tests {
     fn auto_checkpoint_policy_folds_when_log_outgrows_base() {
         // Manual policy: many commits, generation never advances on its own.
         let manual_path = temp_store("auto-manual");
-        let mut manual = Database::create(&manual_path).expect("create manual");
+        let mut manual = Db::create(&manual_path).expect("create manual");
         manual.set_checkpoint_policy(CheckpointPolicy::Manual);
         let _fixture = build_fixture(&mut manual);
         for _ in 0..200 {
@@ -2154,7 +3265,7 @@ mod tests {
         // Size-ratio policy with the smallest factor: the log soon outgrows the
         // tiny base floor, so a run of commits triggers at least one fold.
         let auto_path = temp_store("auto-ratio");
-        let mut auto = Database::create(&auto_path).expect("create auto");
+        let mut auto = Db::create(&auto_path).expect("create auto");
         auto.set_checkpoint_policy(CheckpointPolicy::SizeRatio { factor: 1 });
         let fixture = build_fixture(&mut auto);
         let before = read_logical(&auto, &fixture);
@@ -2181,7 +3292,7 @@ mod tests {
             "the auto-fold reopen must preserve the configured policy",
         );
         // Status surfaces the live generation and the (now small) log size.
-        let status = auto.status();
+        let status = auto.stats();
         assert_eq!(status.live_generation, auto.live_generation());
         assert!(status.base_byte_size > 0, "live base has bytes");
         drop(auto);

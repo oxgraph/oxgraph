@@ -58,6 +58,8 @@ pub mod pagerank;
 #[cfg(feature = "alloc")]
 pub mod components;
 #[cfg(feature = "alloc")]
+pub mod longest_path_dag;
+#[cfg(feature = "alloc")]
 pub mod scc;
 #[cfg(feature = "alloc")]
 pub mod sssp;
@@ -87,6 +89,8 @@ pub use bfs::{
 };
 #[cfg(feature = "alloc")]
 pub use components::connected_components;
+#[cfg(feature = "alloc")]
+pub use longest_path_dag::{LongestPathError, longest_path_dag};
 pub use pagerank::{
     HyperWeighted, HypergraphOutgoingDistribution, HypergraphPageRankScratch, IntoPageRankScalar,
     OutgoingDistribution, PageRankConfig, PageRankError, PageRankReport, PageRankScalar,

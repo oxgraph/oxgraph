@@ -44,7 +44,7 @@ keywords = ["graph", "topology", "zero-copy"]
 license = "MIT"
 readme = "README.md"
 repository = "https://github.com/oxgraph/oxgraph"
-version = "0.2.4"
+version = "0.3.2"
 # rust-version intentionally omitted: rust-toolchain.toml pins the daily toolchain; kani ships
 # its own nightly below latest stable, and we're not publishing an MSRV contract yet.
 

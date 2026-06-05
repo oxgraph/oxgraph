@@ -15,8 +15,9 @@ use super::{
     test_support::small_base,
 };
 use crate::{
-    ElementId, IncidenceId, PropertyKeyId, RelationId, RoleId,
+    ElementId, IncidenceId, LabelId, PropertyKeyId, RelationId, RelationTypeId, RoleId,
     backing::Base,
+    freeze::{FreezeStamps, freeze_view},
     id::{CheckpointGeneration, CommitSeq},
     state::{ElementRecord, IncidenceRecord, NextIds, PropertySubject, RelationRecord},
     value::PropertyValue,
@@ -178,7 +179,7 @@ fn tombstone_idempotent() {
 /// surfaces an ORPHAN property — visible through `property` / `properties` /
 /// `property_equal` even though the subject element reads back absent.
 ///
-/// Referential integrity is enforced one layer up, at the `WriteTransaction`
+/// Referential integrity is enforced one layer up, at the `Writer`
 /// boundary, which rejects a `set_property` against an absent/tombstoned subject
 /// (see the `database` tests). This unit test locks the lower-layer divergence
 /// the `WriteOverlay::set_property` doc promises so that gate has a
@@ -233,13 +234,14 @@ fn snapshot_view_merges() {
     let next = base_next_ids(&base);
     let catalog = base.get().catalog().clone();
     let overlay = Arc::new(Overlay::empty(next, catalog));
-    let snapshot = Snapshot::new(
+    let base_records = Arc::new(BaseRecords::from_view(base.get()).expect("base records"));
+    let snapshot = Snapshot::with_shared_base_records(
         CheckpointGeneration::new(7),
         CommitSeq::new(42),
         Arc::clone(&base),
         Arc::clone(&overlay),
-    )
-    .expect("snapshot");
+        base_records,
+    );
 
     assert_eq!(snapshot.generation(), CheckpointGeneration::new(7));
     assert_eq!(snapshot.lsn(), CommitSeq::new(42));
@@ -721,6 +723,37 @@ proptest! {
             "relation-type membership index != scan"
         );
 
+        // Reverse adjacency: the element- and relation-incidence index must equal
+        // the scan oracle over every visible subject, exercising the
+        // on_create_incidence / on_tombstone_incidence posting maintenance driven
+        // by the random op sequence above.
+        let element_ids: Vec<_> = view.elements().map(|record| record.id).collect();
+        for element in element_ids {
+            let mut indexed = view.element_incidences(element);
+            let mut scanned = view.element_incidences_scan(element);
+            indexed.sort_by_key(|record| record.id);
+            scanned.sort_by_key(|record| record.id);
+            prop_assert_eq!(
+                indexed,
+                scanned,
+                "element {} adjacency index != scan",
+                element.get()
+            );
+        }
+        let relation_ids: Vec<_> = view.relations().map(|record| record.id).collect();
+        for relation in relation_ids {
+            let mut indexed = view.relation_incidences(relation);
+            let mut scanned = view.relation_incidences_scan(relation);
+            indexed.sort_by_key(|record| record.id);
+            scanned.sort_by_key(|record| record.id);
+            prop_assert_eq!(
+                indexed,
+                scanned,
+                "relation {} adjacency index != scan",
+                relation.get()
+            );
+        }
+
         // Relation- and incidence-family equality: the `on_tombstone_relation` /
         // `on_tombstone_incidence` property-posting withdrawals must match the
         // scan oracle. `weight=3` is r1's relation property; `slot=1` is inc1's
@@ -791,5 +824,193 @@ proptest! {
                 person_name
             );
         }
+    }
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(MERGE_CASES))]
+
+    /// Differential test for the PERSISTED (borrowed) base index vs the
+    /// `from_records` owned oracle: a random store (built by applying random ops
+    /// to `small_base`, then folding the merged state into fresh frozen base
+    /// bytes) is opened TWO ways — `BaseRecords::open` borrows the persisted
+    /// `SECTION_INDEX_*` postings zero-copy, while `BaseRecords::from_view`
+    /// rebuilds the owned index from the decoded records. Every index accessor
+    /// (`elements_with_label`, `relations_with_type`, `property_equal` over
+    /// present AND absent keys, `property_range` over full/partial/single/inverted
+    /// sub-ranges, `element_incidences`, `relation_incidences`,
+    /// `property_key_subjects`) MUST return byte-identical ascending sequences over
+    /// the two arms. Driven through an EMPTY overlay so each lookup reduces to the
+    /// pure base posting.
+    #[test]
+    fn borrowed_index_matches_owned_oracle(
+        ops in proptest::collection::vec(
+            prop_oneof![
+                any::<u64>().prop_map(IndexOp::LabelElement),
+                any::<u64>().prop_map(IndexOp::TypeRelation),
+                (any::<u64>(), -8i64..8).prop_map(|(raw, value)| IndexOp::SetRank(raw, value)),
+                any::<u64>().prop_map(IndexOp::RemoveRank),
+                any::<u64>().prop_map(IndexOp::Tombstone),
+                any::<u64>().prop_map(IndexOp::TombstoneRelation),
+                any::<u64>().prop_map(IndexOp::TombstoneIncidence),
+            ],
+            0..24,
+        )
+    ) {
+        // Build a random store on top of `small_base` and freeze its merged state
+        // into fresh base bytes (so the persisted index sections reflect it).
+        let seed = small_base();
+        let seed_records = BaseRecords::from_view(seed.get()).expect("seed records");
+        let catalog = seed.get().catalog();
+        let robot = catalog.label_id("Robot").expect("robot label");
+        let person = catalog.label_id("Person").expect("person label");
+        let calls = catalog.relation_type_id("calls").expect("calls type");
+        let name = catalog.property_key_id("name").expect("name key");
+        let rank = catalog.property_key_id("rank").expect("rank key");
+        let weight = catalog.property_key_id("weight").expect("weight key");
+        let slot = catalog.property_key_id("slot").expect("slot key");
+
+        let mut write = WriteOverlay::new(base_next_ids(&seed), catalog.clone());
+        for op in &ops {
+            match op {
+                IndexOp::LabelElement(raw) => {
+                    write.add_element_label(&seed_records, ElementId::new(1 + (raw % 4)), robot);
+                }
+                IndexOp::TypeRelation(raw) => {
+                    write.set_relation_type(&seed_records, RelationId::new(1 + (raw % 2)), calls);
+                }
+                IndexOp::SetRank(raw, value) => {
+                    write.set_property(
+                        &seed_records,
+                        PropertySubject::Element(ElementId::new(1 + (raw % 3))),
+                        rank,
+                        PropertyValue::Integer(*value),
+                    );
+                }
+                IndexOp::RemoveRank(raw) => {
+                    write.remove_property(
+                        &seed_records,
+                        PropertySubject::Element(ElementId::new(1 + (raw % 3))),
+                        rank,
+                    );
+                }
+                IndexOp::Tombstone(raw) => {
+                    write.tombstone_element(&seed_records, ElementId::new(1 + (raw % 4)));
+                }
+                IndexOp::TombstoneRelation(raw) => {
+                    write.tombstone_relation(&seed_records, RelationId::new(1 + (raw % 2)));
+                }
+                IndexOp::TombstoneIncidence(raw) => {
+                    write.tombstone_incidence(&seed_records, IncidenceId::new(1 + (raw % 2)));
+                }
+            }
+        }
+        let folded = write.freeze();
+        let bytes = freeze_view(
+            &MergedState::new(&seed_records, &folded),
+            FreezeStamps { commit_seq: 1, transaction_id: 1, generation: 1 },
+        )
+        .expect("freeze folded state");
+
+        // Open the SAME bytes twice: borrowed (persisted index) and owned (rebuilt
+        // via from_records). `open` already debug-asserts they agree as a whole;
+        // here we assert every accessor per-key explicitly.
+        let base = Arc::new(Base::open_owned_bytes(bytes).expect("open folded base"));
+        let borrowed = BaseRecords::open(&base).expect("borrowed records");
+        let owned = BaseRecords::from_view(base.get()).expect("owned records");
+
+        let empty = Overlay::empty(base_next_ids(&base), base.get().catalog().clone());
+        let borrowed_view = MergedState::new(&borrowed, &empty);
+        let owned_view = MergedState::new(&owned, &empty);
+
+        // Label + relation-type membership over present and absent keys.
+        for label in [person, robot, LabelId::new(9999)] {
+            prop_assert_eq!(
+                borrowed_view.elements_with_label(label),
+                owned_view.elements_with_label(label),
+                "label {} membership borrowed != owned",
+                label.get()
+            );
+        }
+        for ty in [calls, RelationTypeId::new(9999)] {
+            prop_assert_eq!(
+                borrowed_view.relations_with_type(ty),
+                owned_view.relations_with_type(ty),
+                "relation-type {} membership borrowed != owned",
+                ty.get()
+            );
+        }
+
+        // Reverse adjacency over every base element and relation, plus absentees.
+        for raw in 1u64..=5 {
+            let element = ElementId::new(raw);
+            let mut b = borrowed_view.element_incidences(element);
+            let mut o = owned_view.element_incidences(element);
+            b.sort_by_key(|record| record.id);
+            o.sort_by_key(|record| record.id);
+            prop_assert_eq!(b, o, "element {} adjacency borrowed != owned", raw);
+        }
+        for raw in 1u64..=3 {
+            let relation = RelationId::new(raw);
+            let mut b = borrowed_view.relation_incidences(relation);
+            let mut o = owned_view.relation_incidences(relation);
+            b.sort_by_key(|record| record.id);
+            o.sort_by_key(|record| record.id);
+            prop_assert_eq!(b, o, "relation {} adjacency borrowed != owned", raw);
+        }
+
+        // Equality over present and absent integer values and a text value, for
+        // every property key family (element rank, relation weight, incidence slot,
+        // element name).
+        for key in [rank, weight, slot] {
+            for value in -9i64..=9 {
+                let probe = PropertyValue::Integer(value);
+                prop_assert_eq!(
+                    borrowed_view.property_equal(key, &probe),
+                    owned_view.property_equal(key, &probe),
+                    "equality borrowed != owned for key {} value {}",
+                    key.get(),
+                    value
+                );
+            }
+        }
+        for text in ["Alice", "Bob", "Carol", "Zzz-absent"] {
+            let probe = PropertyValue::Text(text.to_owned());
+            prop_assert_eq!(
+                borrowed_view.property_equal(name, &probe),
+                owned_view.property_equal(name, &probe),
+                "text equality borrowed != owned for name {:?}",
+                text
+            );
+        }
+
+        // Range over full/partial/single/inverted windows.
+        for (lo, hi) in [(-9i64, 9i64), (-3, 3), (0, 0), (2, 1), (5, 9)] {
+            let min = PropertyValue::Integer(lo);
+            let max = PropertyValue::Integer(hi);
+            prop_assert_eq!(
+                borrowed_view.property_range(rank, &min, &max),
+                owned_view.property_range(rank, &min, &max),
+                "range borrowed != owned for [{}, {}]",
+                lo,
+                hi
+            );
+        }
+
+        // `property_key_subjects` over every present key and an absent one.
+        for key in [rank, name, weight, slot, PropertyKeyId::new(9999)] {
+            prop_assert_eq!(
+                borrowed_view.property_key_subjects(key),
+                owned_view.property_key_subjects(key),
+                "property_key_subjects borrowed != owned for key {}",
+                key.get()
+            );
+        }
+
+        // The whole-index snapshots must be byte-identical too.
+        prop_assert!(
+            crate::index::indexes_agree(borrowed.index(), owned.index()),
+            "borrowed and owned index snapshots disagree"
+        );
     }
 }

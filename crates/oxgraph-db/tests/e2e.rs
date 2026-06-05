@@ -8,9 +8,10 @@ use std::{
 
 use oxgraph_algo::breadth_first_search;
 use oxgraph_db::{
-    Database, DbError, GraphProjectionDefinition, HypergraphProjectionDefinition, IndexDefinition,
-    IndexLookup, ProjectionDefinition, PropertyFamily, PropertySubject, PropertyType,
-    PropertyValue, QueryLanguage, QueryValue, TraversalDirection, TraversalOptions, TraversalRow,
+    CommitOutcome, Db, DbError, Direction, GraphProjectionDefinition,
+    HypergraphProjectionDefinition, IndexDefinition, Int, Key, Match, PageRankConfig,
+    ProjectionDefinition, PropertyFamily, PropertySubject, PropertyType, PropertyValue, QueryValue,
+    Text, TraversedNode, Walk,
 };
 use oxgraph_graph::{
     CanonicalElementIdentity, ElementSuccessors, LocalElementIdentity, TopologyCounts,
@@ -27,7 +28,7 @@ static NEXT_PATH: AtomicU64 = AtomicU64::new(0);
     reason = "test harness reads error fields through derived Debug when a Result test fails"
 )]
 enum TestError {
-    /// Database error.
+    /// Db error.
     Db(DbError),
     /// Filesystem error.
     Io(std::io::Error),
@@ -74,19 +75,18 @@ fn greenfield_database_supports_topology_properties_queries_and_recovery() -> Re
     let path = temp_path("complete-product");
     clean(&path)?;
 
-    let mut database = Database::create(&path)?;
+    let mut database = Db::create(&path)?;
     let fixture = load_fixture(&mut database)?;
     database.compact()?;
     database.validate()?;
 
-    let reopened = Database::open(&path)?;
-    let read = reopened.begin_read();
+    let reopened = Db::open(&path)?;
+    let read = reopened.reader();
     assert_eq!(read.element_count(), 3);
     assert_eq!(read.relation_count(), 2);
     assert_eq!(read.incidence_count(), 5);
     assert_eq!(
-        read.property(PropertySubject::Element(fixture.alice), fixture.name_key)
-            .map(std::borrow::Cow::into_owned),
+        read.property(PropertySubject::Element(fixture.alice), fixture.name_key),
         Some(PropertyValue::Text("Alice".to_owned()))
     );
 
@@ -104,7 +104,7 @@ fn greenfield_database_supports_topology_properties_queries_and_recovery() -> Re
 
     let hyper = read.hypergraph_projection(fixture.hyper_projection)?;
     assert_eq!(hyper.relation_count(), 1);
-    let meeting_local = oxgraph_db::ProjectionRelationId::new(0);
+    let meeting_local = oxgraph_db::projection::ProjectionRelationId::new(0);
     let targets = hyper
         .target_participants(meeting_local)
         .map(|local| hyper.canonical_element_id(local))
@@ -129,29 +129,33 @@ fn rollback_and_empty_commits_do_not_reuse_committed_transaction_ids() -> Result
     let path = temp_path("transaction-id-burns");
     clean(&path)?;
 
-    let mut database = Database::create(&path)?;
-    let mut rolled_back = database.begin_write()?;
-    rolled_back.register_role("source")?;
-    rolled_back.rollback();
+    let mut database = Db::create(&path)?;
+    let _ = database.write(|rolled_back| {
+        rolled_back.register_role("source")?;
+        Err::<(), DbError>(DbError::EmptyQuery)
+    });
 
-    let empty = database.begin_write()?;
-    assert_eq!(empty.commit()?.get(), 0);
+    let ((), outcome) = database.write(|_empty| Ok(()))?;
+    assert!(matches!(outcome, CommitOutcome::Empty));
 
-    let mut writer = database.begin_write()?;
-    let role = writer.register_role("source")?;
-    let element = writer.create_element()?;
-    let relation = writer.create_relation()?;
-    writer.create_incidence(relation, element, role)?;
-    writer.commit()?;
+    let (element, _outcome) = database.write(|writer| {
+        let role = writer.register_role("source")?;
+        let element = writer.create_element()?;
+        let relation = writer.create_relation()?;
+        writer.create_incidence(relation, element, role)?;
+        Ok(element)
+    })?;
 
-    let mut reopened = Database::open(&path)?;
-    let status = reopened.status();
-    let mut writer = reopened.begin_write()?;
-    let second = writer.create_element()?;
-    writer.commit()?;
-    assert!(reopened.status().last_transaction_id > status.last_transaction_id);
+    let mut reopened = Db::open(&path)?;
+    let status = reopened.stats();
+    #[expect(
+        clippy::redundant_closure_for_method_calls,
+        reason = "the method path cannot satisfy write's for<'a> Fn bound over Writer<'a>"
+    )]
+    let (second, _outcome) = reopened.write(|writer| writer.create_element())?;
+    assert!(reopened.stats().last_transaction_id > status.last_transaction_id);
 
-    let read = Database::open(&path)?.begin_read();
+    let read = Db::open(&path)?.reader();
     assert!(read.contains_element(element));
     assert!(read.contains_element(second));
     clean(&path)?;
@@ -163,18 +167,16 @@ fn rollback_only_transaction_id_burns_are_session_local() -> Result<(), TestErro
     let path = temp_path("rollback-session-local");
     clean(&path)?;
 
-    let mut database = Database::create(&path)?;
-    let durable_transaction_id = database.status().last_transaction_id;
-    let mut rolled_back = database.begin_write()?;
-    rolled_back.create_element()?;
-    rolled_back.rollback();
-    assert!(database.status().last_transaction_id > durable_transaction_id);
+    let mut database = Db::create(&path)?;
+    let durable_transaction_id = database.stats().last_transaction_id;
+    let _ = database.write(|rolled_back| {
+        rolled_back.create_element()?;
+        Err::<(), DbError>(DbError::EmptyQuery)
+    });
+    assert!(database.stats().last_transaction_id > durable_transaction_id);
 
-    let reopened = Database::open(&path)?;
-    assert_eq!(
-        reopened.status().last_transaction_id,
-        durable_transaction_id
-    );
+    let reopened = Db::open(&path)?;
+    assert_eq!(reopened.stats().last_transaction_id, durable_transaction_id);
     clean(&path)?;
     Ok(())
 }
@@ -184,26 +186,23 @@ fn index_lookup_uses_typed_composite_and_projection_semantics() -> Result<(), Te
     let path = temp_path("index-lookup-semantics");
     clean(&path)?;
 
-    let mut database = Database::create(&path)?;
+    let mut database = Db::create(&path)?;
     let fixture = load_fixture(&mut database)?;
-    let read = database.begin_read();
+    let read = database.reader();
 
     let tuple = [
         PropertyValue::Text("Alice".to_owned()),
         PropertyValue::Integer(42),
     ];
     assert_eq!(
-        read.lookup_index(
-            fixture.person_identity_index,
-            IndexLookup::CompositeEqual(&tuple),
-        )?,
+        read.lookup(fixture.person_identity_index, Match::Composite(&tuple),)?,
         vec![PropertySubject::Element(fixture.alice)]
     );
     let wrong_arity = [PropertyValue::Text("Alice".to_owned())];
     assert!(matches!(
-        read.lookup_index(
+        read.lookup(
             fixture.person_identity_index,
-            IndexLookup::CompositeEqual(&wrong_arity),
+            Match::Composite(&wrong_arity),
         ),
         Err(DbError::UnsupportedQuery { .. })
     ));
@@ -212,10 +211,7 @@ fn index_lookup_uses_typed_composite_and_projection_semantics() -> Result<(), Te
         PropertyValue::Text("42".to_owned()),
     ];
     assert!(matches!(
-        read.lookup_index(
-            fixture.person_identity_index,
-            IndexLookup::CompositeEqual(&wrong_type),
-        ),
+        read.lookup(fixture.person_identity_index, Match::Composite(&wrong_type),),
         Err(DbError::PropertyTypeMismatch {
             expected: PropertyType::Integer,
             actual: PropertyType::Text,
@@ -223,7 +219,7 @@ fn index_lookup_uses_typed_composite_and_projection_semantics() -> Result<(), Te
     ));
 
     assert_eq!(
-        read.lookup_index(fixture.graph_projection_index, IndexLookup::All)?,
+        read.lookup(fixture.graph_projection_index, Match::All)?,
         vec![
             PropertySubject::Element(fixture.alice),
             PropertySubject::Element(fixture.bob),
@@ -231,7 +227,7 @@ fn index_lookup_uses_typed_composite_and_projection_semantics() -> Result<(), Te
         ]
     );
     assert_eq!(
-        read.lookup_index(fixture.hyper_projection_index, IndexLookup::All)?,
+        read.lookup(fixture.hyper_projection_index, Match::All)?,
         vec![
             PropertySubject::Element(fixture.alice),
             PropertySubject::Element(fixture.bob),
@@ -243,9 +239,9 @@ fn index_lookup_uses_typed_composite_and_projection_semantics() -> Result<(), Te
         ]
     );
     assert!(matches!(
-        read.lookup_index(
+        read.lookup(
             fixture.graph_projection_index,
-            IndexLookup::Equal(&PropertyValue::Integer(1)),
+            Match::Equal(&PropertyValue::Integer(1)),
         ),
         Err(DbError::UnsupportedQuery { .. })
     ));
@@ -259,9 +255,9 @@ fn property_lookup_values_are_schema_checked() -> Result<(), TestError> {
     let path = temp_path("typed-property-lookup");
     clean(&path)?;
 
-    let mut database = Database::create(&path)?;
+    let mut database = Db::create(&path)?;
     let fixture = load_fixture(&mut database)?;
-    let read = database.begin_read();
+    let read = database.reader();
 
     assert!(matches!(
         read.lookup_property_equal(fixture.age_key, &PropertyValue::Text("42".to_owned())),
@@ -282,9 +278,9 @@ fn property_lookup_values_are_schema_checked() -> Result<(), TestError> {
         })
     ));
     assert!(matches!(
-        read.lookup_index(
+        read.lookup(
             fixture.age_index,
-            IndexLookup::Range {
+            Match::Range {
                 min: &PropertyValue::Text("0".to_owned()),
                 max: &PropertyValue::Text("99".to_owned()),
             },
@@ -310,7 +306,7 @@ fn property_lookup_values_are_schema_checked() -> Result<(), TestError> {
 #[test]
 fn graph_traversal_api_walks_directions_and_depth() -> Result<(), TestError> {
     let (path, database, fixture) = create_traversal_database("graph-traversal-directions")?;
-    let read = database.begin_read();
+    let read = database.reader();
 
     let graph = read.graph_projection_by_name("calls")?;
     assert_eq!(graph.relation_count(), 3);
@@ -322,8 +318,8 @@ fn graph_traversal_api_walks_directions_and_depth() -> Result<(), TestError> {
         &read,
         fixture.graph_projection,
         &[fixture.alice],
-        TraversalOptions::default(),
-        &[TraversalRow {
+        Walk::default(),
+        &[TraversedNode {
             element: fixture.bob,
             depth: 1,
         }],
@@ -332,11 +328,11 @@ fn graph_traversal_api_walks_directions_and_depth() -> Result<(), TestError> {
         &read,
         fixture.graph_projection,
         &[fixture.bob],
-        TraversalOptions {
-            direction: TraversalDirection::Incoming,
-            ..TraversalOptions::default()
+        Walk {
+            direction: Direction::Incoming,
+            ..Walk::default()
         },
-        &[TraversalRow {
+        &[TraversedNode {
             element: fixture.alice,
             depth: 1,
         }],
@@ -345,16 +341,16 @@ fn graph_traversal_api_walks_directions_and_depth() -> Result<(), TestError> {
         &read,
         fixture.graph_projection,
         &[fixture.bob],
-        TraversalOptions {
-            direction: TraversalDirection::Both,
-            ..TraversalOptions::default()
+        Walk {
+            direction: Direction::Both,
+            ..Walk::default()
         },
         &[
-            TraversalRow {
+            TraversedNode {
                 element: fixture.carol,
                 depth: 1,
             },
-            TraversalRow {
+            TraversedNode {
                 element: fixture.alice,
                 depth: 1,
             },
@@ -364,16 +360,16 @@ fn graph_traversal_api_walks_directions_and_depth() -> Result<(), TestError> {
         &read,
         fixture.graph_projection,
         &[fixture.alice],
-        TraversalOptions {
+        Walk {
             max_depth: 2,
-            ..TraversalOptions::default()
+            ..Walk::default()
         },
         &[
-            TraversalRow {
+            TraversedNode {
                 element: fixture.bob,
                 depth: 1,
             },
-            TraversalRow {
+            TraversedNode {
                 element: fixture.carol,
                 depth: 2,
             },
@@ -385,29 +381,165 @@ fn graph_traversal_api_walks_directions_and_depth() -> Result<(), TestError> {
 }
 
 #[test]
+fn personalized_pagerank_ranks_and_responds_to_seeds() -> Result<(), TestError> {
+    let (path, database, fixture) = create_traversal_database("graph-pagerank")?;
+    let read = database.reader();
+
+    let seeded = read.personalized_pagerank(
+        fixture.graph_projection,
+        &[fixture.alice],
+        PageRankConfig::new(0.85_f64, 1e-6_f64, 100),
+    )?;
+
+    // One score per projection element, ordered from highest rank to lowest.
+    assert!(!seeded.is_empty());
+    for window in seeded.windows(2) {
+        assert!(window[0].1 >= window[1].1);
+    }
+    // PageRank is a probability distribution over the visible elements.
+    let total: f64 = seeded.iter().map(|(_, rank)| rank).sum();
+    assert!(
+        (total - 1.0).abs() < 1e-6,
+        "ranks should sum to 1, got {total}"
+    );
+
+    // Seeding alice with the restart mass raises her rank above the
+    // uniform-teleport rank: personalization has an effect.
+    let uniform = read.personalized_pagerank(
+        fixture.graph_projection,
+        &[],
+        PageRankConfig::new(0.85_f64, 1e-6_f64, 100),
+    )?;
+    let rank_of = |ranks: &[(oxgraph_db::ElementId, f64)], element| {
+        ranks
+            .iter()
+            .find(|(candidate, _)| *candidate == element)
+            .map_or(0.0, |(_, rank)| *rank)
+    };
+    assert!(rank_of(&seeded, fixture.alice) > rank_of(&uniform, fixture.alice));
+
+    clean(&path)?;
+    Ok(())
+}
+
+#[test]
+fn longest_path_finds_the_longest_chain() -> Result<(), TestError> {
+    let path = temp_path("graph-longest-path");
+    clean(&path)?;
+    let mut database = Db::create(&path)?;
+    let (elements, projection) = build_chain_dag(&mut database)?;
+    let read = database.reader();
+
+    // Edges 0->1->2->3 plus a shortcut 0->2: the longest simple chain runs the
+    // full four-element path rather than the shortcut.
+    let chain = read.longest_path(projection, &elements)?;
+    assert_eq!(
+        chain,
+        vec![elements[0], elements[1], elements[2], elements[3]]
+    );
+
+    // An empty element set yields an empty path.
+    assert!(read.longest_path(projection, &[])?.is_empty());
+
+    clean(&path)?;
+    Ok(())
+}
+
+#[test]
+fn longest_path_rejects_cycles_and_ignores_unknown_elements() -> Result<(), TestError> {
+    let (path, database, fixture) = create_traversal_database("graph-longest-path-errors")?;
+    let read = database.reader();
+
+    // The calls projection is the cycle alice -> bob -> carol -> alice, so the
+    // induced subgraph over all three is cyclic; the algorithm error surfaces as
+    // a concrete DbError, never the cross-crate LongestPathError.
+    assert!(matches!(
+        read.longest_path(
+            fixture.graph_projection,
+            &[fixture.alice, fixture.bob, fixture.carol],
+        ),
+        Err(DbError::Traversal { .. })
+    ));
+
+    // `dave` participates in no Calls relation, so he is absent from the
+    // projection; absent elements are ignored rather than erroring. With only an
+    // absent element the longest path is empty and the rank falls back to uniform.
+    assert_eq!(
+        read.longest_path(fixture.graph_projection, &[fixture.dave])?,
+        Vec::new()
+    );
+    assert!(
+        !read
+            .personalized_pagerank(
+                fixture.graph_projection,
+                &[fixture.dave],
+                PageRankConfig::new(0.85_f64, 1e-6_f64, 100),
+            )?
+            .is_empty()
+    );
+
+    clean(&path)?;
+    Ok(())
+}
+
+#[test]
+fn personalized_pagerank_reflects_graph_structure() -> Result<(), TestError> {
+    let path = temp_path("graph-pagerank-structure");
+    clean(&path)?;
+    let mut database = Db::create(&path)?;
+    let (elements, projection) = build_chain_dag(&mut database)?;
+    let read = database.reader();
+
+    let rank_of = |ranks: &[(oxgraph_db::ElementId, f64)], element| {
+        ranks
+            .iter()
+            .find(|(candidate, _)| *candidate == element)
+            .map_or(0.0, |(_, rank)| *rank)
+    };
+
+    // In 0->{1,2}, 1->2, 2->3 the hub 2 (two incoming edges) outranks the source
+    // 0 (no incoming edges): rank propagates along edges and the element<->rank
+    // round-trip is pinned to specific nodes, not insertion order.
+    let ranks =
+        read.personalized_pagerank(projection, &[], PageRankConfig::new(0.85, 1e-6, 100))?;
+    assert!(rank_of(&ranks, elements[2]) > rank_of(&ranks, elements[0]));
+
+    // Seeding the source lifts it above its unseeded rank.
+    let seeded = read.personalized_pagerank(
+        projection,
+        &[elements[0]],
+        PageRankConfig::new(0.85, 1e-6, 100),
+    )?;
+    assert!(rank_of(&seeded, elements[0]) > rank_of(&ranks, elements[0]));
+
+    clean(&path)?;
+    Ok(())
+}
+
+#[test]
 fn graph_traversal_api_handles_seeds_and_limits() -> Result<(), TestError> {
     let (path, database, fixture) = create_traversal_database("graph-traversal-limits")?;
-    let read = database.begin_read();
+    let read = database.reader();
 
     assert_traversal(
         &read,
         fixture.graph_projection,
         &[fixture.alice, fixture.bob],
-        TraversalOptions {
+        Walk {
             max_depth: 2,
             include_start: true,
-            ..TraversalOptions::default()
+            ..Walk::default()
         },
         &[
-            TraversalRow {
+            TraversedNode {
                 element: fixture.alice,
                 depth: 0,
             },
-            TraversalRow {
+            TraversedNode {
                 element: fixture.bob,
                 depth: 0,
             },
-            TraversalRow {
+            TraversedNode {
                 element: fixture.carol,
                 depth: 1,
             },
@@ -417,16 +549,16 @@ fn graph_traversal_api_handles_seeds_and_limits() -> Result<(), TestError> {
         &read,
         fixture.graph_projection,
         &[fixture.alice],
-        TraversalOptions {
+        Walk {
             include_start: true,
-            ..TraversalOptions::default()
+            ..Walk::default()
         },
         &[
-            TraversalRow {
+            TraversedNode {
                 element: fixture.alice,
                 depth: 0,
             },
-            TraversalRow {
+            TraversedNode {
                 element: fixture.bob,
                 depth: 1,
             },
@@ -436,19 +568,19 @@ fn graph_traversal_api_handles_seeds_and_limits() -> Result<(), TestError> {
         &read,
         fixture.graph_projection,
         &[fixture.alice],
-        TraversalOptions {
+        Walk {
             max_depth: 2,
             limit: 1,
-            ..TraversalOptions::default()
+            ..Walk::default()
         },
-        &[TraversalRow {
+        &[TraversedNode {
             element: fixture.bob,
             depth: 1,
         }],
     )?;
     assert!(
-        read.traverse_graph(fixture.graph_projection, &[], TraversalOptions::default(),)?
-            .rows()
+        read.walk(fixture.graph_projection, &[], Walk::default(),)?
+            .nodes()
             .is_empty()
     );
 
@@ -459,30 +591,26 @@ fn graph_traversal_api_handles_seeds_and_limits() -> Result<(), TestError> {
 #[test]
 fn graph_traversal_api_rejects_invalid_inputs() -> Result<(), TestError> {
     let (path, database, fixture) = create_traversal_database("graph-traversal-errors")?;
-    let read = database.begin_read();
+    let read = database.reader();
 
     assert!(matches!(
-        read.traverse_graph(
+        read.walk(
             fixture.graph_projection,
             &[fixture.dave],
-            TraversalOptions::default(),
+            Walk::default(),
         ),
         Err(DbError::UnknownElement { id }) if id == fixture.dave
     ));
     assert!(matches!(
-        read.traverse_graph(
+        read.walk(
             oxgraph_db::ProjectionId::new(999),
             &[fixture.alice],
-            TraversalOptions::default(),
+            Walk::default(),
         ),
         Err(DbError::UnknownProjection { .. })
     ));
     assert!(matches!(
-        read.traverse_graph(
-            fixture.hyper_projection,
-            &[fixture.alice],
-            TraversalOptions::default(),
-        ),
+        read.walk(fixture.hyper_projection, &[fixture.alice], Walk::default(),),
         Err(DbError::InvalidProjection { .. })
     ));
 
@@ -491,9 +619,148 @@ fn graph_traversal_api_rejects_invalid_inputs() -> Result<(), TestError> {
 }
 
 #[test]
+fn walk_returns_discovered_nodes_and_edges() -> Result<(), TestError> {
+    // The fixture is a cycle alice -> bob -> carol -> alice over `Calls`.
+    let (path, database, fixture) = create_traversal_database("walk-nodes-and-edges")?;
+    let read = database.reader();
+
+    let subgraph = read.walk(
+        fixture.graph_projection,
+        &[fixture.alice],
+        Walk {
+            max_depth: 2,
+            include_start: true,
+            ..Walk::default()
+        },
+    )?;
+
+    // Depth-2 outgoing from alice discovers the whole cycle.
+    let discovered = subgraph
+        .nodes()
+        .iter()
+        .map(|node| node.element)
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        discovered,
+        BTreeSet::from([fixture.alice, fixture.bob, fixture.carol])
+    );
+
+    // Every edge connects two discovered nodes; the carol -> alice closing edge
+    // is included because both endpoints are in the node set.
+    let edge_pairs = subgraph
+        .edges()
+        .iter()
+        .map(|edge| (edge.source, edge.target))
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        edge_pairs,
+        BTreeSet::from([
+            (fixture.alice, fixture.bob),
+            (fixture.bob, fixture.carol),
+            (fixture.carol, fixture.alice),
+        ])
+    );
+
+    // Excluding the seed from the result nodes must still report a seed-rooted
+    // edge whose target is discovered (alice -> bob at depth 1).
+    let excluded = read.walk(
+        fixture.graph_projection,
+        &[fixture.alice],
+        Walk {
+            max_depth: 1,
+            include_start: false,
+            ..Walk::default()
+        },
+    )?;
+    assert!(
+        !excluded
+            .nodes()
+            .iter()
+            .any(|node| node.element == fixture.alice)
+    );
+    assert_eq!(
+        excluded
+            .edges()
+            .iter()
+            .map(|edge| (edge.source, edge.target))
+            .collect::<Vec<_>>(),
+        vec![(fixture.alice, fixture.bob)]
+    );
+
+    clean(&path)?;
+    Ok(())
+}
+
+#[test]
+fn neighbors_resolves_role_aware_adjacency() -> Result<(), TestError> {
+    // The fixture is a cycle alice -> bob -> carol -> alice over `Calls`.
+    let (path, database, fixture) = create_traversal_database("neighbors-role-aware")?;
+    let read = database.reader();
+    let calls = read
+        .catalog()
+        .relation_type_id("Calls")
+        .ok_or(DbError::EmptyQuery)?;
+
+    // Outgoing from bob follows bob -> carol.
+    assert_eq!(
+        read.neighbors(fixture.bob, calls, Direction::Outgoing),
+        vec![fixture.carol]
+    );
+    // Incoming to bob follows alice -> bob.
+    assert_eq!(
+        read.neighbors(fixture.bob, calls, Direction::Incoming),
+        vec![fixture.alice]
+    );
+    // Both yields each side, ascending by element id.
+    let mut both = vec![fixture.alice, fixture.carol];
+    both.sort_unstable();
+    assert_eq!(read.neighbors(fixture.bob, calls, Direction::Both), both);
+
+    // Dave participates in no `Calls` relation.
+    assert!(
+        read.neighbors(fixture.dave, calls, Direction::Both)
+            .is_empty()
+    );
+
+    clean(&path)?;
+    Ok(())
+}
+
+#[test]
+fn endpoints_returns_binary_relation_endpoints() -> Result<(), TestError> {
+    // The fixture is a cycle alice -> bob -> carol -> alice over `Calls`.
+    let (path, database, fixture) = create_traversal_database("endpoints-binary")?;
+    let read = database.reader();
+    let calls = read
+        .catalog()
+        .relation_type_id("Calls")
+        .ok_or(DbError::EmptyQuery)?;
+
+    // Find the alice -> bob `Calls` relation and confirm its endpoints read back
+    // from incidence storage in source, target order.
+    let alice_bob = read
+        .relation_ids()
+        .into_iter()
+        .find(|id| {
+            read.relation(*id).is_some_and(|relation| {
+                relation.relation_type == Some(calls)
+                    && read.endpoints(*id) == Some((fixture.alice, fixture.bob))
+            })
+        })
+        .ok_or(DbError::EmptyQuery)?;
+    assert_eq!(
+        read.endpoints(alice_bob),
+        Some((fixture.alice, fixture.bob))
+    );
+
+    clean(&path)?;
+    Ok(())
+}
+
+#[test]
 fn oxql_graph_walk_executes_valid_queries() -> Result<(), TestError> {
     let (path, database, fixture) = create_traversal_database("oxql-graph-walk-valid")?;
-    let read = database.begin_read();
+    let read = database.reader();
 
     assert_eq!(
         execute_element_query(
@@ -543,47 +810,38 @@ fn oxql_graph_walk_rejects_invalid_queries() -> Result<(), TestError> {
     let (path, database, fixture) = create_traversal_database("oxql-graph-walk-invalid")?;
 
     assert!(matches!(
-        database.prepare(
-            QueryLanguage::Oxql,
-            &format!(
-                "GRAPH calls WALK FROM {} DEPTH 1 DIRECTION sideways",
-                fixture.alice.get()
-            ),
-        ),
+        database.prepare(&format!(
+            "GRAPH calls WALK FROM {} DEPTH 1 DIRECTION sideways",
+            fixture.alice.get()
+        ),),
         Err(DbError::UnsupportedQuery { .. })
     ));
     assert!(matches!(
-        database.prepare(
-            QueryLanguage::Oxql,
-            &format!("GRAPH calls WALK FROM {} DEPTH nope", fixture.alice.get()),
-        ),
+        database.prepare(&format!(
+            "GRAPH calls WALK FROM {} DEPTH nope",
+            fixture.alice.get()
+        ),),
         Err(DbError::UnsupportedQuery { .. })
     ));
     assert!(matches!(
-        database.prepare(
-            QueryLanguage::Oxql,
-            &format!(
-                "GRAPH calls WALK FROM {} DEPTH 1 LIMIT nope",
-                fixture.alice.get()
-            ),
-        ),
+        database.prepare(&format!(
+            "GRAPH calls WALK FROM {} DEPTH 1 LIMIT nope",
+            fixture.alice.get()
+        ),),
         Err(DbError::UnsupportedQuery { .. })
     ));
     assert!(matches!(
-        database.prepare(
-            QueryLanguage::Oxql,
-            &format!("GRAPH missing WALK FROM {} DEPTH 1", fixture.alice.get()),
-        ),
+        database.prepare(&format!(
+            "GRAPH missing WALK FROM {} DEPTH 1",
+            fixture.alice.get()
+        ),),
         Err(DbError::UnsupportedQuery { .. })
     ));
     assert!(matches!(
-        database.prepare(
-            QueryLanguage::Oxql,
-            &format!(
-                "GRAPH calls_hyper WALK FROM {} DEPTH 1",
-                fixture.alice.get()
-            ),
-        ),
+        database.prepare(&format!(
+            "GRAPH calls_hyper WALK FROM {} DEPTH 1",
+            fixture.alice.get()
+        ),),
         Err(DbError::InvalidProjection { .. })
     ));
 
@@ -599,9 +857,9 @@ fn corrupt_base_bytes_fail_open() -> Result<(), TestError> {
     let path = temp_path("corrupt-base");
     clean(&path)?;
 
-    let mut database = Database::create(&path)?;
+    let mut database = Db::create(&path)?;
     load_fixture(&mut database)?;
-    database.checkpoint()?; // fold the data into base-1 so the base is non-empty
+    database.compact()?; // fold the data into base-1 so the base is non-empty
     drop(database);
 
     // The live base is named by the superblock; after one checkpoint it is base-1.
@@ -612,7 +870,7 @@ fn corrupt_base_bytes_fail_open() -> Result<(), TestError> {
     std::fs::write(&base_path, &bytes)?;
 
     assert!(
-        matches!(Database::open(&path), Err(DbError::InvalidStore { .. })),
+        matches!(Db::open(&path), Err(DbError::InvalidStore { .. })),
         "corrupt base must fail open with InvalidStore",
     );
     clean(&path)?;
@@ -627,10 +885,12 @@ fn torn_log_tail_truncates_and_recovers() -> Result<(), TestError> {
     let path = temp_path("torn-log-tail");
     clean(&path)?;
 
-    let mut database = Database::create(&path)?;
-    let mut writer = database.begin_write()?;
-    let kept = writer.create_element()?;
-    writer.commit()?;
+    let mut database = Db::create(&path)?;
+    #[expect(
+        clippy::redundant_closure_for_method_calls,
+        reason = "the method path cannot satisfy write's for<'a> Fn bound over Writer<'a>"
+    )]
+    let (kept, _outcome) = database.write(|writer| writer.create_element())?;
     drop(database);
 
     // Append a partial (torn) trailing record to the live delta-0.log.
@@ -640,8 +900,8 @@ fn torn_log_tail_truncates_and_recovers() -> Result<(), TestError> {
     drop(log);
 
     // Recovery truncates the torn tail and accepts the prior committed frame.
-    let reopened = Database::open(&path)?;
-    let read = reopened.begin_read();
+    let reopened = Db::open(&path)?;
+    let read = reopened.reader();
     assert!(read.contains_element(kept), "committed element survives");
     assert_eq!(read.element_count(), 1);
     clean(&path)?;
@@ -655,13 +915,15 @@ fn interior_log_corruption_is_loud() -> Result<(), TestError> {
     let path = temp_path("interior-log-corruption");
     clean(&path)?;
 
-    let mut database = Database::create(&path)?;
-    let mut first = database.begin_write()?;
-    first.create_element()?;
-    first.commit()?;
-    let mut second = database.begin_write()?;
-    second.create_element()?;
-    second.commit()?;
+    let mut database = Db::create(&path)?;
+    database.write(|first| {
+        first.create_element()?;
+        Ok(())
+    })?;
+    database.write(|second| {
+        second.create_element()?;
+        Ok(())
+    })?;
     drop(database);
 
     // Flip a payload byte inside the FIRST (non-final) frame's body. The
@@ -672,7 +934,7 @@ fn interior_log_corruption_is_loud() -> Result<(), TestError> {
     std::fs::write(&log_path, &bytes)?;
 
     assert!(
-        matches!(Database::open(&path), Err(DbError::LogCorrupt { .. })),
+        matches!(Db::open(&path), Err(DbError::LogCorrupt { .. })),
         "interior log corruption must be a loud LogCorrupt",
     );
     clean(&path)?;
@@ -684,22 +946,26 @@ fn concurrent_writers_are_rejected_until_release() -> Result<(), TestError> {
     let path = temp_path("writer-lock");
     clean(&path)?;
 
-    let mut first = Database::create(&path)?;
-    let writer = first.begin_write()?;
+    let mut first = Db::create(&path)?;
+    let mut second = Db::open(&path)?;
 
-    let mut second = Database::open(&path)?;
-    assert!(matches!(second.begin_write(), Err(DbError::WriterLockHeld)));
+    // While `first` holds the single-writer lock inside its write scope, a second
+    // handle's write is rejected with `WriterLockHeld`.
+    first.write(|_writer| {
+        let blocked = second.write(|_writer| Ok(()));
+        assert!(matches!(blocked, Err(DbError::WriterLockHeld)));
+        Ok(())
+    })?;
 
-    // Releasing the held writer frees the single-writer lock.
-    drop(writer);
-    assert!(second.begin_write().is_ok());
+    // Once the first write commits, the lock is free and the second handle writes.
+    second.write(|_writer| Ok(()))?;
 
     clean(&path)?;
     Ok(())
 }
 
-/// MVCC isolation on the LIVE commit path: a `ReadTransaction` pins its snapshot
-/// before a commit on the same `Database` handle, so it keeps observing the
+/// MVCC isolation on the LIVE commit path: a `Reader` pins its snapshot
+/// before a commit on the same `Db` handle, so it keeps observing the
 /// pre-commit state (count and pin unchanged) while a fresh reader observes the
 /// post-commit state. This guards the P4 publish-new-`Arc` invariant on the real
 /// `begin_write` + `commit` path (not the `with_applied` proof helper).
@@ -708,21 +974,23 @@ fn pinned_reader_is_isolated_from_a_later_commit() -> Result<(), TestError> {
     let path = temp_path("mvcc-reader-isolation");
     clean(&path)?;
 
-    let mut database = Database::create(&path)?;
-    let mut seed = database.begin_write()?;
-    seed.create_element()?;
-    seed.commit()?;
+    let mut database = Db::create(&path)?;
+    database.write(|seed| {
+        seed.create_element()?;
+        Ok(())
+    })?;
 
     // Pin a reader at count N = 1, recording its visible generation/lsn.
-    let pinned = database.begin_read();
+    let pinned = database.reader();
     let n = pinned.element_count();
     assert_eq!(n, 1);
     let pin_before = pinned.pin();
 
     // Commit a new element on the SAME handle while the reader is pinned.
-    let mut writer = database.begin_write()?;
-    writer.create_element()?;
-    writer.commit()?;
+    database.write(|writer| {
+        writer.create_element()?;
+        Ok(())
+    })?;
 
     // The pinned reader still observes the pre-commit state and an unchanged pin.
     assert_eq!(
@@ -737,7 +1005,7 @@ fn pinned_reader_is_isolated_from_a_later_commit() -> Result<(), TestError> {
     );
 
     // A fresh reader observes the post-commit state (N + 1) and a newer pin.
-    let fresh = database.begin_read();
+    let fresh = database.reader();
     assert_eq!(
         fresh.element_count(),
         n + 1,
@@ -753,65 +1021,64 @@ fn pinned_reader_is_isolated_from_a_later_commit() -> Result<(), TestError> {
 }
 
 /// Loads a traversal-focused graph fixture.
-fn load_traversal_fixture(database: &mut Database) -> Result<TraversalFixtureIds, DbError> {
-    let mut writer = database.begin_write()?;
-    let source_role = writer.register_role("source")?;
-    let target_role = writer.register_role("target")?;
-    let calls_type = writer.register_relation_type("Calls")?;
-    let meeting_type = writer.register_relation_type("Meeting")?;
-    let alice = writer.create_element()?;
-    let bob = writer.create_element()?;
-    let carol = writer.create_element()?;
-    let dave = writer.create_element()?;
-    let roles = (source_role, target_role);
-    create_directed_relation(&mut writer, calls_type, roles, (alice, bob))?;
-    create_directed_relation(&mut writer, calls_type, roles, (bob, carol))?;
-    create_directed_relation(&mut writer, calls_type, roles, (carol, alice))?;
-    let meeting = writer.create_relation()?;
-    writer.set_relation_type(meeting, meeting_type)?;
-    writer.create_incidence(meeting, alice, source_role)?;
-    writer.create_incidence(meeting, bob, target_role)?;
-    writer.create_incidence(meeting, carol, target_role)?;
-    let graph_projection =
-        writer.define_projection(ProjectionDefinition::Graph(GraphProjectionDefinition {
-            name: "calls".to_owned(),
-            relation_types: BTreeSet::from([calls_type]),
-            source_role,
-            target_role,
-        }))?;
-    let hyper_projection = writer.define_projection(ProjectionDefinition::Hypergraph(
-        HypergraphProjectionDefinition {
-            name: "calls_hyper".to_owned(),
-            relation_types: BTreeSet::from([meeting_type]),
-            source_roles: BTreeSet::from([source_role]),
-            target_roles: BTreeSet::from([target_role]),
-        },
-    ))?;
-    writer.commit()?;
-    Ok(TraversalFixtureIds {
-        alice,
-        bob,
-        carol,
-        dave,
-        graph_projection,
-        hyper_projection,
-    })
+fn load_traversal_fixture(database: &mut Db) -> Result<TraversalFixtureIds, DbError> {
+    let (fixture, _outcome) = database.write(|writer| {
+        let source_role = writer.register_role("source")?;
+        let target_role = writer.register_role("target")?;
+        let calls_type = writer.register_relation_type("Calls")?;
+        let meeting_type = writer.register_relation_type("Meeting")?;
+        let alice = writer.create_element()?;
+        let bob = writer.create_element()?;
+        let carol = writer.create_element()?;
+        let dave = writer.create_element()?;
+        let roles = (source_role, target_role);
+        create_directed_relation(writer, calls_type, roles, (alice, bob))?;
+        create_directed_relation(writer, calls_type, roles, (bob, carol))?;
+        create_directed_relation(writer, calls_type, roles, (carol, alice))?;
+        let meeting = writer.create_relation()?;
+        writer.set_relation_type(meeting, meeting_type)?;
+        writer.create_incidence(meeting, alice, source_role)?;
+        writer.create_incidence(meeting, bob, target_role)?;
+        writer.create_incidence(meeting, carol, target_role)?;
+        let graph_projection =
+            writer.define_projection(ProjectionDefinition::Graph(GraphProjectionDefinition {
+                name: "calls".to_owned(),
+                relation_types: BTreeSet::from([calls_type]),
+                source_role,
+                target_role,
+            }))?;
+        let hyper_projection = writer.define_projection(ProjectionDefinition::Hypergraph(
+            HypergraphProjectionDefinition {
+                name: "calls_hyper".to_owned(),
+                relation_types: BTreeSet::from([meeting_type]),
+                source_roles: BTreeSet::from([source_role]),
+                target_roles: BTreeSet::from([target_role]),
+            },
+        ))?;
+        Ok(TraversalFixtureIds {
+            alice,
+            bob,
+            carol,
+            dave,
+            graph_projection,
+            hyper_projection,
+        })
+    })?;
+    Ok(fixture)
 }
 
 /// Creates a traversal test database.
-fn create_traversal_database(
-    name: &str,
-) -> Result<(PathBuf, Database, TraversalFixtureIds), TestError> {
+fn create_traversal_database(name: &str) -> Result<(PathBuf, Db, TraversalFixtureIds), TestError> {
     let path = temp_path(name);
     clean(&path)?;
-    let mut database = Database::create(&path)?;
+    let mut database = Db::create(&path)?;
     let fixture = load_traversal_fixture(&mut database)?;
     Ok((path, database, fixture))
 }
 
 /// Creates one directed binary relation.
 fn create_directed_relation(
-    writer: &mut oxgraph_db::WriteTransaction<'_>,
+    writer: &mut oxgraph_db::Writer<'_>,
     relation_type: oxgraph_db::RelationTypeId,
     roles: (oxgraph_db::RoleId, oxgraph_db::RoleId),
     endpoints: (oxgraph_db::ElementId, oxgraph_db::ElementId),
@@ -825,30 +1092,60 @@ fn create_directed_relation(
     Ok(())
 }
 
+/// Builds a small DAG `0 -> 1 -> 2 -> 3` with a `0 -> 2` shortcut over a `calls`
+/// graph projection, returning the element ids and the projection id.
+fn build_chain_dag(
+    database: &mut Db,
+) -> Result<(Vec<oxgraph_db::ElementId>, oxgraph_db::ProjectionId), TestError> {
+    let (out, _outcome) = database.write(|writer| {
+        let source = writer.register_role("source")?;
+        let target = writer.register_role("target")?;
+        let edge_type = writer.register_relation_type("Calls")?;
+        let mut elements = Vec::with_capacity(4);
+        for _ in 0..4 {
+            elements.push(writer.create_element()?);
+        }
+        for (from, to) in [(0, 1), (1, 2), (2, 3), (0, 2)] {
+            create_directed_relation(
+                writer,
+                edge_type,
+                (source, target),
+                (elements[from], elements[to]),
+            )?;
+        }
+        let projection =
+            writer.define_projection(ProjectionDefinition::Graph(GraphProjectionDefinition {
+                name: "calls".to_owned(),
+                relation_types: BTreeSet::from([edge_type]),
+                source_role: source,
+                target_role: target,
+            }))?;
+        Ok((elements, projection))
+    })?;
+    Ok(out)
+}
+
 /// Asserts graph traversal rows.
 fn assert_traversal(
-    read: &oxgraph_db::ReadTransaction,
+    read: &oxgraph_db::Reader,
     projection: oxgraph_db::ProjectionId,
     seeds: &[oxgraph_db::ElementId],
-    options: TraversalOptions,
-    expected: &[TraversalRow],
+    options: Walk,
+    expected: &[TraversedNode],
 ) -> Result<(), DbError> {
-    assert_eq!(
-        read.traverse_graph(projection, seeds, options)?.rows(),
-        expected
-    );
+    assert_eq!(read.walk(projection, seeds, options)?.nodes(), expected);
     Ok(())
 }
 
 /// Executes an `OxQL` query returning one element value per row.
 fn execute_element_query(
-    database: &Database,
-    read: &oxgraph_db::ReadTransaction,
+    database: &Db,
+    read: &oxgraph_db::Reader,
     query: &str,
 ) -> Result<Vec<oxgraph_db::ElementId>, DbError> {
-    let prepared = database.prepare(QueryLanguage::Oxql, query)?;
+    let prepared = database.prepare(query)?;
     Ok(read
-        .execute(&prepared)?
+        .run(&prepared)?
         .rows()
         .iter()
         .filter_map(|row| match row.values.as_slice() {
@@ -859,91 +1156,92 @@ fn execute_element_query(
 }
 
 /// Loads a graph and hypergraph fixture.
-fn load_fixture(database: &mut Database) -> Result<FixtureIds, DbError> {
-    let mut writer = database.begin_write()?;
-    let source_role = writer.register_role("source")?;
-    let target_role = writer.register_role("target")?;
-    let person_label = writer.register_label("Person")?;
-    let knows_type = writer.register_relation_type("Knows")?;
-    let meeting_type = writer.register_relation_type("Meeting")?;
-    let name_key =
-        writer.register_property_key("name", PropertyFamily::Element, PropertyType::Text)?;
-    let age_key =
-        writer.register_property_key("age", PropertyFamily::Element, PropertyType::Integer)?;
-    writer.register_property_key(
-        "relation_weight",
-        PropertyFamily::Relation,
-        PropertyType::Integer,
-    )?;
-    writer.register_property_key(
-        "incidence_note",
-        PropertyFamily::Incidence,
-        PropertyType::Text,
-    )?;
+fn load_fixture(database: &mut Db) -> Result<FixtureIds, DbError> {
+    let (fixture, _outcome) = database.write(|writer| {
+        let source_role = writer.register_role("source")?;
+        let target_role = writer.register_role("target")?;
+        let person_label = writer.register_label("Person")?;
+        let knows_type = writer.register_relation_type("Knows")?;
+        let meeting_type = writer.register_relation_type("Meeting")?;
+        let name_key =
+            writer.register_property_key("name", PropertyFamily::Element, PropertyType::Text)?;
+        let age_key =
+            writer.register_property_key("age", PropertyFamily::Element, PropertyType::Integer)?;
+        writer.register_property_key(
+            "relation_weight",
+            PropertyFamily::Relation,
+            PropertyType::Integer,
+        )?;
+        writer.register_property_key(
+            "incidence_note",
+            PropertyFamily::Incidence,
+            PropertyType::Text,
+        )?;
 
-    let (alice, bob, carol) = create_people(&mut writer, person_label, name_key, age_key)?;
+        let (alice, bob, carol) = create_people(writer, person_label, name_key, age_key)?;
 
-    let knows = writer.create_relation()?;
-    writer.set_relation_type(knows, knows_type)?;
-    writer.create_incidence(knows, alice, source_role)?;
-    writer.create_incidence(knows, bob, target_role)?;
+        let knows = writer.create_relation()?;
+        writer.set_relation_type(knows, knows_type)?;
+        writer.create_incidence(knows, alice, source_role)?;
+        writer.create_incidence(knows, bob, target_role)?;
 
-    let meeting = writer.create_relation()?;
-    writer.set_relation_type(meeting, meeting_type)?;
-    let meeting_source = writer.create_incidence(meeting, alice, source_role)?;
-    let meeting_bob = writer.create_incidence(meeting, bob, target_role)?;
-    let meeting_carol = writer.create_incidence(meeting, carol, target_role)?;
+        let meeting = writer.create_relation()?;
+        writer.set_relation_type(meeting, meeting_type)?;
+        let meeting_source = writer.create_incidence(meeting, alice, source_role)?;
+        let meeting_bob = writer.create_incidence(meeting, bob, target_role)?;
+        let meeting_carol = writer.create_incidence(meeting, carol, target_role)?;
 
-    let graph_projection =
-        writer.define_projection(ProjectionDefinition::Graph(GraphProjectionDefinition {
-            name: "knows_graph".to_owned(),
-            relation_types: BTreeSet::from([knows_type]),
-            source_role,
-            target_role,
-        }))?;
-    let hyper_projection = writer.define_projection(ProjectionDefinition::Hypergraph(
-        HypergraphProjectionDefinition {
-            name: "meeting_hyper".to_owned(),
-            relation_types: BTreeSet::from([meeting_type]),
-            source_roles: BTreeSet::from([source_role]),
-            target_roles: BTreeSet::from([target_role]),
-        },
-    ))?;
-    let indexes = define_fixture_indexes(
-        &mut writer,
-        FixtureIndexInputs {
-            person_label,
+        let graph_projection =
+            writer.define_projection(ProjectionDefinition::Graph(GraphProjectionDefinition {
+                name: "knows_graph".to_owned(),
+                relation_types: BTreeSet::from([knows_type]),
+                source_role,
+                target_role,
+            }))?;
+        let hyper_projection = writer.define_projection(ProjectionDefinition::Hypergraph(
+            HypergraphProjectionDefinition {
+                name: "meeting_hyper".to_owned(),
+                relation_types: BTreeSet::from([meeting_type]),
+                source_roles: BTreeSet::from([source_role]),
+                target_roles: BTreeSet::from([target_role]),
+            },
+        ))?;
+        let indexes = define_fixture_indexes(
+            writer,
+            FixtureIndexInputs {
+                person_label,
+                name_key,
+                age_key,
+                graph_projection,
+                hyper_projection,
+            },
+        )?;
+
+        Ok(FixtureIds {
+            alice,
+            bob,
+            carol,
+            knows,
+            meeting,
+            meeting_source,
+            meeting_bob,
+            meeting_carol,
             name_key,
             age_key,
             graph_projection,
             hyper_projection,
-        },
-    )?;
-    writer.commit()?;
-
-    Ok(FixtureIds {
-        alice,
-        bob,
-        carol,
-        knows,
-        meeting,
-        meeting_source,
-        meeting_bob,
-        meeting_carol,
-        name_key,
-        age_key,
-        graph_projection,
-        hyper_projection,
-        age_index: indexes.age,
-        person_identity_index: indexes.person_identity,
-        graph_projection_index: indexes.graph_projection,
-        hyper_projection_index: indexes.hyper_projection,
-    })
+            age_index: indexes.age,
+            person_identity_index: indexes.person_identity,
+            graph_projection_index: indexes.graph_projection,
+            hyper_projection_index: indexes.hyper_projection,
+        })
+    })?;
+    Ok(fixture)
 }
 
 /// Defines the fixture indexes.
 fn define_fixture_indexes(
-    writer: &mut oxgraph_db::WriteTransaction<'_>,
+    writer: &mut oxgraph_db::Writer<'_>,
     inputs: FixtureIndexInputs,
 ) -> Result<FixtureIndexIds, DbError> {
     writer.define_index(
@@ -988,7 +1286,7 @@ fn define_fixture_indexes(
 
 /// Creates the fixture people and their properties.
 fn create_people(
-    writer: &mut oxgraph_db::WriteTransaction<'_>,
+    writer: &mut oxgraph_db::Writer<'_>,
     person_label: oxgraph_db::LabelId,
     name_key: oxgraph_db::PropertyKeyId,
     age_key: oxgraph_db::PropertyKeyId,
@@ -1004,22 +1302,22 @@ fn create_people(
     let bob = writer.create_element()?;
     let carol = writer.create_element()?;
     for element in [alice, bob, carol] {
-        writer.add_element_label(element, person_label)?;
+        writer.add_label(element, person_label)?;
     }
-    writer.set_property(
+    writer.set(
         PropertySubject::Element(alice),
-        name_key,
-        PropertyValue::Text("Alice".to_owned()),
+        Key::<Text>::from_id(name_key),
+        "Alice".to_owned(),
     )?;
-    writer.set_property(
+    writer.set(
         PropertySubject::Element(bob),
-        name_key,
-        PropertyValue::Text("Bob".to_owned()),
+        Key::<Text>::from_id(name_key),
+        "Bob".to_owned(),
     )?;
-    writer.set_property(
+    writer.set(
         PropertySubject::Element(alice),
-        age_key,
-        PropertyValue::Integer(42),
+        Key::<Int>::from_id(age_key),
+        42_i64,
     )?;
     Ok((alice, bob, carol))
 }
@@ -1030,8 +1328,8 @@ fn create_people(
 /// binds tighter than `OR`, parentheses override that precedence, and malformed
 /// predicates are rejected at prepare time.
 fn assert_compound_where(
-    database: &Database,
-    read: &oxgraph_db::ReadTransaction,
+    database: &Db,
+    read: &oxgraph_db::Reader,
     fixture: &FixtureIds,
 ) -> Result<(), DbError> {
     assert_eq!(
@@ -1075,54 +1373,48 @@ fn assert_compound_where(
         vec![fixture.alice],
     );
     assert!(matches!(
-        database.prepare(QueryLanguage::Oxql, "MATCH ELEMENTS WHERE name ="),
+        database.prepare("MATCH ELEMENTS WHERE name ="),
         Err(DbError::UnsupportedQuery { .. })
     ));
     assert!(matches!(
-        database.prepare(QueryLanguage::Oxql, "MATCH ELEMENTS WHERE ( name = 'Alice'"),
+        database.prepare("MATCH ELEMENTS WHERE ( name = 'Alice'"),
         Err(DbError::UnsupportedQuery { .. })
     ));
     Ok(())
 }
 
 /// Asserts query-language coverage over the fixture.
-fn assert_query_counts(database: &Database, fixture: &FixtureIds) -> Result<(), DbError> {
-    let read = database.begin_read();
-    let elements = database.prepare(QueryLanguage::Oxql, "MATCH ELEMENTS")?;
-    assert_eq!(read.execute(&elements)?.rows().len(), 3);
+fn assert_query_counts(database: &Db, fixture: &FixtureIds) -> Result<(), DbError> {
+    let read = database.reader();
+    let elements = database.prepare("MATCH ELEMENTS")?;
+    assert_eq!(read.run(&elements)?.rows().len(), 3);
 
-    let people = database.prepare(QueryLanguage::Oxql, "MATCH ELEMENTS HAS LABEL Person")?;
-    assert_eq!(read.execute(&people)?.rows().len(), 3);
+    let people = database.prepare("MATCH ELEMENTS HAS LABEL Person")?;
+    assert_eq!(read.run(&people)?.rows().len(), 3);
 
-    let alice = database.prepare(QueryLanguage::Oxql, "MATCH ELEMENTS WHERE name = 'Alice'")?;
-    let rows = read.execute(&alice)?;
+    let alice = database.prepare("MATCH ELEMENTS WHERE name = 'Alice'")?;
+    let rows = read.run(&alice)?;
     assert_eq!(rows.rows().len(), 1);
     assert_eq!(
         rows.rows()[0].values,
         vec![QueryValue::Element(fixture.alice)]
     );
     assert!(matches!(
-        database.prepare(QueryLanguage::Oxql, "MATCH ELEMENTS WHERE age = '42'"),
+        database.prepare("MATCH ELEMENTS WHERE age = '42'"),
         Err(DbError::PropertyTypeMismatch {
             expected: PropertyType::Integer,
             actual: PropertyType::Text,
         })
     ));
     assert!(matches!(
-        database.prepare(
-            QueryLanguage::Oxql,
-            "MATCH ELEMENTS WHERE relation_weight = 1",
-        ),
+        database.prepare("MATCH ELEMENTS WHERE relation_weight = 1",),
         Err(DbError::WrongPropertyFamily {
             expected: PropertyFamily::Relation,
             actual: PropertyFamily::Element,
         })
     ));
     assert!(matches!(
-        database.prepare(
-            QueryLanguage::Oxql,
-            "MATCH ELEMENTS WHERE incidence_note = 'source'",
-        ),
+        database.prepare("MATCH ELEMENTS WHERE incidence_note = 'source'",),
         Err(DbError::WrongPropertyFamily {
             expected: PropertyFamily::Incidence,
             actual: PropertyFamily::Element,
@@ -1131,24 +1423,18 @@ fn assert_query_counts(database: &Database, fixture: &FixtureIds) -> Result<(), 
 
     assert_compound_where(database, &read, fixture)?;
 
-    let knows = database.prepare(QueryLanguage::Oxql, "MATCH RELATIONS TYPE Knows")?;
-    assert_eq!(read.execute(&knows)?.rows().len(), 1);
+    let knows = database.prepare("MATCH RELATIONS TYPE Knows")?;
+    assert_eq!(read.run(&knows)?.rows().len(), 1);
 
-    let neighbors = database.prepare(
-        QueryLanguage::Oxql,
-        &format!("GRAPH knows_graph NEIGHBORS {}", fixture.alice.get()),
-    )?;
+    let neighbors = database.prepare(&format!(
+        "GRAPH knows_graph NEIGHBORS {}",
+        fixture.alice.get()
+    ))?;
     assert_eq!(
-        read.execute(&neighbors)?.rows()[0].values,
+        read.run(&neighbors)?.rows()[0].values,
         vec![QueryValue::Element(fixture.bob)]
     );
 
-    let cypher_nodes = database.prepare(QueryLanguage::Cypher, "MATCH (n:Person) RETURN n")?;
-    assert_eq!(read.execute(&cypher_nodes)?.rows().len(), 3);
-
-    let cypher_edges =
-        database.prepare(QueryLanguage::Cypher, "MATCH (n)-[r]->(m) RETURN n,r,m")?;
-    assert_eq!(read.execute(&cypher_edges)?.rows().len(), 1);
     Ok(())
 }
 

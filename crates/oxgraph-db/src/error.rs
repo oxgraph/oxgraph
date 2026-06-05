@@ -1,4 +1,4 @@
-//! Database error surface.
+//! Db error surface.
 
 use std::{fmt, io};
 
@@ -15,9 +15,9 @@ use crate::{
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum DbError {
-    /// Database files already exist.
+    /// Db files already exist.
     AlreadyExists,
-    /// Database files do not exist.
+    /// Db files do not exist.
     NotFound,
     /// The single-writer lock is already held by another writer.
     WriterLockHeld,
@@ -107,6 +107,15 @@ pub enum DbError {
         /// Deterministic validation message.
         message: String,
     },
+    /// The store's OXGDB format version is not supported by this build. A base
+    /// written under an older format (for example one lacking the persisted
+    /// `SECTION_INDEX_*` postings) is rejected here rather than silently rebuilt.
+    UnsupportedFormat {
+        /// Format version recorded in the store.
+        found: u32,
+        /// Format version this build requires.
+        expected: u32,
+    },
     /// Wraps an IO error with operation context.
     Io {
         /// Operation that failed.
@@ -114,10 +123,10 @@ pub enum DbError {
         /// Underlying IO error.
         source: io::Error,
     },
-    /// Wraps a substrate bounded-BFS traversal failure.
+    /// A bounded traversal failed.
     Traversal {
-        /// Underlying bounded-BFS error.
-        source: oxgraph_algo::BfsError,
+        /// Deterministic reason the traversal failed.
+        reason: &'static str,
     },
     /// A delta-log record is corrupt beyond the recoverable torn tail.
     LogCorrupt {
@@ -132,6 +141,32 @@ pub enum DbError {
         expected: u64,
         /// Base generation found in the record.
         found: u64,
+    },
+    /// A catalog name was not found in a bound schema.
+    UnknownName {
+        /// The kind of catalog entry (for example `"role"` or `"property key"`).
+        kind: &'static str,
+        /// The name that was not found.
+        name: String,
+    },
+    /// A required property was absent from a subject.
+    MissingProperty {
+        /// The property key that was required but absent.
+        key: PropertyKeyId,
+    },
+    /// A declared schema item conflicts with an existing catalog entry.
+    SchemaConflict {
+        /// The conflicting catalog name.
+        name: String,
+        /// Deterministic reason the declaration conflicts with the catalog.
+        reason: &'static str,
+    },
+    /// A numeric value was outside the representable `i64` range.
+    ValueOutOfRange,
+    /// A property key has no associated equality index.
+    NoEqualityIndex {
+        /// The property key lacking an equality index.
+        key: PropertyKeyId,
     },
 }
 
@@ -178,13 +213,13 @@ impl DbError {
         }
     }
 
-    /// Wraps a substrate bounded-BFS traversal failure.
+    /// Builds a traversal error from a deterministic reason.
     ///
     /// # Performance
     ///
     /// This function is `O(1)`.
-    pub(crate) const fn traversal(source: oxgraph_algo::BfsError) -> Self {
-        Self::Traversal { source }
+    pub(crate) const fn traversal(reason: &'static str) -> Self {
+        Self::Traversal { reason }
     }
 }
 
@@ -230,8 +265,12 @@ impl fmt::Display for DbError {
             Self::EmptyQuery => formatter.write_str("empty query"),
             Self::UnsupportedQuery { message } => write!(formatter, "unsupported query: {message}"),
             Self::InvalidStore { message } => write!(formatter, "invalid store: {message}"),
+            Self::UnsupportedFormat { found, expected } => write!(
+                formatter,
+                "unsupported OXGDB format version: found {found}, this build requires {expected}"
+            ),
             Self::Io { operation, source } => write!(formatter, "{operation} failed: {source}"),
-            Self::Traversal { source } => write!(formatter, "traversal error: {source}"),
+            Self::Traversal { reason } => write!(formatter, "traversal error: {reason}"),
             Self::LogCorrupt { lsn, reason } => {
                 write!(formatter, "delta-log corrupt at lsn {lsn}: {reason}")
             }
@@ -239,6 +278,21 @@ impl fmt::Display for DbError {
                 formatter,
                 "base generation mismatch: superblock names {expected}, record has {found}"
             ),
+            Self::UnknownName { kind, name } => write!(formatter, "unknown {kind} {name:?}"),
+            Self::MissingProperty { key } => {
+                write!(formatter, "missing property {}", key.get())
+            }
+            Self::SchemaConflict { name, reason } => {
+                write!(formatter, "schema conflict for {name:?}: {reason}")
+            }
+            Self::ValueOutOfRange => formatter.write_str("value out of representable i64 range"),
+            Self::NoEqualityIndex { key } => {
+                write!(
+                    formatter,
+                    "no equality index for property key {}",
+                    key.get()
+                )
+            }
         }
     }
 }
@@ -247,8 +301,8 @@ impl std::error::Error for DbError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Io { source, .. } => Some(source),
-            Self::Traversal { source } => Some(source),
-            Self::AlreadyExists
+            Self::Traversal { .. }
+            | Self::AlreadyExists
             | Self::NotFound
             | Self::WriterLockHeld
             | Self::IdOverflow
@@ -271,8 +325,14 @@ impl std::error::Error for DbError {
             | Self::EmptyQuery
             | Self::UnsupportedQuery { .. }
             | Self::InvalidStore { .. }
+            | Self::UnsupportedFormat { .. }
             | Self::LogCorrupt { .. }
-            | Self::BaseGenerationMismatch { .. } => None,
+            | Self::BaseGenerationMismatch { .. }
+            | Self::UnknownName { .. }
+            | Self::MissingProperty { .. }
+            | Self::SchemaConflict { .. }
+            | Self::ValueOutOfRange
+            | Self::NoEqualityIndex { .. } => None,
         }
     }
 }

@@ -48,6 +48,7 @@ use std::{
     sync::Arc,
 };
 
+use yoke::Yoke;
 use zerocopy::byteorder::{LE, U64};
 
 use crate::{
@@ -56,7 +57,7 @@ use crate::{
     backing::{Base, BaseView},
     catalog::{IndexDefinition, ProjectionDefinition, PropertyFamily, PropertyKeyDefinition},
     id::CommitSeq,
-    index::{BaseIndex, OverlayIndex},
+    index::{BaseIndex, BorrowedBaseIndex, OverlayIndex, OwnedBaseIndex},
     state::{ElementRecord, IncidenceRecord, NextIds, PropertySubject, RelationRecord},
     value::{PropertyType, PropertyValue},
     wire::{self, MUTATION_OP_PAYLOAD_WORDS, MutationOp},
@@ -492,15 +493,19 @@ impl WriteOverlay {
             }
             wire::OP_CREATE_INCIDENCE => {
                 let id = IncidenceId::new(word(0));
+                let relation = RelationId::new(word(1));
+                let element = ElementId::new(word(2));
+                let role = RoleId::new(word(3));
                 self.incidences.insert(
                     id,
                     Some(IncidenceRecord {
                         id,
-                        relation: RelationId::new(word(1)),
-                        element: ElementId::new(word(2)),
-                        role: RoleId::new(word(3)),
+                        relation,
+                        element,
+                        role,
                     }),
                 );
+                self.index.on_create_incidence(id, relation, element);
             }
             wire::OP_TOMBSTONE_ELEMENT => {
                 self.tombstone_element_replay(base, ElementId::new(word(0)));
@@ -751,6 +756,34 @@ impl WriteOverlay {
             .map_or_else(|| base.property(subject, key).cloned(), Clone::clone)
     }
 
+    /// Returns whether the merged-visible value of `(subject, key)` already equals
+    /// `value`, comparing in place without cloning the existing value. The overlay
+    /// wins (a tombstone means "no value", so never equal); otherwise the base
+    /// value is consulted.
+    ///
+    /// This is the no-op gate for [`Self::set_property`]: re-asserting an unchanged
+    /// value must not log a mutation, so an incremental reconcile that re-sets
+    /// every property of an unchanged subject stays `O(change)`.
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(log change + log n + value length)`.
+    fn visible_property_is(
+        &self,
+        base: &BaseRecords,
+        subject: PropertySubject,
+        key: PropertyKeyId,
+        value: &PropertyValue,
+    ) -> bool {
+        self.properties
+            .get(&subject)
+            .and_then(|keys| keys.get(&key))
+            .map_or_else(
+                || base.property(subject, key) == Some(value),
+                |slot| slot.as_ref() == Some(value),
+            )
+    }
+
     /// Returns the merged-visible labels of `element` BEFORE a pending mutation
     /// (overlay record wins; a tombstone is empty; otherwise the base labels).
     ///
@@ -784,6 +817,20 @@ impl WriteOverlay {
             None => base
                 .relation(relation)
                 .and_then(|record| record.relation_type),
+        }
+    }
+
+    /// Returns the merged-visible incidence record of `id` BEFORE a pending
+    /// mutation (overlay record wins; a tombstone is `None`; otherwise base).
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(log change + log n)`.
+    fn visible_incidence(&self, base: &BaseRecords, id: IncidenceId) -> Option<IncidenceRecord> {
+        match self.incidences.get(&id) {
+            Some(Some(record)) => Some(*record),
+            Some(None) => None,
+            None => base.incidence(id).copied(),
         }
     }
 
@@ -891,6 +938,7 @@ impl WriteOverlay {
                 role,
             }),
         );
+        self.index.on_create_incidence(id, relation, element);
         self.log.push(
             wire::OP_CREATE_INCIDENCE,
             0,
@@ -978,7 +1026,10 @@ impl WriteOverlay {
     fn tombstone_incidence_inner(&mut self, base: &BaseRecords, id: IncidenceId) {
         let subject = PropertySubject::Incidence(id);
         let properties = self.visible_subject_properties(base, subject);
-        self.index.on_tombstone_incidence(subject, &properties);
+        if let Some(record) = self.visible_incidence(base, id) {
+            self.index
+                .on_tombstone_incidence(id, record.relation, record.element, &properties);
+        }
         self.incidences.insert(id, None);
         self.tombstone_subject_properties(base, subject);
     }
@@ -1166,6 +1217,14 @@ impl WriteOverlay {
         key: PropertyKeyId,
         value: PropertyValue,
     ) {
+        // Re-asserting the currently-visible value is a no-op: skip the log frame
+        // and the index/property mutation entirely. This is what keeps an
+        // incremental reconcile (which re-sets every property of every subject,
+        // most unchanged) `O(change)` rather than `O(properties touched)` — without
+        // it the commit logs the whole graph every reindex.
+        if self.visible_property_is(base, subject, key, &value) {
+            return;
+        }
         let (subject_kind, subject_id) = wire::encode_subject(subject);
         let value_tag = wire::property_type_tag(value.value_type());
         let (scalar, text_off, text_len) = match &value {
@@ -1812,32 +1871,99 @@ impl Overlay {
     }
 }
 
+/// How one base generation's derived index postings are held: either an OWNED
+/// build (the empty gen-0 base and the `#[cfg(test)]` differential oracle) or a
+/// [`Yoke`] BORROWING the persisted postings zero-copy out of the mapped
+/// [`Base`] (the production OPEN path — no rebuild from records).
+///
+/// The yoke co-owns its [`Arc<Base>`] cart, so the borrowed [`BorrowedBaseIndex`]
+/// lives exactly as long as this [`BaseRecords`] (which is itself `Arc`-shared),
+/// and `forbid(unsafe)` holds (the borrow is achieved through `yoke`, never raw
+/// pointers).
+///
+/// # Performance
+///
+/// [`Self::view`] is `O(1)`.
+enum HeldIndex {
+    /// An owned posting build (empty base / test oracle).
+    Owned(OwnedBaseIndex),
+    /// Postings borrowed zero-copy from the mapped base, yoked to its `Arc`.
+    Borrowed(Yoke<BorrowedBaseIndex<'static>, Arc<Base>>),
+}
+
+impl std::fmt::Debug for HeldIndex {
+    /// Formats the held index without dumping the (potentially large) postings:
+    /// only the arm tag, since [`Yoke`] and the mapped base are not [`Debug`].
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(1)`.
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Owned(_owned) => formatter.write_str("HeldIndex::Owned(..)"),
+            Self::Borrowed(_yoke) => formatter.write_str("HeldIndex::Borrowed(..)"),
+        }
+    }
+}
+
+impl HeldIndex {
+    /// Returns a borrowing [`BaseIndex`] view over the held postings.
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(1)`.
+    fn view(&self) -> BaseIndex<'_> {
+        match self {
+            Self::Owned(owned) => BaseIndex::Owned(owned),
+            Self::Borrowed(yoke) => BaseIndex::Borrowed(*yoke.get()),
+        }
+    }
+}
+
+impl Clone for HeldIndex {
+    /// Clones the held index. The borrowed arm clones the [`Yoke`] (an
+    /// `Arc::clone` of the cart plus a copy of the borrowed slice bundle), so no
+    /// posting bytes are duplicated.
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(1)` for the borrowed arm and `O(postings)` for the
+    /// owned arm.
+    fn clone(&self) -> Self {
+        match self {
+            Self::Owned(owned) => Self::Owned(owned.clone()),
+            Self::Borrowed(yoke) => Self::Borrowed(yoke.clone()),
+        }
+    }
+}
+
 /// Owned realization of one base generation's records, materialized once from a
 /// borrowed [`BaseView`] so the merge has a stable `&ElementRecord` to borrow
-/// for the [`Cow::Borrowed`] fast path.
+/// for the [`Cow::Borrowed`] fast path, paired with that generation's derived
+/// index postings — BORROWED zero-copy from the mapped base at open (no rebuild).
 ///
 /// The borrowed [`BaseView`] holds wire records (`ElementWire` with a label
 /// offset/length), not owned [`ElementRecord`] values, so a base point read
 /// cannot hand out `&ElementRecord` directly. This type owns the decoded records
 /// once; [`MergedState`] then borrows from it for base-only ids (zero clone per
-/// read).
+/// read). The index, by contrast, is NOT rebuilt: [`Self::open`] borrows the
+/// persisted `SECTION_INDEX_*` postings yoked to the [`Arc<Base>`].
 ///
 /// # Memory cost
 ///
-/// This realization carries a standing ~2x base memory cost per generation:
-/// [`Self::from_view`] duplicates the base bytes the Yoke already holds zero-copy
-/// into owned `BTreeMap`s, so the standing memory is ~2x the base (wire bytes +
-/// decoded records) for the life of every pinned reader. It is built once per
-/// checkpoint generation (at [`Snapshot::new`] — `open`/`create`/fold) and
-/// `Arc`-shared across every commit that pins that generation via
-/// [`Snapshot::with_shared_base_records`], so a commit re-decodes neither the
-/// base nor its index and stays `O(change)`. The build itself is a full
-/// `O(base records + labels + property bytes)` that gates fold/open latency.
+/// The record realization carries a standing ~2x base memory cost per generation
+/// ([`Self::open`] duplicates the base record bytes into owned `BTreeMap`s); the
+/// INDEX adds none — it is borrowed from the same mapped bytes. It is built once
+/// per checkpoint generation and `Arc`-shared across every commit that pins that
+/// generation via [`Snapshot::with_shared_base_records`], so a commit re-decodes
+/// neither the base nor its index and stays `O(change)`.
 ///
 /// # Performance
 ///
-/// [`Self::from_view`] is `O(base records + labels + property bytes)`; every
-/// accessor below is `O(log n)` or `O(1)`.
+/// [`Self::open`] is `O(base records + labels + property bytes)` for the record
+/// decode plus `O(index directory entries)` for the borrow validation (NOT the
+/// `O(base)` index rebuild the prior design paid); every accessor below is
+/// `O(log n)` or `O(1)`.
 #[derive(Clone, Debug)]
 pub(crate) struct BaseRecords {
     /// Decoded elements keyed by id, ascending.
@@ -1848,9 +1974,69 @@ pub(crate) struct BaseRecords {
     incidences: BTreeMap<IncidenceId, IncidenceRecord>,
     /// Decoded properties keyed by subject then key.
     properties: BTreeMap<PropertySubject, BTreeMap<PropertyKeyId, PropertyValue>>,
-    /// Derived membership/equality postings for this generation, built once in
-    /// RAM from the records above so a merged lookup is index-backed.
-    index: BaseIndex,
+    /// Derived membership/equality postings for this generation: borrowed
+    /// zero-copy from the mapped base at open, or owned for the empty/test base.
+    index: HeldIndex,
+}
+
+/// One base generation's decoded record maps (without the index), shared by the
+/// production [`BaseRecords::open`] and the `#[cfg(test)]` `from_view` paths.
+///
+/// # Performance
+///
+/// `perf: unspecified`; an aggregate of the four decoded maps.
+type DecodedRecords = (
+    BTreeMap<ElementId, ElementRecord>,
+    BTreeMap<RelationId, RelationRecord>,
+    BTreeMap<IncidenceId, IncidenceRecord>,
+    BTreeMap<PropertySubject, BTreeMap<PropertyKeyId, PropertyValue>>,
+);
+
+/// Decodes the four owned record maps from a borrowed base `view`.
+///
+/// # Errors
+///
+/// Returns [`DbError::InvalidStore`] when a record references a label run,
+/// property text, or subject kind the wire layout cannot resolve.
+///
+/// # Performance
+///
+/// This function is `O(base records + labels + property bytes)`.
+fn decode_records(view: &BaseView<'_>) -> Result<DecodedRecords, DbError> {
+    let mut elements = BTreeMap::new();
+    for record in view.elements() {
+        let labels = decode_labels(view.element_label_run(record))?;
+        let id = ElementId::new(record.id.get());
+        elements.insert(id, ElementRecord { id, labels });
+    }
+    let mut relations = BTreeMap::new();
+    for record in view.relations() {
+        let labels = decode_labels(view.relation_label_run(record))?;
+        let id = RelationId::new(record.id.get());
+        relations.insert(
+            id,
+            RelationRecord {
+                id,
+                relation_type: crate::wire::decode_relation_type(record.relation_type.get()),
+                labels,
+            },
+        );
+    }
+    let mut incidences = BTreeMap::new();
+    for record in view.incidences() {
+        let id = IncidenceId::new(record.id.get());
+        incidences.insert(
+            id,
+            IncidenceRecord {
+                id,
+                relation: RelationId::new(record.relation.get()),
+                element: ElementId::new(record.element.get()),
+                role: RoleId::new(record.role.get()),
+            },
+        );
+    }
+    let properties = decode_base_properties(view)?;
+    Ok((elements, relations, incidences, properties))
 }
 
 impl BaseRecords {
@@ -1869,11 +2055,91 @@ impl BaseRecords {
             relations: BTreeMap::new(),
             incidences: BTreeMap::new(),
             properties: BTreeMap::new(),
-            index: BaseIndex::empty(),
+            index: HeldIndex::Owned(OwnedBaseIndex::empty()),
         }
     }
 
-    /// Materializes the owned records of `view`, decoding the wire arrays once.
+    /// Materializes one base generation's owned records from `base`, decoding the
+    /// wire record arrays once and BORROWING the derived index postings zero-copy
+    /// from the same mapped base (yoked to its `Arc`) — the index is NOT rebuilt.
+    ///
+    /// This is the production OPEN path. A base that lacks the persisted index
+    /// postings was already rejected by [`Base::open`] with
+    /// [`DbError::UnsupportedFormat`], so there is no rebuild-from-records
+    /// fallback here.
+    ///
+    /// In debug builds, the borrowed index is differentially checked against the
+    /// `from_records` oracle (see `debug_assert_index_matches`); release builds
+    /// skip the check, so open stays non-`O(base)` for the index.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError::InvalidStore`] when a record or a posting section is
+    /// malformed.
+    ///
+    /// # Performance
+    ///
+    /// This function is `O(base records + labels + property bytes)` for the record
+    /// decode plus `O(index directory entries)` for the borrow validation.
+    pub(crate) fn open(base: &Arc<Base>) -> Result<Self, DbError> {
+        let (elements, relations, incidences, properties) = decode_records(base.get())?;
+        // Yoke the borrowed index to a clone of the base `Arc`, so the borrowed
+        // postings live as long as these records (which are themselves shared).
+        let index = HeldIndex::Borrowed(Yoke::attach_to_cart(Arc::clone(base), |base: &Base| {
+            base.get().index()
+        }));
+        let records = Self {
+            elements,
+            relations,
+            incidences,
+            properties,
+            index,
+        };
+        #[cfg(debug_assertions)]
+        records.debug_assert_index_matches();
+        Ok(records)
+    }
+
+    /// Asserts that every borrowed index posting equals the owned `from_records`
+    /// oracle rebuilt from this generation's records, across every accessor. This
+    /// is the open-time differential safety net; it exists ONLY in debug builds
+    /// (and is called only there), so a release open never pays the `O(base)`
+    /// rebuild in production.
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(base records + labels + properties)`.
+    #[cfg(debug_assertions)]
+    fn debug_assert_index_matches(&self) {
+        let oracle = OwnedBaseIndex::from_records(
+            &self.elements,
+            &self.relations,
+            &self.incidences,
+            &self.properties,
+        );
+        debug_assert!(
+            crate::index::indexes_agree(self.index.view(), BaseIndex::Owned(&oracle)),
+            "borrowed base index disagrees with the from_records oracle",
+        );
+    }
+
+    /// Returns a borrowing view over this generation's derived index postings
+    /// (membership + equality), backed by either the borrowed mapped sections or
+    /// the owned build.
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(1)`.
+    pub(crate) fn index(&self) -> BaseIndex<'_> {
+        self.index.view()
+    }
+
+    /// Materializes one base generation's owned records AND rebuilds the OWNED
+    /// derived index from those records (via `from_records`). This is the
+    /// `#[cfg(test)]` differential-oracle path: the production OPEN path
+    /// ([`Self::open`]) borrows the persisted index instead of rebuilding it, and
+    /// the tests compare the two. Test code holds a borrowed [`BaseView`] without
+    /// the [`Arc<Base>`] the yoke needs, so this owned form serves them.
     ///
     /// # Errors
     ///
@@ -1883,41 +2149,15 @@ impl BaseRecords {
     /// # Performance
     ///
     /// This function is `O(base records + labels + property bytes)`.
+    #[cfg(test)]
     pub(crate) fn from_view(view: &BaseView<'_>) -> Result<Self, DbError> {
-        let mut elements = BTreeMap::new();
-        for record in view.elements() {
-            let labels = decode_labels(view.element_label_run(record))?;
-            let id = ElementId::new(record.id.get());
-            elements.insert(id, ElementRecord { id, labels });
-        }
-        let mut relations = BTreeMap::new();
-        for record in view.relations() {
-            let labels = decode_labels(view.relation_label_run(record))?;
-            let id = RelationId::new(record.id.get());
-            relations.insert(
-                id,
-                RelationRecord {
-                    id,
-                    relation_type: crate::wire::decode_relation_type(record.relation_type.get()),
-                    labels,
-                },
-            );
-        }
-        let mut incidences = BTreeMap::new();
-        for record in view.incidences() {
-            let id = IncidenceId::new(record.id.get());
-            incidences.insert(
-                id,
-                IncidenceRecord {
-                    id,
-                    relation: RelationId::new(record.relation.get()),
-                    element: ElementId::new(record.element.get()),
-                    role: RoleId::new(record.role.get()),
-                },
-            );
-        }
-        let properties = decode_base_properties(view)?;
-        let index = BaseIndex::from_records(&elements, &relations, &properties);
+        let (elements, relations, incidences, properties) = decode_records(view)?;
+        let index = HeldIndex::Owned(OwnedBaseIndex::from_records(
+            &elements,
+            &relations,
+            &incidences,
+            &properties,
+        ));
         Ok(Self {
             elements,
             relations,
@@ -1925,15 +2165,6 @@ impl BaseRecords {
             properties,
             index,
         })
-    }
-
-    /// Returns this generation's derived index postings (membership + equality).
-    ///
-    /// # Performance
-    ///
-    /// This method is `O(1)`.
-    pub(crate) const fn index(&self) -> &BaseIndex {
-        &self.index
     }
 
     /// Returns the base element record for `id`, if present.
@@ -2035,7 +2266,7 @@ fn decode_base_properties(
 /// The immutable unit a read transaction pins: one base generation plus the
 /// frozen overlay published over it, tagged by `(generation, lsn)` identity.
 ///
-/// `begin_read` clones the database's current `Arc<Snapshot>`, so a reader holds
+/// `reader` clones the database's current `Arc<Snapshot>`, so a reader holds
 /// the whole triple by `Arc` and observes a fixed state even across later
 /// commits/checkpoints. It is [`Send`] + [`Sync`] (asserted below)
 /// because [`Base`] is `Send + Sync`, [`Overlay`] holds owned `Send + Sync`
@@ -2060,34 +2291,6 @@ pub(crate) struct Snapshot {
 }
 
 impl Snapshot {
-    /// Builds a snapshot pinning `base` under `overlay`, tagged `(generation,
-    /// lsn)`, materializing the base's owned records once for the merge.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`DbError::InvalidStore`] when the base's wire records cannot be
-    /// decoded into owned records.
-    ///
-    /// # Performance
-    ///
-    /// This function is `O(base records + labels + property bytes)` for the
-    /// one-time record realization.
-    pub(crate) fn new(
-        generation: CheckpointGeneration,
-        lsn: CommitSeq,
-        base: Arc<Base>,
-        overlay: Arc<Overlay>,
-    ) -> Result<Self, DbError> {
-        let base_records = Arc::new(BaseRecords::from_view(base.get())?);
-        Ok(Self {
-            generation,
-            lsn,
-            base,
-            overlay,
-            base_records,
-        })
-    }
-
     /// Publishes a new snapshot over the SAME base generation as a parent,
     /// SHARING the parent's already-materialized [`BaseRecords`] (and its derived
     /// [`crate::index::BaseIndex`]) by `Arc` instead of re-decoding the base wire
@@ -2188,7 +2391,7 @@ impl Snapshot {
 /// `perf: unspecified`; compile-time only.
 const fn assert_send_sync<T: Send + Sync>() {}
 
-/// `Snapshot` MUST be `Send + Sync`: a `ReadTransaction` pinning it crosses
+/// `Snapshot` MUST be `Send + Sync`: a `Reader` pinning it crosses
 /// threads, and the snapshot owns only `Arc`-shared `Send + Sync` data plus
 /// `Copy` identity fields.
 const _: () = assert_send_sync::<Snapshot>();
@@ -2891,6 +3094,49 @@ impl<'a, L: OverlayLayer> LayeredState<'a, L> {
         }
     }
 
+    /// Returns every visible property of `subject` as owned `(key, value)` pairs
+    /// in ascending key order, overlay-over-base (overlay values win; overlay
+    /// tombstones hide the base value).
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(subject base keys + subject overlay change)`.
+    pub(crate) fn subject_properties(
+        &self,
+        subject: PropertySubject,
+    ) -> Vec<(PropertyKeyId, PropertyValue)> {
+        let mut merged: BTreeMap<PropertyKeyId, PropertyValue> = self
+            .base
+            .properties
+            .get(&subject)
+            .cloned()
+            .unwrap_or_default();
+        let overlay_keys = self.overlay.properties().get(&subject);
+        for (key, value) in overlay_keys.into_iter().flatten() {
+            if let Some(value) = value {
+                merged.insert(*key, value.clone());
+            } else {
+                merged.remove(key);
+            }
+        }
+        merged.into_iter().collect()
+    }
+
+    /// Returns every subject carrying property `key` (under any value) with its
+    /// visible value, index-backed (base posting merged with overlay deltas).
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(postings for key + overlay change)`.
+    pub(crate) fn property_key_subjects(
+        &self,
+        key: PropertyKeyId,
+    ) -> Vec<(PropertySubject, PropertyValue)> {
+        self.overlay
+            .index()
+            .property_key_subjects(self.base.index(), key)
+    }
+
     /// Returns the merged catalog borrowed from the data (lifetime `'a`), so the
     /// reference outlives this temporary view.
     ///
@@ -3000,6 +3246,37 @@ impl<L: OverlayLayer> StateView for LayeredState<'_, L> {
             .relations_with_type(self.base.index(), relation_type)
     }
 
+    /// Index-backed override of the element reverse-adjacency lookup: resolves the
+    /// merged element→incidence posting to records, instead of scanning every
+    /// incidence. Equal to the default merge-scan oracle.
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(log n + degree)`.
+    fn element_incidences(&self, element: ElementId) -> Vec<IncidenceRecord> {
+        self.overlay
+            .index()
+            .element_incidences(self.base.index(), element)
+            .into_iter()
+            .filter_map(|id| self.incidence_ref(id).map(Cow::into_owned))
+            .collect()
+    }
+
+    /// Index-backed override of the relation reverse-adjacency lookup. Equal to
+    /// the default merge-scan oracle.
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(log n + degree)`.
+    fn relation_incidences(&self, relation: RelationId) -> Vec<IncidenceRecord> {
+        self.overlay
+            .index()
+            .relation_incidences(self.base.index(), relation)
+            .into_iter()
+            .filter_map(|id| self.incidence_ref(id).map(Cow::into_owned))
+            .collect()
+    }
+
     /// Index-backed override of the equality lookup: probes the base equality
     /// posting for `(key, value)` and merges the overlay's deltas, instead of
     /// scanning every property. Equal to the scan oracle
@@ -3104,6 +3381,30 @@ impl<L: OverlayLayer> LayeredState<'_, L> {
         self.relations()
             .filter(|record| record.relation_type == Some(relation_type))
             .map(|record| record.id)
+            .collect()
+    }
+
+    /// Scan oracle for [`StateView::element_incidences`].
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(base incidences + overlay incidence change)`.
+    pub(crate) fn element_incidences_scan(&self, element: ElementId) -> Vec<IncidenceRecord> {
+        self.incidences()
+            .filter(|record| record.element == element)
+            .map(Cow::into_owned)
+            .collect()
+    }
+
+    /// Scan oracle for [`StateView::relation_incidences`].
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(base incidences + overlay incidence change)`.
+    pub(crate) fn relation_incidences_scan(&self, relation: RelationId) -> Vec<IncidenceRecord> {
+        self.incidences()
+            .filter(|record| record.relation == relation)
+            .map(Cow::into_owned)
             .collect()
     }
 
@@ -3461,12 +3762,14 @@ impl BaseRecords {
             relations: BTreeMap::new(),
             incidences: BTreeMap::new(),
             properties: BTreeMap::new(),
-            index: BaseIndex::empty(),
+            index: HeldIndex::Owned(OwnedBaseIndex::empty()),
         }
     }
 }
 
-#[cfg(kani)]
+// Support for the CBMC-heavy overlay-merge proofs only (gated identically to
+// them; see `kani-heavy` in Cargo.toml).
+#[cfg(all(kani, feature = "kani-heavy"))]
 impl Overlay {
     /// Builds an overlay whose element layer holds the given `(id, present)`
     /// entries: `present` records an add/override (with no labels), `!present`
@@ -3532,7 +3835,7 @@ impl Overlay {
 /// # Performance
 ///
 /// This function is `O(1)`.
-#[cfg(kani)]
+#[cfg(all(kani, feature = "kani-heavy"))]
 fn proof_zero_next_ids() -> NextIds {
     NextIds {
         element: ElementId::new(1),

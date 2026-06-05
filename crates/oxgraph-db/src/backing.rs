@@ -43,7 +43,7 @@ use zerocopy::{
     byteorder::{LE, U64},
 };
 
-use crate::{Catalog, DbError, crc, freeze, wire};
+use crate::{Catalog, DbError, crc, freeze, index::BorrowedBaseIndex, wire};
 
 /// Immutable backing bytes for one base file: a read-only memory map or a fully
 /// owned vector. Both expose `&[u8]` through [`Deref`], so the borrow path in
@@ -285,6 +285,9 @@ pub(crate) struct BaseView<'a> {
     properties: &'a [wire::PropertyWire],
     /// Concatenated property text values sliced by each [`wire::PropertyWire`].
     property_text: &'a [u8],
+    /// Derived index postings borrowed zero-copy out of the base's persisted
+    /// `SECTION_INDEX_*` sections, so open never rebuilds them from records.
+    index: BorrowedBaseIndex<'a>,
     /// Owned catalog rebuilt from the catalog record sections.
     catalog: Catalog,
     /// Owned header value extracted from the base header section.
@@ -368,6 +371,19 @@ impl<'a> BaseView<'a> {
     /// Creating the iterator is `O(1)`; a full walk is `O(p)`.
     pub(crate) fn properties(&self) -> impl Iterator<Item = &'a wire::PropertyWire> {
         self.properties.iter()
+    }
+
+    /// Returns the derived index postings borrowed zero-copy from this base's
+    /// persisted sections. The returned [`BorrowedBaseIndex`] borrows from the
+    /// same backing as this view (lifetime `'a`), so it lives as long as the
+    /// attached [`Base`].
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(1)`.
+    #[must_use]
+    pub(crate) const fn index(&self) -> BorrowedBaseIndex<'a> {
+        self.index
     }
 
     /// Borrows the owned catalog.
@@ -557,7 +573,10 @@ fn attach_view(bytes: &[u8]) -> Result<BaseView<'_>, DbError> {
         .first()
         .ok_or_else(|| DbError::invalid_store("base is missing the header section"))?;
     if header_record.format_version.get() != wire::OXGDB_FORMAT_VERSION {
-        return Err(DbError::invalid_store("unsupported OXGDB format version"));
+        return Err(DbError::UnsupportedFormat {
+            found: header_record.format_version.get(),
+            expected: wire::OXGDB_FORMAT_VERSION,
+        });
     }
     let header = DbHeader::from_record(header_record);
 
@@ -568,6 +587,8 @@ fn attach_view(bytes: &[u8]) -> Result<BaseView<'_>, DbError> {
     let properties =
         freeze::typed_records::<wire::PropertyWire>(&snapshot, wire::SECTION_PROPERTY_RECORDS)?;
     verify_properties_sorted(properties)?;
+
+    let index = attach_index(&snapshot)?;
 
     Ok(BaseView {
         elements: freeze::typed_records::<wire::ElementWire>(
@@ -589,9 +610,83 @@ fn attach_view(bytes: &[u8]) -> Result<BaseView<'_>, DbError> {
         )?,
         properties,
         property_text: freeze::raw_blob(&snapshot, wire::SECTION_PROPERTY_TEXT),
+        index,
         catalog,
         header,
     })
+}
+
+/// Borrows the derived [`BorrowedBaseIndex`] out of the base's five persisted
+/// posting sections, splitting each framed section into its directory and value
+/// pool and reinterpreting them as typed slices.
+///
+/// # Errors
+///
+/// Returns [`DbError::InvalidStore`] when a posting section's frame is malformed,
+/// a directory or pool cannot be reinterpreted as its typed slice, or a directory
+/// entry slices outside its pool.
+///
+/// # Performance
+///
+/// This function is `O(directory entries)` for the bounds validation; the borrows
+/// themselves are `O(1)`.
+fn attach_index<'a>(snapshot: &Snapshot<'a>) -> Result<BorrowedBaseIndex<'a>, DbError> {
+    let (label_dir, label_pool) = posting_slices(snapshot, wire::SECTION_INDEX_LABEL_POSTINGS)?;
+    let (relation_type_dir, relation_type_pool) =
+        posting_slices(snapshot, wire::SECTION_INDEX_RELATION_TYPE_POSTINGS)?;
+    let (element_incidence_dir, element_incidence_pool) =
+        posting_slices(snapshot, wire::SECTION_INDEX_ELEMENT_INCIDENCES)?;
+    let (relation_incidence_dir, relation_incidence_pool) =
+        posting_slices(snapshot, wire::SECTION_INDEX_RELATION_INCIDENCES)?;
+    let (equality_dir, equality_pool) = posting_slices(snapshot, wire::SECTION_INDEX_EQUALITY)?;
+    let equality_text = freeze::raw_blob(snapshot, wire::SECTION_INDEX_EQUALITY_TEXT);
+    BorrowedBaseIndex::from_sections(
+        label_dir,
+        label_pool,
+        relation_type_dir,
+        relation_type_pool,
+        equality_dir,
+        equality_pool,
+        equality_text,
+        element_incidence_dir,
+        element_incidence_pool,
+        relation_incidence_dir,
+        relation_incidence_pool,
+    )
+}
+
+/// Splits one framed posting section into its directory `[T]` slice and its value
+/// pool `[U64<LE>]` slice, or two empty slices when the section is absent (the
+/// store omits empty posting maps).
+///
+/// # Errors
+///
+/// Returns [`DbError::InvalidStore`] when the frame prefix is malformed or a
+/// region cannot be reinterpreted as its typed slice.
+///
+/// # Performance
+///
+/// This function is `O(1)`.
+#[expect(
+    clippy::type_complexity,
+    reason = "the directory `[T]` and value-pool `[U64<LE>]` slices are returned together as one framed section's two regions"
+)]
+fn posting_slices<'a, T>(
+    snapshot: &Snapshot<'a>,
+    kind: u32,
+) -> Result<(&'a [T], &'a [U64<LE>]), DbError>
+where
+    T: FromBytes + zerocopy::Immutable + zerocopy::KnownLayout,
+{
+    let Some(section) = snapshot.section(kind) else {
+        return Ok((&[], &[]));
+    };
+    let (dir_bytes, pool_bytes) = freeze::split_posting_section(section.bytes())?;
+    let dir = <[T]>::ref_from_bytes(dir_bytes)
+        .map_err(|_error| DbError::invalid_store("posting directory is not a whole array"))?;
+    let pool = <[U64<LE>]>::ref_from_bytes(pool_bytes)
+        .map_err(|_error| DbError::invalid_store("posting value pool is not a whole array"))?;
+    Ok((dir, pool))
 }
 
 /// Returns the canonical sort key for a property record: `(subject_kind,
@@ -644,7 +739,7 @@ mod tests {
     use super::*;
     use crate::overlay::test_support::small_base;
 
-    /// `Base` must be `Send + Sync` so a `ReadTransaction` pinning it can cross
+    /// `Base` must be `Send + Sync` so a `Reader` pinning it can cross
     /// threads in the MVCC layer.
     const fn assert_send_sync<T: Send + Sync>() {}
     const _: () = assert_send_sync::<Base>();
@@ -719,6 +814,53 @@ mod tests {
         assert!(verify_properties_sorted(&[make(0, 1, 2), make(0, 1, 1)]).is_err());
         assert!(verify_properties_sorted(&[make(0, 2, 1), make(0, 1, 1)]).is_err());
         assert!(verify_properties_sorted(&[make(2, 1, 1), make(0, 1, 1)]).is_err());
+    }
+
+    /// A base whose header records an unsupported OXGDB format version is
+    /// rejected at open with [`DbError::UnsupportedFormat`] — the "no legacy
+    /// reader, no rebuild fallback" contract for the persisted-index format bump.
+    /// The format byte is patched and the trailer CRC re-stamped over the new
+    /// prefix, so the failure is the version check, not a CRC mismatch.
+    #[test]
+    fn unsupported_format_version_is_rejected() {
+        use zerocopy::IntoBytes;
+
+        let mut bytes = small_base_bytes();
+        // Locate the header section and the trailer payload via the snapshot.
+        let (header_offset, trailer_payload_offset) = {
+            let snapshot = Snapshot::open(&bytes).expect("reopen frozen base");
+            let header = snapshot
+                .section(wire::SECTION_DB_HEADER)
+                .expect("header section");
+            let trailer = snapshot
+                .section(wire::SECTION_BASE_TRAILER)
+                .expect("trailer section");
+            (
+                header.bytes().as_ptr().addr() - bytes.as_ptr().addr(),
+                trailer.bytes().as_ptr().addr() - bytes.as_ptr().addr(),
+            )
+        };
+        // `format_version` is the first `U32<LE>` field of `DbHeaderRecord`; bump
+        // it past the supported version.
+        let bogus = wire::OXGDB_FORMAT_VERSION + 1;
+        let version_field = size_of::<zerocopy::byteorder::U32<LE>>();
+        bytes[header_offset..header_offset + version_field]
+            .copy_from_slice(zerocopy::byteorder::U32::<LE>::new(bogus).as_bytes());
+        // Re-stamp the trailer CRC over the patched prefix so the version check
+        // (not the CRC) is what rejects the base.
+        let crc = crate::crc::checksum(&bytes[..trailer_payload_offset]);
+        bytes[trailer_payload_offset..trailer_payload_offset + version_field]
+            .copy_from_slice(zerocopy::byteorder::U32::<LE>::new(crc).as_bytes());
+
+        let result = Base::open_owned_bytes(bytes).map(|_base| ());
+        assert!(
+            matches!(
+                result,
+                Err(DbError::UnsupportedFormat { found, expected })
+                    if found == bogus && expected == wire::OXGDB_FORMAT_VERSION
+            ),
+            "unsupported format must be rejected loudly, got {result:?}",
+        );
     }
 
     /// Corrupting one byte of the covered region makes the base attach fail with

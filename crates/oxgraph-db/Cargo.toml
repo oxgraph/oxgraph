@@ -1,6 +1,6 @@
 [package]
 name = "oxgraph-db"
-version = "0.2.4"
+version = "0.3.2"
 license.workspace = true
 description = "Standalone OxGraph-native database engine above the topology substrate."
 categories.workspace = true
@@ -13,21 +13,32 @@ repository.workspace = true
 
 [dependencies]
 crc32c = { workspace = true }
-oxgraph-algo = { version = "0.2.4", path = "../oxgraph-algo", default-features = false, features = [
+oxgraph-algo = { version = "0.3.2", path = "../oxgraph-algo", default-features = false, features = [
   "alloc",
 ] }
-oxgraph-csc = { version = "0.2.4", path = "../oxgraph-csc" }
-oxgraph-csr = { version = "0.2.4", path = "../oxgraph-csr", features = ["build"] }
-oxgraph-graph = { version = "0.2.4", path = "../oxgraph-graph" }
-oxgraph-hyper = { version = "0.2.4", path = "../oxgraph-hyper" }
-oxgraph-hyper-bcsr = { version = "0.2.4", path = "../oxgraph-hyper-bcsr", features = ["build"] }
-oxgraph-mmap = { version = "0.2.4", path = "../oxgraph-mmap" }
-oxgraph-property = { version = "0.2.4", path = "../oxgraph-property" }
-oxgraph-snapshot = { version = "0.2.4", path = "../oxgraph-snapshot", features = ["alloc"] }
-oxgraph-topology = { version = "0.2.4", path = "../oxgraph-topology" }
+oxgraph-csc = { version = "0.3.2", path = "../oxgraph-csc" }
+oxgraph-csr = { version = "0.3.2", path = "../oxgraph-csr", features = ["build"] }
+oxgraph-graph = { version = "0.3.2", path = "../oxgraph-graph" }
+oxgraph-hyper = { version = "0.3.2", path = "../oxgraph-hyper" }
+oxgraph-hyper-bcsr = { version = "0.3.2", path = "../oxgraph-hyper-bcsr", features = ["build"] }
+oxgraph-mmap = { version = "0.3.2", path = "../oxgraph-mmap" }
+oxgraph-property = { version = "0.3.2", path = "../oxgraph-property" }
+oxgraph-snapshot = { version = "0.3.2", path = "../oxgraph-snapshot", features = ["alloc"] }
+oxgraph-topology = { version = "0.3.2", path = "../oxgraph-topology" }
 serde = { workspace = true }
 yoke = { workspace = true }
 zerocopy = { workspace = true }
+
+[features]
+# Opt-in for the CBMC-heavy overlay state proofs. `overlay_merge`/
+# `overlay_tombstone`/`overlay_watermark` drive `Overlay::with_applied`, whose
+# `BTreeMap` merge CBMC explores with exponential path blow-up (each runs for
+# hours and never terminates in the default gate). Their contract — the merged
+# visible set equals a `HashMap` oracle — is verified fast by the
+# `merge_matches_oracle` differential proptest, so they are excluded from the
+# default `cargo kani` gate and run only on demand: `cargo kani --features
+# kani-heavy`.
+kani-heavy = []
 
 [dev-dependencies]
 criterion = { workspace = true }

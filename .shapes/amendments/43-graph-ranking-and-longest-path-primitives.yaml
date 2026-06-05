@@ -1,0 +1,83 @@
+id: 43
+name: Graph ranking + longest-path primitives
+description: |
+  Add personalized PageRank ranking and longest-path-in-DAG (with path
+  reconstruction) as first-class graph primitives, exposed through the
+  oxgraph-db Reader so consumers pass canonical element ids and never hand-roll
+  projection-local index mapping.
+targets:
+  shape_ids:
+  - 11
+  - 34
+  - 35
+  - 37
+status: proposed
+version_impact: minor
+intent:
+  kind: amendment
+  summary: Seeded (random-walk-with-restart) PageRank ranking and longest-path-in-DAG over cataloged graph projections, exposed canonical-id-in/canonical-id-out on Reader.
+  source: human
+  rationale: |
+    oxgraph already shipped the dense-index `pagerank_graph` primitive and a
+    `topological_sort`, but a downstream that wants to rank a graph neighbourhood
+    by relevance, or extract the longest call chain, had to hand-roll engine
+    plumbing: build a personalization array sized to `element_bound`, map each
+    canonical seed to its projection-local dense index, drive the element
+    iterator and the ranks buffer, and map dense ranks back to canonical ids; and
+    there was no longest-path algorithm at all (`sssp` returns lengths only, with
+    no path reconstruction). That index juggling belongs in the engine, which
+    owns efficiency and presents the cleanest API.
+
+    This amendment adds two general primitives. In oxgraph-algo,
+    `longest_path_dag(graph, elements)` returns the longest simple chain of
+    elements along outgoing connections within the subgraph induced by
+    `elements`, or `LongestPathError::Cycle` when that subgraph is cyclic. It
+    reuses `topological_sort` (a valid order proves acyclicity) then relaxes each
+    element's best incoming chain length in one forward pass and reconstructs the
+    path from a predecessor table — `O(b + n + m)`, allocating `O(b + n)`,
+    mirroring the toposort/sssp single-tier convention.
+
+    In oxgraph-db, two `Reader` methods wrap the algorithms over a cataloged
+    `GraphProjection`, taking and returning canonical `ElementId`s.
+    `personalized_pagerank(projection, seeds, config)` builds the restart
+    distribution from the seeds (each seed weighted, normalized internally by the
+    algorithm), runs `pagerank_graph_with_workspace` with the `Uniform`
+    out-distribution, and returns every projection element paired with its rank,
+    ordered highest first; with no seeds it is the uniform-teleport PageRank.
+    `longest_path(projection, elements)` maps the canonical elements to
+    projection-local ids (mirroring `walk`'s seed mapping), runs
+    `longest_path_dag`, and maps the path back to canonical ids. Both map a
+    missing element to `DbError::UnknownElement` and any algorithm failure to a
+    static-reason `DbError::Traversal`, so no `oxgraph-algo` error type leaks
+    across the public boundary. `PageRankConfig` is re-exported from oxgraph-db so
+    a `db`-only consumer can configure the call without depending on oxgraph-algo.
+    Both stay `unsafe_code = forbid` with no `unwrap`/`expect`.
+initiated_by:
+  type: human
+realization:
+- bindings:
+  - scheme: path
+    value: crates/oxgraph-algo/src/longest_path_dag.rs
+    metadata:
+      summary: longest_path_dag(graph, elements) -> Result<Vec<ElementId>, LongestPathError>; reuses topological_sort, DP-relaxes longest incoming chain length per element in topological order, reconstructs the path from a predecessor table; rejects cycles (incl. self-loops); O(b + n + m), allocates O(b + n).
+  - scheme: path
+    value: crates/oxgraph-algo/src/lib.rs
+    metadata:
+      summary: Exports longest_path_dag and LongestPathError under the alloc feature, alongside the other single-tier alloc algorithms.
+  - scheme: path
+    value: crates/oxgraph-db/src/database.rs
+    metadata:
+      summary: Reader::personalized_pagerank (seeded RWR ranking over a GraphProjection, canonical-id-in/out, ranks returned highest-first) and Reader::longest_path (longest chain over a projection, mirroring walk's canonical->local seed mapping); algorithm errors mapped to static-reason DbError::Traversal, missing elements to DbError::UnknownElement.
+  - scheme: path
+    value: crates/oxgraph-db/src/lib.rs
+    metadata:
+      summary: Re-exports PageRankConfig so db-only consumers configure personalized_pagerank without depending on oxgraph-algo directly.
+  - scheme: path
+    value: crates/oxgraph-algo/tests/graph_algorithms.rs
+    metadata:
+      summary: longest_path_dag tests — linear chain, diamond, cycle/self-loop rejection, empty/singleton, disconnected-component selection, and a proptest against an independent brute-force longest-path oracle.
+  - scheme: path
+    value: crates/oxgraph-db/tests/e2e.rs
+    metadata:
+      summary: personalized_pagerank test (distribution sums to 1, ordered desc, seeding raises the seed's rank above uniform) and longest_path test over a self-built chain DAG.
+  role: primary
