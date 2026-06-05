@@ -32,6 +32,10 @@ pub(crate) mod value;
 pub(crate) mod wal;
 pub(crate) mod wire;
 
+// Re-exported so `db`-only consumers can configure `Reader::personalized_pagerank`
+// without depending on `oxgraph-algo` directly.
+pub use oxgraph_algo::PageRankConfig;
+
 pub use crate::{
     catalog::{
         Catalog, GraphProjectionDefinition, HypergraphProjectionDefinition, IndexDefinition,

@@ -16,6 +16,12 @@ use std::{
     sync::Arc,
 };
 
+use oxgraph_algo::{
+    PageRankConfig, PageRankError, PageRankWorkspace, Uniform, longest_path_dag,
+    pagerank_graph_with_workspace,
+};
+use oxgraph_graph::{CanonicalElementIdentity, ElementIndex, LocalElementIdentity};
+
 use crate::{
     Bound, Catalog, CheckpointGeneration, CommitSeq, DbError, Element, ElementId,
     GraphProjectionDefinition, GraphProjectionSpec, IncidenceId, IncidenceRecord, IndexId, LabelId,
@@ -27,7 +33,7 @@ use crate::{
     freeze::{self, FreezeStamps},
     lock::WriterLock,
     overlay::{Overlay, Snapshot, StateView, WriteOverlay},
-    projection::{self, GraphProjection, HypergraphProjection},
+    projection::{self, GraphProjection, HypergraphProjection, ProjectionElementId},
     state::NextIds,
     storage,
     traversal::{self, Direction, Subgraph, Walk},
@@ -1475,6 +1481,122 @@ impl Reader {
         }
         let graph = self.graph_projection(projection)?;
         traversal::walk_graph_projection(&graph, seeds, walk)
+    }
+
+    /// Ranks a cataloged graph projection by personalized `PageRank`, returning
+    /// every projection element paired with its rank, ordered highest first.
+    ///
+    /// `seeds` are the restart (teleport) set: rank mass returns to them on each
+    /// damping step, biasing the stationary distribution toward elements
+    /// reachable from the seeds (random walk with restart). The seed weights are
+    /// normalized internally, so passing the seed elements is sufficient. With no
+    /// seeds this is the uniform-teleport `PageRank` over the projection.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError`] when the projection is unknown, is not a graph, cannot
+    /// be materialized, or `PageRank` rejects the configuration (the
+    /// [`PageRankConfig`] was invalid or the power iteration did not converge).
+    /// Seeds absent from the projection are ignored rather than erroring; with no
+    /// resolvable seed this is the uniform-teleport rank.
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(relation count * incidence count + iterations *
+    /// (visible elements + visible edges) + visible elements * log(visible
+    /// elements))` — the trailing term is the final rank sort.
+    pub fn personalized_pagerank(
+        &self,
+        projection: ProjectionId,
+        seeds: &[ElementId],
+        config: PageRankConfig<f64>,
+    ) -> Result<Vec<(ElementId, f64)>, DbError> {
+        let graph = self.graph_projection(projection)?;
+        let bound = graph.element_bound();
+        let element_count = u32::try_from(bound).map_err(|_| {
+            DbError::traversal("projection exceeds the personalized pagerank index bound")
+        })?;
+
+        let mut personalization = vec![0.0_f64; bound];
+        let mut seeded = false;
+        for &seed in seeds {
+            if let Some(local) = graph.local_element_id(seed) {
+                personalization[graph.element_index(local)] = 1.0;
+                seeded = true;
+            }
+        }
+
+        let mut ranks = vec![0.0_f64; bound];
+        let mut workspace = PageRankWorkspace::for_graph(&graph);
+        pagerank_graph_with_workspace(
+            &graph,
+            &Uniform,
+            (0..element_count).map(ProjectionElementId::new),
+            config,
+            seeded.then_some(personalization.as_slice()),
+            &mut ranks,
+            &mut workspace,
+        )
+        .map_err(|error| {
+            DbError::traversal(match error {
+                PageRankError::InvalidDamping { .. }
+                | PageRankError::InvalidTolerance { .. }
+                | PageRankError::InvalidMaxIterations => "invalid pagerank configuration",
+                PageRankError::NonConverged { .. } => "personalized pagerank did not converge",
+                _ => "personalized pagerank failed",
+            })
+        })?;
+
+        let mut ranked: Vec<(ElementId, f64)> = (0..element_count)
+            .map(|index| {
+                let local = ProjectionElementId::new(index);
+                (
+                    graph.canonical_element_id(local),
+                    ranks[graph.element_index(local)],
+                )
+            })
+            .collect();
+        ranked.sort_by(|left, right| right.1.total_cmp(&left.1));
+        Ok(ranked)
+    }
+
+    /// Returns the longest chain of canonical elements along the projection's
+    /// outgoing edges within the subgraph induced by `elements`.
+    ///
+    /// Only edges whose endpoints are both in `elements` participate. The path
+    /// lists each element once from start to end; its length in edges is
+    /// `path.len() - 1`. An empty `elements` slice yields an empty path.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError`] when the projection is unknown, is not a graph, cannot
+    /// be materialized, or the induced subgraph contains a cycle. Elements absent
+    /// from the projection are ignored, so the chain is computed over the present
+    /// subset.
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(relation count * incidence count + visible elements +
+    /// visible edges)`.
+    pub fn longest_path(
+        &self,
+        projection: ProjectionId,
+        elements: &[ElementId],
+    ) -> Result<Vec<ElementId>, DbError> {
+        if elements.is_empty() {
+            return Ok(Vec::new());
+        }
+        let graph = self.graph_projection(projection)?;
+        let locals = elements
+            .iter()
+            .filter_map(|&element| graph.local_element_id(element))
+            .collect::<Vec<ProjectionElementId>>();
+        let path = longest_path_dag(&graph, &locals)
+            .map_err(|_| DbError::traversal("longest path found a cycle"))?;
+        Ok(path
+            .into_iter()
+            .map(|local| graph.canonical_element_id(local))
+            .collect())
     }
 
     /// Materializes a hypergraph projection.
