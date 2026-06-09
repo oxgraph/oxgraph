@@ -42,7 +42,7 @@ proptest! {
         for (index, section) in sections.iter().enumerate() {
             builder
                 .add_section(
-                    index as u32,
+                    u32::try_from(index).expect("section index fits u32"),
                     section.version,
                     section.alignment_log2,
                     section.payload.clone(),
@@ -54,7 +54,7 @@ proptest! {
         let mut writer = SnapshotWriter::new(sections.len()).expect("reservation fits");
         for (index, section) in sections.iter().enumerate() {
             let mut sink = writer
-                .begin_section(index as u32, section.version, section.alignment_log2)
+                .begin_section(u32::try_from(index).expect("section index fits u32"), section.version, section.alignment_log2)
                 .expect("writer accepts section");
             sink.write(&section.payload);
             sink.end().expect("entry fits");
@@ -72,7 +72,7 @@ proptest! {
             SnapshotWriter::new(sections.len() + slack).expect("reservation fits");
         for (index, section) in sections.iter().enumerate() {
             let mut sink = writer
-                .begin_section(index as u32, section.version, section.alignment_log2)
+                .begin_section(u32::try_from(index).expect("section index fits u32"), section.version, section.alignment_log2)
                 .expect("writer accepts section");
             sink.write(&section.payload);
             sink.end().expect("entry fits");
@@ -83,7 +83,7 @@ proptest! {
         prop_assert_eq!(snapshot.sections().len(), sections.len());
         for (index, section) in sections.iter().enumerate() {
             let found = snapshot
-                .section(index as u32)
+                .section(u32::try_from(index).expect("section index fits u32"))
                 .expect("written section resolves");
             prop_assert_eq!(found.bytes(), section.payload.as_slice());
             prop_assert_eq!(found.version(), section.version);
