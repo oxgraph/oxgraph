@@ -1156,7 +1156,7 @@ impl OverlayIndex {
         &mut self,
         element: ElementId,
         labels: &BTreeSet<LabelId>,
-        properties: &BTreeMap<PropertyKeyId, PropertyValue>,
+        properties: &BTreeMap<PropertyKeyId, &PropertyValue>,
     ) {
         for label in labels {
             remove_posting(&mut self.label_added, *label, &element);
@@ -1179,7 +1179,7 @@ impl OverlayIndex {
         &mut self,
         relation: RelationId,
         relation_type: Option<RelationTypeId>,
-        properties: &BTreeMap<PropertyKeyId, PropertyValue>,
+        properties: &BTreeMap<PropertyKeyId, &PropertyValue>,
     ) {
         if let Some(relation_type) = relation_type {
             self.remove_relation_type(relation, relation_type);
@@ -1198,7 +1198,7 @@ impl OverlayIndex {
         incidence: IncidenceId,
         relation: RelationId,
         element: ElementId,
-        properties: &BTreeMap<PropertyKeyId, PropertyValue>,
+        properties: &BTreeMap<PropertyKeyId, &PropertyValue>,
     ) {
         remove_posting(&mut self.element_incidence_added, element, &incidence);
         self.element_incidence_removed
@@ -1222,10 +1222,10 @@ impl OverlayIndex {
     fn withdraw_subject_properties(
         &mut self,
         subject: PropertySubject,
-        properties: &BTreeMap<PropertyKeyId, PropertyValue>,
+        properties: &BTreeMap<PropertyKeyId, &PropertyValue>,
     ) {
         for (key, value) in properties {
-            self.remove_equality(subject, *key, value.clone());
+            self.remove_equality(subject, *key, (*value).clone());
         }
     }
 

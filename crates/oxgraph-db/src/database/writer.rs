@@ -776,7 +776,7 @@ impl Writer<'_> {
     /// folds, so the base is byte-identical within the generation), so it neither
     /// re-decodes the base nor rebuilds the index. A triggered fold adds
     /// `O(visible state bytes)` on top.
-    pub(crate) fn commit(self) -> Result<CommitSeq, DbError> {
+    pub(crate) fn commit(mut self) -> Result<CommitSeq, DbError> {
         if self.delta.is_empty() {
             // Non-dirty commit: no append, no publish, no durable id advance.
             return Ok(self.parent.lsn());
@@ -786,7 +786,7 @@ impl Writer<'_> {
             .lsn()
             .checked_next()
             .ok_or(DbError::CommitSeqOverflow)?;
-        let (ops, blob) = self.delta.encode_frame();
+        let (ops, blob) = self.delta.take_frame();
         let frame = wal::encode_commit(
             lsn.get(),
             self.transaction_id.get(),
