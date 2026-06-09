@@ -120,6 +120,23 @@ programs you can run with `cargo run --example <name> -p <crate>`.
 - [`SECURITY.md`](SECURITY.md): safety model. The substrate is `unsafe`-free.
 - Per-crate `examples/` directories: runnable programs for each layer.
 
+## Claude Code plugins
+
+This repository also hosts the **oxgraph Claude Code plugin marketplace**
+([`.claude-plugin/marketplace.json`](.claude-plugin/marketplace.json)). Add it
+once, then install any oxgraph-family plugin:
+
+```sh
+/plugin marketplace add oxgraph/oxgraph
+/plugin install oxcode@oxgraph
+```
+
+Today it ships the [**oxcode**](https://github.com/oxgraph/oxcode) plugin, which
+bundles oxcode's MCP server — PageRank-curated code intelligence for coding
+agents. The plugin only adds the MCP wiring: it still needs the `oxcode` binary
+on your `PATH` and an indexed project. See the
+[oxcode README](https://github.com/oxgraph/oxcode#readme) for the full setup.
+
 ## Status
 
 Pre-1.0 and still changing. The traits and crates are not stable yet. The

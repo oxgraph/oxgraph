@@ -1,0 +1,18 @@
+{
+  "name": "oxgraph",
+  "owner": { "name": "oxgraph", "email": "michael@snowmead.com" },
+  "description": "Claude Code plugins for the oxgraph family.",
+  "plugins": [
+    {
+      "name": "oxcode",
+      "source": {
+        "source": "git-subdir",
+        "url": "https://github.com/oxgraph/oxcode.git",
+        "path": "claude-plugin"
+      },
+      "description": "oxcode MCP server: PageRank-curated code intelligence for coding agents.",
+      "homepage": "https://oxgraph.io",
+      "license": "MIT"
+    }
+  ]
+}
