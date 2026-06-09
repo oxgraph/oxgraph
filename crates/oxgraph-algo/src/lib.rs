@@ -93,8 +93,8 @@ pub use components::connected_components;
 pub use longest_path_dag::{LongestPathError, longest_path_dag};
 pub use pagerank::{
     HyperWeighted, HypergraphOutgoingDistribution, HypergraphPageRankScratch, IntoPageRankScalar,
-    OutgoingDistribution, PageRankConfig, PageRankError, PageRankReport, PageRankScalar,
-    PageRankScratch, Uniform, Weighted, pagerank_graph_with_scratch,
+    OutgoingDistribution, PageRankConfig, PageRankError, PageRankHypergraph, PageRankReport,
+    PageRankScalar, PageRankScratch, Uniform, Weighted, pagerank_graph_with_scratch,
     pagerank_hypergraph_with_scratch,
 };
 #[cfg(feature = "alloc")]
