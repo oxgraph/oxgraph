@@ -106,11 +106,11 @@ fn mean_open_ms(path: &std::path::Path) -> f64 {
 /// `OPEN_LATENCY_RUNS` runs, the BEFORE proxy for the borrowed open.
 #[cfg(not(debug_assertions))]
 fn mean_old_from_view_ms(path: &std::path::Path) -> f64 {
-    let superblock = wal::read_superblock(path).expect("superblock");
+    let superblock = crate::wal::read_superblock(path).expect("superblock");
     let base_path = path.join(base_file(superblock.base_generation.get()));
     let mut total = std::time::Duration::ZERO;
     for _run in 0..OPEN_LATENCY_RUNS {
-        let base = Base::open(&base_path, false).expect("base open");
+        let base = crate::backing::Base::open(&base_path, false).expect("base open");
         let start = std::time::Instant::now();
         let records = crate::overlay::BaseRecords::from_view(base.get()).expect("old from_view");
         total += start.elapsed();
