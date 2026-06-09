@@ -17,7 +17,7 @@ use oxgraph_graph::{
     RelationWeight, TopologyBase, TopologyCounts,
 };
 use oxgraph_layout_util::{
-    IdOutOfBounds, LayoutIndex, id_to_slot, index_from_usize, map_offset_overflow,
+    IdOutOfBounds, LayoutIndex, LayoutWord, id_to_slot, index_from_usize, map_offset_overflow,
     next_dense_index, slot_or_max,
 };
 #[cfg(feature = "build-property-arrow")]
@@ -29,7 +29,7 @@ use oxgraph_property::{
 use oxgraph_property::{PropertyError, PropertyLayer};
 use oxgraph_snapshot::{PlanError, SnapshotBuilder};
 
-use crate::CsrSnapshotIndex;
+use crate::{CsrGraph, CsrNativeGraph, CsrSnapshotIndex};
 
 /// Result returned by weighted graph freeze operations.
 type FrozenWeightedGraphResult<NodeIndex, EdgeIndex, EW, RW> = Result<
@@ -581,6 +581,42 @@ where
         &self.topology.edge_ids
     }
 
+    /// Borrows this frozen topology as a zero-copy [`CsrNativeGraph`] view.
+    ///
+    /// The view shares the node-id space but iterates CSR-POSITIONAL edge
+    /// ids (dense in traversal order), not this graph's canonical
+    /// insertion-order edge ids; [`Self::edge_ids`] maps a CSR position back
+    /// to the canonical id. Counts, containment, out-degrees, and successor
+    /// sequences agree exactly (the equivalence proptest pins this).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GraphBuildError::IdOverflow`] in the one unrepresentable
+    /// corner: a graph holding exactly `NodeIndex::MAX + 1` nodes (a full
+    /// width), whose node count does not fit the view's index type.
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(1)`.
+    pub fn as_view(
+        &self,
+    ) -> Result<CsrNativeGraph<'_, NodeIndex, EdgeIndex>, GraphBuildError<NodeIndex, EdgeIndex>>
+    where
+        NodeIndex: LayoutWord<Index = NodeIndex>,
+        EdgeIndex: LayoutWord<Index = EdgeIndex>,
+    {
+        let node_count =
+            NodeIndex::from_usize(self.topology.node_count).ok_or(GraphBuildError::IdOverflow {
+                value: self.topology.node_count,
+            })?;
+        Ok(CsrGraph::from_validated_parts(
+            node_count,
+            self.topology.node_count,
+            &self.topology.offsets,
+            &self.topology.targets,
+        ))
+    }
+
     /// Builds the reverse adjacency (transpose) of this graph.
     ///
     /// Every directed edge `s -> t` becomes `t -> s` in the returned graph, so
@@ -643,6 +679,42 @@ where
     #[must_use]
     pub fn edge_ids(&self) -> &[EdgeIndex] {
         &self.topology.edge_ids
+    }
+
+    /// Borrows this frozen topology as a zero-copy [`CsrNativeGraph`] view.
+    ///
+    /// The view shares the node-id space but iterates CSR-POSITIONAL edge
+    /// ids (dense in traversal order), not this graph's canonical
+    /// insertion-order edge ids; [`Self::edge_ids`] maps a CSR position back
+    /// to the canonical id. Counts, containment, out-degrees, and successor
+    /// sequences agree exactly (the equivalence proptest pins this).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GraphBuildError::IdOverflow`] in the one unrepresentable
+    /// corner: a graph holding exactly `NodeIndex::MAX + 1` nodes (a full
+    /// width), whose node count does not fit the view's index type.
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(1)`.
+    pub fn as_view(
+        &self,
+    ) -> Result<CsrNativeGraph<'_, NodeIndex, EdgeIndex>, GraphBuildError<NodeIndex, EdgeIndex>>
+    where
+        NodeIndex: LayoutWord<Index = NodeIndex>,
+        EdgeIndex: LayoutWord<Index = EdgeIndex>,
+    {
+        let node_count =
+            NodeIndex::from_usize(self.topology.node_count).ok_or(GraphBuildError::IdOverflow {
+                value: self.topology.node_count,
+            })?;
+        Ok(CsrGraph::from_validated_parts(
+            node_count,
+            self.topology.node_count,
+            &self.topology.offsets,
+            &self.topology.targets,
+        ))
     }
 }
 
