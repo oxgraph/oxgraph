@@ -17,7 +17,8 @@ use oxgraph_graph::{
     RelationWeight, TopologyBase, TopologyCounts,
 };
 use oxgraph_layout_util::{
-    IdOutOfBounds, LayoutIndex, id_to_slot, index_from_usize, map_offset_overflow, slot_or_max,
+    IdOutOfBounds, LayoutIndex, id_to_slot, index_from_usize, map_offset_overflow,
+    next_dense_index, slot_or_max,
 };
 #[cfg(feature = "build-property-arrow")]
 use oxgraph_property::{
@@ -218,13 +219,9 @@ where
     pub fn add_node(
         &mut self,
     ) -> Result<GraphNodeId<NodeIndex>, GraphBuildError<NodeIndex, EdgeIndex>> {
-        let id = NodeIndex::from_usize(self.node_count).ok_or(GraphBuildError::IdOverflow {
-            value: self.node_count,
+        let id = next_dense_index(&mut self.node_count, |value| GraphBuildError::IdOverflow {
+            value,
         })?;
-        self.node_count = self
-            .node_count
-            .checked_add(1)
-            .ok_or(GraphBuildError::IdOverflow { value: usize::MAX })?;
         Ok(GraphNodeId::new(id))
     }
 
@@ -365,13 +362,9 @@ where
         &mut self,
         weight: EW,
     ) -> Result<GraphNodeId<NodeIndex>, GraphBuildError<NodeIndex, EdgeIndex>> {
-        let id = NodeIndex::from_usize(self.node_count).ok_or(GraphBuildError::IdOverflow {
-            value: self.node_count,
+        let id = next_dense_index(&mut self.node_count, |value| GraphBuildError::IdOverflow {
+            value,
         })?;
-        self.node_count = self
-            .node_count
-            .checked_add(1)
-            .ok_or(GraphBuildError::IdOverflow { value: usize::MAX })?;
         self.element_weights.push(weight);
         Ok(GraphNodeId::new(id))
     }

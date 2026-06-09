@@ -635,6 +635,35 @@ pub fn map_offset_overflow<E>(error: OffsetOverflow, on_overflow: impl FnOnce(us
     }
 }
 
+/// Allocates the next dense ID from `counter`: returns `counter`'s current
+/// value as an `Index` and advances the counter by one.
+///
+/// Replaces the per-builder allocation copies: each builder passes a closure
+/// constructing its own typed `IdOverflow { value }` variant. The error value
+/// is the count that failed to fit the index width, or `usize::MAX` when the
+/// counter itself can no longer advance.
+///
+/// # Errors
+///
+/// Returns `on_overflow(*counter)` when the current count does not fit
+/// `Index`, and `on_overflow(usize::MAX)` when the counter would overflow
+/// `usize`.
+///
+/// # Performance
+///
+/// This function is `O(1)`.
+#[inline]
+pub fn next_dense_index<Index: LayoutIndex, E>(
+    counter: &mut usize,
+    on_overflow: impl Fn(usize) -> E,
+) -> Result<Index, E> {
+    let id = Index::from_usize(*counter).ok_or_else(|| on_overflow(*counter))?;
+    *counter = counter
+        .checked_add(1)
+        .ok_or_else(|| on_overflow(usize::MAX))?;
+    Ok(id)
+}
+
 /// Validates that `id`'s `usize` representation is less than `count`.
 ///
 /// # Errors

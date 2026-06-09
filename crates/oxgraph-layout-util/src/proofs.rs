@@ -294,3 +294,30 @@ fn check_offsets_monotonic_first_zero_required() {
         Ok(()) => kani::cover!(false, "non-zero first offset must be rejected"),
     }
 }
+
+/// `next_dense_index` is total for `u16` widths against an arbitrary counter:
+/// an in-width count allocates exactly the count and advances by one; an
+/// out-of-width count fails with the count; a saturated counter fails with
+/// `usize::MAX` and never advances.
+#[kani::proof]
+fn next_dense_index_allocation_contract_u16() {
+    let start: usize = kani::any();
+    let mut counter = start;
+    let result: Result<u16, usize> = crate::next_dense_index(&mut counter, |value| value);
+    match result {
+        Ok(id) => {
+            assert!(start <= u16::MAX as usize);
+            assert!(id as usize == start);
+            assert!(counter == start + 1);
+        }
+        Err(value) => {
+            if start > u16::MAX as usize {
+                assert!(value == start);
+            } else {
+                assert!(start == usize::MAX);
+                assert!(value == usize::MAX);
+            }
+            assert!(counter == start);
+        }
+    }
+}
