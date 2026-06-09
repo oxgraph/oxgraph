@@ -33,6 +33,7 @@ use crate::{
     RelationTypeId,
 };
 
+pub(crate) mod defs;
 /// Format version of the OXGDB store payload as a whole, recorded in
 /// [`DbHeaderRecord::format_version`]. A reader that does not recognize the
 /// value rejects the store rather than guessing the layout.
