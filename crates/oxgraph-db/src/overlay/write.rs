@@ -13,8 +13,8 @@ use super::{
     log::{MutationLog, blob_str, decode_def_words},
 };
 use crate::{
-    Catalog, DbError, ElementId, IncidenceId, IndexId, LabelId, ProjectionId, PropertyKeyId,
-    RelationId, RelationTypeId, RoleId,
+    Catalog, DbError, ElementId, IdFamily, IncidenceId, IndexId, LabelId, ProjectionId,
+    PropertyKeyId, RelationId, RelationTypeId, RoleId, StorageError, TxnError,
     catalog::{IndexDefinition, ProjectionDefinition, PropertyFamily, PropertyKeyDefinition},
     index::OverlayIndex,
     state::{ElementRecord, IncidenceRecord, NextIds, PropertySubject, RelationRecord},
@@ -159,7 +159,7 @@ impl WriteOverlay {
     ///
     /// # Errors
     ///
-    /// Returns [`DbError::LogCorrupt`] when an op kind is unknown, a payload tag
+    /// Returns [`StorageError::LogCorrupt`] when an op kind is unknown, a payload tag
     /// is out of range, or a blob slice is out of bounds.
     ///
     /// # Performance
@@ -193,11 +193,12 @@ impl WriteOverlay {
             }
             wire::OP_REMOVE_PROPERTY => {
                 let (subject_kind, _high) = wire::unpack_flags(op.flags.get());
-                let subject =
-                    wire::decode_subject(subject_kind, word(0)).ok_or(DbError::LogCorrupt {
+                let subject = wire::decode_subject(subject_kind, word(0)).ok_or(
+                    StorageError::LogCorrupt {
                         lsn,
                         reason: "remove-property subject kind",
-                    })?;
+                    },
+                )?;
                 self.remove_property_inner(base, subject, PropertyKeyId::new(word(1)));
             }
             wire::OP_CATALOG_REGISTER_ROLE
@@ -222,10 +223,11 @@ impl WriteOverlay {
                 };
             }
             _other => {
-                return Err(DbError::LogCorrupt {
+                return Err(StorageError::LogCorrupt {
                     lsn,
                     reason: "unknown mutation op kind",
-                });
+                }
+                .into());
             }
         }
         Ok(())
@@ -314,8 +316,8 @@ impl WriteOverlay {
     ///
     /// # Errors
     ///
-    /// Returns [`DbError::LogCorrupt`] when a blob slice, tag, or definition body
-    /// is malformed, or [`DbError::DuplicateCatalogName`] when the catalog
+    /// Returns [`StorageError::LogCorrupt`] when a blob slice, tag, or definition body
+    /// is malformed, or [`crate::CatalogError::DuplicateName`] when the catalog
     /// rejects the registration.
     ///
     /// # Performance
@@ -331,7 +333,7 @@ impl WriteOverlay {
         let payload = &op.payload;
         let word = |index: usize| payload.get(index).map_or(0, |w| w.get());
         let name = blob_str(blob, word(1), word(2), lsn)?;
-        match kind {
+        let registered = match kind {
             wire::OP_CATALOG_REGISTER_ROLE => self.catalog.insert_role(RoleId::new(word(0)), name),
             wire::OP_CATALOG_REGISTER_LABEL => {
                 self.catalog.insert_label(LabelId::new(word(0)), name)
@@ -342,12 +344,12 @@ impl WriteOverlay {
             wire::OP_CATALOG_REGISTER_PROPERTY_KEY => {
                 let (family_tag, value_tag) = wire::unpack_flags(op.flags.get());
                 let family =
-                    wire::property_family_from_tag(family_tag).ok_or(DbError::LogCorrupt {
+                    wire::property_family_from_tag(family_tag).ok_or(StorageError::LogCorrupt {
                         lsn,
                         reason: "property-key family tag",
                     })?;
                 let value_type =
-                    wire::property_type_from_tag(value_tag).ok_or(DbError::LogCorrupt {
+                    wire::property_type_from_tag(value_tag).ok_or(StorageError::LogCorrupt {
                         lsn,
                         reason: "property-key value tag",
                     })?;
@@ -361,7 +363,7 @@ impl WriteOverlay {
             wire::OP_CATALOG_REGISTER_PROJECTION => {
                 let words = decode_def_words(blob, word(3), word(4), lsn)?;
                 let definition = wire::defs::decode_projection_body(op.flags.get(), name, &words)
-                    .map_err(|error| DbError::LogCorrupt {
+                    .map_err(|error| StorageError::LogCorrupt {
                     lsn,
                     reason: error.reason,
                 })?;
@@ -373,7 +375,7 @@ impl WriteOverlay {
                 let words = decode_def_words(blob, word(3), word(4), lsn)?;
                 let definition =
                     wire::defs::decode_index_body(op.flags.get(), &words).map_err(|error| {
-                        DbError::LogCorrupt {
+                        StorageError::LogCorrupt {
                             lsn,
                             reason: error.reason,
                         }
@@ -381,14 +383,15 @@ impl WriteOverlay {
                 self.catalog
                     .insert_index(IndexId::new(word(0)), name, definition)
             }
-        }
+        };
+        Ok(registered?)
     }
 
     /// Applies a decoded `OP_SET_PROPERTY` op against the blob (replay path).
     ///
     /// # Errors
     ///
-    /// Returns [`DbError::LogCorrupt`] when the subject kind or value tag is out
+    /// Returns [`StorageError::LogCorrupt`] when the subject kind or value tag is out
     /// of range or the text slice is out of bounds.
     ///
     /// # Performance
@@ -404,14 +407,16 @@ impl WriteOverlay {
         let payload = &op.payload;
         let word = |index: usize| payload.get(index).map_or(0, |w| w.get());
         let (subject_kind, value_tag) = wire::unpack_flags(op.flags.get());
-        let subject = wire::decode_subject(subject_kind, word(0)).ok_or(DbError::LogCorrupt {
-            lsn,
-            reason: "set-property subject kind",
-        })?;
-        let value_type = wire::property_type_from_tag(value_tag).ok_or(DbError::LogCorrupt {
-            lsn,
-            reason: "set-property value tag",
-        })?;
+        let subject =
+            wire::decode_subject(subject_kind, word(0)).ok_or(StorageError::LogCorrupt {
+                lsn,
+                reason: "set-property subject kind",
+            })?;
+        let value_type =
+            wire::property_type_from_tag(value_tag).ok_or(StorageError::LogCorrupt {
+                lsn,
+                reason: "set-property value tag",
+            })?;
         let value = match value_type {
             PropertyType::Boolean => PropertyValue::Boolean(word(2) != 0),
             PropertyType::Integer => PropertyValue::Integer(word(2).cast_signed()),
@@ -663,14 +668,16 @@ impl WriteOverlay {
     ///
     /// # Errors
     ///
-    /// Returns [`DbError::IdOverflow`] when the element id space is exhausted.
+    /// Returns [`TxnError::IdOverflow`] when the element id space is exhausted.
     ///
     /// # Performance
     ///
     /// This method is `O(log change)`.
     pub(crate) fn create_element(&mut self) -> Result<ElementId, DbError> {
         let id = self.next.element;
-        self.next.element = id.checked_next().ok_or(DbError::IdOverflow)?;
+        self.next.element = id.checked_next().ok_or(TxnError::IdOverflow {
+            family: IdFamily::Element,
+        })?;
         self.elements.insert(
             id,
             Some(ElementRecord {
@@ -686,14 +693,16 @@ impl WriteOverlay {
     ///
     /// # Errors
     ///
-    /// Returns [`DbError::IdOverflow`] when the relation id space is exhausted.
+    /// Returns [`TxnError::IdOverflow`] when the relation id space is exhausted.
     ///
     /// # Performance
     ///
     /// This method is `O(log change)`.
     pub(crate) fn create_relation(&mut self) -> Result<RelationId, DbError> {
         let id = self.next.relation;
-        self.next.relation = id.checked_next().ok_or(DbError::IdOverflow)?;
+        self.next.relation = id.checked_next().ok_or(TxnError::IdOverflow {
+            family: IdFamily::Relation,
+        })?;
         self.relations.insert(
             id,
             Some(RelationRecord {
@@ -710,7 +719,7 @@ impl WriteOverlay {
     ///
     /// # Errors
     ///
-    /// Returns [`DbError::IdOverflow`] when the incidence id space is exhausted.
+    /// Returns [`TxnError::IdOverflow`] when the incidence id space is exhausted.
     ///
     /// # Performance
     ///
@@ -722,7 +731,9 @@ impl WriteOverlay {
         role: RoleId,
     ) -> Result<IncidenceId, DbError> {
         let id = self.next.incidence;
-        self.next.incidence = id.checked_next().ok_or(DbError::IdOverflow)?;
+        self.next.incidence = id.checked_next().ok_or(TxnError::IdOverflow {
+            family: IdFamily::Incidence,
+        })?;
         self.incidences.insert(
             id,
             Some(IncidenceRecord {
@@ -1106,15 +1117,17 @@ impl WriteOverlay {
     ///
     /// # Errors
     ///
-    /// Returns [`DbError::IdOverflow`] when the role id space is exhausted or
-    /// [`DbError::DuplicateCatalogName`] when the name is taken.
+    /// Returns [`TxnError::IdOverflow`] when the role id space is exhausted or
+    /// [`crate::CatalogError::DuplicateName`] when the name is taken.
     ///
     /// # Performance
     ///
     /// This method is `O(name length)`.
     pub(crate) fn register_role(&mut self, name: String) -> Result<RoleId, DbError> {
         let id = self.next.role;
-        self.next.role = id.checked_next().ok_or(DbError::IdOverflow)?;
+        self.next.role = id.checked_next().ok_or(TxnError::IdOverflow {
+            family: IdFamily::Role,
+        })?;
         let (name_off, name_len) = self.log.intern(name.as_bytes());
         self.catalog.insert_role(id, name)?;
         self.log.push(
@@ -1129,14 +1142,16 @@ impl WriteOverlay {
     ///
     /// # Errors
     ///
-    /// Returns [`DbError::IdOverflow`] or [`DbError::DuplicateCatalogName`].
+    /// Returns [`TxnError::IdOverflow`] or [`crate::CatalogError::DuplicateName`].
     ///
     /// # Performance
     ///
     /// This method is `O(name length)`.
     pub(crate) fn register_label(&mut self, name: String) -> Result<LabelId, DbError> {
         let id = self.next.label;
-        self.next.label = id.checked_next().ok_or(DbError::IdOverflow)?;
+        self.next.label = id.checked_next().ok_or(TxnError::IdOverflow {
+            family: IdFamily::Label,
+        })?;
         let (name_off, name_len) = self.log.intern(name.as_bytes());
         self.catalog.insert_label(id, name)?;
         self.log.push(
@@ -1151,7 +1166,7 @@ impl WriteOverlay {
     ///
     /// # Errors
     ///
-    /// Returns [`DbError::IdOverflow`] or [`DbError::DuplicateCatalogName`].
+    /// Returns [`TxnError::IdOverflow`] or [`crate::CatalogError::DuplicateName`].
     ///
     /// # Performance
     ///
@@ -1161,7 +1176,9 @@ impl WriteOverlay {
         name: String,
     ) -> Result<RelationTypeId, DbError> {
         let id = self.next.relation_type;
-        self.next.relation_type = id.checked_next().ok_or(DbError::IdOverflow)?;
+        self.next.relation_type = id.checked_next().ok_or(TxnError::IdOverflow {
+            family: IdFamily::RelationType,
+        })?;
         let (name_off, name_len) = self.log.intern(name.as_bytes());
         self.catalog.insert_relation_type(id, name)?;
         self.log.push(
@@ -1176,7 +1193,7 @@ impl WriteOverlay {
     ///
     /// # Errors
     ///
-    /// Returns [`DbError::IdOverflow`] or [`DbError::DuplicateCatalogName`].
+    /// Returns [`TxnError::IdOverflow`] or [`crate::CatalogError::DuplicateName`].
     ///
     /// # Performance
     ///
@@ -1188,7 +1205,9 @@ impl WriteOverlay {
         value_type: PropertyType,
     ) -> Result<PropertyKeyId, DbError> {
         let id = self.next.property_key;
-        self.next.property_key = id.checked_next().ok_or(DbError::IdOverflow)?;
+        self.next.property_key = id.checked_next().ok_or(TxnError::IdOverflow {
+            family: IdFamily::PropertyKey,
+        })?;
         let (name_off, name_len) = self.log.intern(name.as_bytes());
         self.catalog.insert_property_key(PropertyKeyDefinition {
             id,
@@ -1211,7 +1230,7 @@ impl WriteOverlay {
     ///
     /// # Errors
     ///
-    /// Returns [`DbError::IdOverflow`] or [`DbError::DuplicateCatalogName`].
+    /// Returns [`TxnError::IdOverflow`] or [`crate::CatalogError::DuplicateName`].
     ///
     /// # Performance
     ///
@@ -1221,7 +1240,9 @@ impl WriteOverlay {
         definition: ProjectionDefinition,
     ) -> Result<ProjectionId, DbError> {
         let id = self.next.projection;
-        self.next.projection = id.checked_next().ok_or(DbError::IdOverflow)?;
+        self.next.projection = id.checked_next().ok_or(TxnError::IdOverflow {
+            family: IdFamily::Projection,
+        })?;
         let (name_off, name_len) = self.log.intern(definition.name().as_bytes());
         let (kind, words) = wire::defs::encode_projection_body(&definition);
         let (def_off, def_len) = self.log.intern_words(&words);
@@ -1238,7 +1259,7 @@ impl WriteOverlay {
     ///
     /// # Errors
     ///
-    /// Returns [`DbError::IdOverflow`] or [`DbError::DuplicateCatalogName`].
+    /// Returns [`TxnError::IdOverflow`] or [`crate::CatalogError::DuplicateName`].
     ///
     /// # Performance
     ///
@@ -1249,7 +1270,9 @@ impl WriteOverlay {
         definition: IndexDefinition,
     ) -> Result<IndexId, DbError> {
         let id = self.next.index;
-        self.next.index = id.checked_next().ok_or(DbError::IdOverflow)?;
+        self.next.index = id.checked_next().ok_or(TxnError::IdOverflow {
+            family: IdFamily::Index,
+        })?;
         let (name_off, name_len) = self.log.intern(name.as_bytes());
         let (kind, words) = wire::defs::encode_index_body(&definition);
         let (def_off, def_len) = self.log.intern_words(&words);

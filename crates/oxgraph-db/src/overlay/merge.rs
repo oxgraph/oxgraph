@@ -456,13 +456,15 @@ pub(crate) trait StateView {
         let definition = self
             .catalog()
             .property_key(key)
-            .ok_or(DbError::UnknownPropertyKey { id: key })?;
+            .ok_or_else(|| DbError::unknown(key))?;
         let actual = value.value_type();
         if definition.value_type != actual {
-            return Err(DbError::PropertyTypeMismatch {
-                expected: definition.value_type,
-                actual,
-            });
+            return Err(DbError::Query(
+                crate::error::QueryError::PropertyTypeMismatch {
+                    expected: definition.value_type,
+                    actual,
+                },
+            ));
         }
         Ok(())
     }
@@ -489,18 +491,22 @@ pub(crate) trait StateView {
         let definition = self
             .catalog()
             .property_key(key)
-            .ok_or(DbError::UnknownPropertyKey { id: key })?;
+            .ok_or_else(|| DbError::unknown(key))?;
         if definition.family != family {
-            return Err(DbError::WrongPropertyFamily {
-                expected: definition.family,
-                actual: family,
-            });
+            return Err(DbError::Query(
+                crate::error::QueryError::WrongPropertyFamily {
+                    expected: definition.family,
+                    actual: family,
+                },
+            ));
         }
         if definition.value_type != value.value_type() {
-            return Err(DbError::PropertyTypeMismatch {
-                expected: definition.value_type,
-                actual: value.value_type(),
-            });
+            return Err(DbError::Query(
+                crate::error::QueryError::PropertyTypeMismatch {
+                    expected: definition.value_type,
+                    actual: value.value_type(),
+                },
+            ));
         }
         Ok(())
     }

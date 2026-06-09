@@ -30,8 +30,8 @@ impl PreparedQuery {
     ///
     /// # Errors
     ///
-    /// Returns [`DbError::EmptyQuery`] or [`DbError::UnsupportedQuery`] when the
-    /// query is outside the supported profile.
+    /// Returns [`DbError::Query(crate::error::QueryError::Empty)`] or [`DbError::UnsupportedQuery`]
+    /// when the query is outside the supported profile.
     ///
     /// # Performance
     ///
@@ -39,7 +39,7 @@ impl PreparedQuery {
     pub(crate) fn prepare(query: &str, state: &impl StateView) -> Result<Self, DbError> {
         let trimmed = query.trim();
         if trimmed.is_empty() {
-            return Err(DbError::EmptyQuery);
+            return Err(DbError::Query(crate::error::QueryError::Empty));
         }
         let logical = parse_oxql(trimmed)?;
         let plan = bind_and_lower(logical, state)?;
@@ -747,7 +747,7 @@ fn lower_graph_walk(
     let entry = state
         .catalog()
         .projection(projection)
-        .ok_or(DbError::UnknownProjection { id: projection })?;
+        .ok_or_else(|| DbError::unknown(projection))?;
     if matches!(&entry.definition, ProjectionDefinition::Hypergraph(_)) {
         return Err(DbError::invalid_projection("projection is not a graph"));
     }
@@ -891,7 +891,7 @@ fn graph_projection(
     let entry = state
         .catalog()
         .projection(projection)
-        .ok_or(DbError::UnknownProjection { id: projection })?;
+        .ok_or_else(|| DbError::unknown(projection))?;
     match &entry.definition {
         ProjectionDefinition::Graph(definition) => {
             GraphProjection::from_state(state, definition.clone())

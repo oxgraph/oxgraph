@@ -11,7 +11,7 @@ use std::{
     path::Path,
 };
 
-use crate::DbError;
+use crate::StorageError;
 
 /// Writes `bytes` to `final_path` crash-atomically: write to `temp_path`, fsync
 /// the file, atomically rename it over `final_path`, then fsync the containing
@@ -19,7 +19,7 @@ use crate::DbError;
 ///
 /// # Errors
 ///
-/// Returns [`DbError::Io`] when creating, writing, syncing, renaming, or syncing
+/// Returns [`StorageError::Io`] when creating, writing, syncing, renaming, or syncing
 /// the directory entry fails.
 ///
 /// # Performance
@@ -30,18 +30,18 @@ pub(crate) fn atomic_write(
     temp_path: &Path,
     final_path: &Path,
     bytes: &[u8],
-) -> Result<(), DbError> {
+) -> Result<(), StorageError> {
     fs::create_dir_all(directory)
-        .map_err(|error| DbError::io("create database directory", error))?;
+        .map_err(|error| StorageError::io("create database directory", error))?;
     let mut file =
-        File::create(temp_path).map_err(|error| DbError::io("create temp file", error))?;
+        File::create(temp_path).map_err(|error| StorageError::io("create temp file", error))?;
     file.write_all(bytes)
-        .map_err(|error| DbError::io("write temp file", error))?;
+        .map_err(|error| StorageError::io("write temp file", error))?;
     file.flush()
-        .map_err(|error| DbError::io("flush temp file", error))?;
+        .map_err(|error| StorageError::io("flush temp file", error))?;
     file.sync_all()
-        .map_err(|error| DbError::io("sync temp file", error))?;
-    fs::rename(temp_path, final_path).map_err(|error| DbError::io("publish file", error))?;
+        .map_err(|error| StorageError::io("sync temp file", error))?;
+    fs::rename(temp_path, final_path).map_err(|error| StorageError::io("publish file", error))?;
     sync_directory(directory)
 }
 
@@ -49,18 +49,18 @@ pub(crate) fn atomic_write(
 ///
 /// # Errors
 ///
-/// Returns [`DbError::Io`] when the directory cannot be opened or synced.
+/// Returns [`StorageError::Io`] when the directory cannot be opened or synced.
 ///
 /// # Performance
 ///
 /// This function is `O(1)`.
 #[cfg(unix)]
-pub(crate) fn sync_directory(path: &Path) -> Result<(), DbError> {
+pub(crate) fn sync_directory(path: &Path) -> Result<(), StorageError> {
     let directory =
-        File::open(path).map_err(|error| DbError::io("open database directory", error))?;
+        File::open(path).map_err(|error| StorageError::io("open database directory", error))?;
     directory
         .sync_all()
-        .map_err(|error| DbError::io("sync database directory", error))
+        .map_err(|error| StorageError::io("sync database directory", error))
 }
 
 /// Treats directory sync as unsupported on non-Unix targets.
@@ -69,6 +69,6 @@ pub(crate) fn sync_directory(path: &Path) -> Result<(), DbError> {
 ///
 /// This function is `O(1)`.
 #[cfg(not(unix))]
-pub(crate) fn sync_directory(_path: &Path) -> Result<(), DbError> {
+pub(crate) fn sync_directory(_path: &Path) -> Result<(), StorageError> {
     Ok(())
 }

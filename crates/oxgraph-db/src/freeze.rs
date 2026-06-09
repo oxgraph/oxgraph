@@ -27,6 +27,7 @@ use crate::{
     PropertySubject, PropertyValue, RelationId, RelationTypeId, RoleId,
     catalog::{IndexDefinition, ProjectionDefinition, PropertyKeyDefinition},
     crc,
+    error::StorageError,
     index::OwnedBaseIndex,
     overlay::StateView,
     value::PropertyType,
@@ -133,14 +134,14 @@ fn read_str(table: &[u8], offset: u32, len: u32) -> Result<String, DbError> {
 pub(crate) fn typed_records<'view, T>(
     snapshot: &Snapshot<'view>,
     kind: u32,
-) -> Result<&'view [T], DbError>
+) -> Result<&'view [T], StorageError>
 where
     T: zerocopy::FromBytes + zerocopy::Immutable + zerocopy::KnownLayout,
 {
     snapshot.section(kind).map_or(Ok(&[]), |section| {
         section
             .try_as_slice::<T>()
-            .map_err(|error| DbError::invalid_store(error.to_string()))
+            .map_err(|error| StorageError::invalid_store(error.to_string()))
     })
 }
 
@@ -916,36 +917,39 @@ where
 /// # Performance
 ///
 /// This function is `O(1)`.
-pub(crate) fn split_posting_section(bytes: &[u8]) -> Result<(&[u8], &[u8]), DbError> {
+pub(crate) fn split_posting_section(bytes: &[u8]) -> Result<(&[u8], &[u8]), StorageError> {
     if bytes.is_empty() {
         return Ok((&[], &[]));
     }
-    let prefix = bytes
-        .get(..POSTING_FRAME_PREFIX_LEN)
-        .ok_or_else(|| DbError::invalid_store("posting section is missing its frame prefix"))?;
+    let prefix = bytes.get(..POSTING_FRAME_PREFIX_LEN).ok_or_else(|| {
+        StorageError::invalid_store("posting section is missing its frame prefix")
+    })?;
     let dir_len_word =
         U64::<LE>::ref_from_bytes(&prefix[..size_of::<U64<LE>>()]).map_err(|_error| {
-            DbError::invalid_store("posting section directory length is truncated")
+            StorageError::invalid_store("posting section directory length is truncated")
         })?;
-    let pool_len_word = U64::<LE>::ref_from_bytes(&prefix[size_of::<U64<LE>>()..])
-        .map_err(|_error| DbError::invalid_store("posting section pool length is truncated"))?;
-    let dir_len = usize::try_from(dir_len_word.get())
-        .map_err(|_overflow| DbError::invalid_store("posting section directory length overflow"))?;
+    let pool_len_word =
+        U64::<LE>::ref_from_bytes(&prefix[size_of::<U64<LE>>()..]).map_err(|_error| {
+            StorageError::invalid_store("posting section pool length is truncated")
+        })?;
+    let dir_len = usize::try_from(dir_len_word.get()).map_err(|_overflow| {
+        StorageError::invalid_store("posting section directory length overflow")
+    })?;
     let pool_len = usize::try_from(pool_len_word.get())
-        .map_err(|_overflow| DbError::invalid_store("posting section pool length overflow"))?;
+        .map_err(|_overflow| StorageError::invalid_store("posting section pool length overflow"))?;
     let dir_start = POSTING_FRAME_PREFIX_LEN;
     let dir_end = dir_start
         .checked_add(dir_len)
-        .ok_or_else(|| DbError::invalid_store("posting section directory overflow"))?;
+        .ok_or_else(|| StorageError::invalid_store("posting section directory overflow"))?;
     let pool_end = dir_end
         .checked_add(pool_len)
-        .ok_or_else(|| DbError::invalid_store("posting section pool overflow"))?;
+        .ok_or_else(|| StorageError::invalid_store("posting section pool overflow"))?;
     let dir = bytes
         .get(dir_start..dir_end)
-        .ok_or_else(|| DbError::invalid_store("posting section directory out of bounds"))?;
+        .ok_or_else(|| StorageError::invalid_store("posting section directory out of bounds"))?;
     let pool = bytes
         .get(dir_end..pool_end)
-        .ok_or_else(|| DbError::invalid_store("posting section pool out of bounds"))?;
+        .ok_or_else(|| StorageError::invalid_store("posting section pool out of bounds"))?;
     Ok((dir, pool))
 }
 

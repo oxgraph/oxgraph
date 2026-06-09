@@ -128,27 +128,37 @@ impl MutationLog {
 ///
 /// This function is `O(len)`.
 pub(super) fn blob_str(blob: &[u8], offset: u64, len: u64, lsn: u64) -> Result<String, DbError> {
-    let start = usize::try_from(offset).map_err(|_overflow| DbError::LogCorrupt {
-        lsn,
-        reason: "blob offset overflow",
+    let start = usize::try_from(offset).map_err(|_overflow| {
+        DbError::Storage(crate::error::StorageError::LogCorrupt {
+            lsn,
+            reason: "blob offset overflow",
+        })
     })?;
-    let length = usize::try_from(len).map_err(|_overflow| DbError::LogCorrupt {
-        lsn,
-        reason: "blob length overflow",
+    let length = usize::try_from(len).map_err(|_overflow| {
+        DbError::Storage(crate::error::StorageError::LogCorrupt {
+            lsn,
+            reason: "blob length overflow",
+        })
     })?;
-    let end = start.checked_add(length).ok_or(DbError::LogCorrupt {
-        lsn,
-        reason: "blob slice overflow",
-    })?;
-    let bytes = blob.get(start..end).ok_or(DbError::LogCorrupt {
-        lsn,
-        reason: "blob slice out of bounds",
-    })?;
+    let end = start.checked_add(length).ok_or(DbError::Storage(
+        crate::error::StorageError::LogCorrupt {
+            lsn,
+            reason: "blob slice overflow",
+        },
+    ))?;
+    let bytes =
+        blob.get(start..end)
+            .ok_or(DbError::Storage(crate::error::StorageError::LogCorrupt {
+                lsn,
+                reason: "blob slice out of bounds",
+            }))?;
     core::str::from_utf8(bytes)
         .map(str::to_owned)
-        .map_err(|_error| DbError::LogCorrupt {
-            lsn,
-            reason: "blob slice is not UTF-8",
+        .map_err(|_error| {
+            DbError::Storage(crate::error::StorageError::LogCorrupt {
+                lsn,
+                reason: "blob slice is not UTF-8",
+            })
         })
 }
 
@@ -169,27 +179,35 @@ pub(super) fn decode_def_words(
     len: u64,
     lsn: u64,
 ) -> Result<Vec<u64>, DbError> {
-    let start = usize::try_from(offset).map_err(|_overflow| DbError::LogCorrupt {
-        lsn,
-        reason: "def offset overflow",
+    let start = usize::try_from(offset).map_err(|_overflow| {
+        DbError::Storage(crate::error::StorageError::LogCorrupt {
+            lsn,
+            reason: "def offset overflow",
+        })
     })?;
-    let length = usize::try_from(len).map_err(|_overflow| DbError::LogCorrupt {
-        lsn,
-        reason: "def length overflow",
+    let length = usize::try_from(len).map_err(|_overflow| {
+        DbError::Storage(crate::error::StorageError::LogCorrupt {
+            lsn,
+            reason: "def length overflow",
+        })
     })?;
-    let end = start.checked_add(length).ok_or(DbError::LogCorrupt {
-        lsn,
-        reason: "def slice overflow",
-    })?;
-    let bytes = blob.get(start..end).ok_or(DbError::LogCorrupt {
-        lsn,
-        reason: "def slice out of bounds",
-    })?;
+    let end = start.checked_add(length).ok_or(DbError::Storage(
+        crate::error::StorageError::LogCorrupt {
+            lsn,
+            reason: "def slice overflow",
+        },
+    ))?;
+    let bytes =
+        blob.get(start..end)
+            .ok_or(DbError::Storage(crate::error::StorageError::LogCorrupt {
+                lsn,
+                reason: "def slice out of bounds",
+            }))?;
     if !bytes.len().is_multiple_of(size_of::<u64>()) {
-        return Err(DbError::LogCorrupt {
+        return Err(DbError::Storage(crate::error::StorageError::LogCorrupt {
             lsn,
             reason: "def slice is not whole u64 words",
-        });
+        }));
     }
     Ok(bytes
         .chunks_exact(size_of::<u64>())

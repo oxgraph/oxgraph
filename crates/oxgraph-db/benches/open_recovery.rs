@@ -65,7 +65,8 @@ fn create_folded_base(path: &Path, element_count: usize) -> Result<(), DbError> 
             writer.set(
                 PropertySubject::Element(element),
                 Key::<Int>::from_id(rank_key),
-                i64::try_from(index).map_err(|_error| DbError::IdOverflow)?,
+                i64::try_from(index)
+                    .map_err(|_error| DbError::Query(oxgraph_db::QueryError::ValueOutOfRange))?,
             )?;
         }
         Ok(())

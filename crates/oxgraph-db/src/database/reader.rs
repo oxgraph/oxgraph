@@ -426,7 +426,7 @@ impl Reader {
         let entry = view
             .catalog()
             .index(index)
-            .ok_or(DbError::UnknownIndex { id: index })?;
+            .ok_or_else(|| DbError::unknown(index))?;
         match (&entry.definition, lookup) {
             (IndexDefinition::Label { label }, Match::All) => Ok(view
                 .elements_with_label(*label)
@@ -486,7 +486,7 @@ impl Reader {
         let entry = view
             .catalog()
             .projection(id)
-            .ok_or(DbError::UnknownProjection { id })?;
+            .ok_or_else(|| DbError::unknown(id))?;
         match &entry.definition {
             ProjectionDefinition::Graph(definition) => {
                 projection::GraphProjection::from_state(&view, definition.clone())
@@ -677,7 +677,7 @@ impl Reader {
         let entry = view
             .catalog()
             .projection(id)
-            .ok_or(DbError::UnknownProjection { id })?;
+            .ok_or_else(|| DbError::unknown(id))?;
         match &entry.definition {
             ProjectionDefinition::Hypergraph(definition) => {
                 projection::HypergraphProjection::from_state(&view, definition.clone())
@@ -730,7 +730,7 @@ impl Reader {
         let entry = view
             .catalog()
             .projection(projection)
-            .ok_or(DbError::UnknownProjection { id: projection })?;
+            .ok_or_else(|| DbError::unknown(projection))?;
         match &entry.definition {
             ProjectionDefinition::Graph(definition) => {
                 Ok(projection::GraphProjection::from_state(&view, definition.clone())?.subjects())

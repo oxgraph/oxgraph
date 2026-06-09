@@ -16,8 +16,8 @@
 //! Recovery distinguishes two failure modes. A torn TAIL — the failing record
 //! is the last thing in the buffer with no fully valid record after it — is
 //! truncated silently; the valid prefix is the durable frontier. Any failure
-//! with a well-formed record after it is a loud [`DbError::LogCorrupt`] or
-//! [`DbError::BaseGenerationMismatch`].
+//! with a well-formed record after it is a loud [`StorageError::LogCorrupt`] or
+//! [`StorageError::BaseGenerationMismatch`].
 //!
 //! # Performance
 //!
@@ -33,7 +33,7 @@ use std::{
 use zerocopy::{FromBytes, IntoBytes};
 
 use crate::{
-    DbError,
+    StorageError,
     crc::{checksum, checksum_append},
     wire::{
         LogRecordHeader, MutationOp, OXGDB_FORMAT_VERSION, OXGLOGR, SUPERBLOCK_CRC_PREFIX_LEN,
@@ -145,7 +145,7 @@ fn record_crc(record: &[u8]) -> u32 {
 ///
 /// # Errors
 ///
-/// Returns [`DbError::InvalidStore`] when the assembled record length or the op
+/// Returns [`StorageError::InvalidStore`] when the assembled record length or the op
 /// count exceeds `u32::MAX`, the `u32` widths the header reserves for them
 /// (mirroring the base format's `u32` section widths). A record this large is
 /// not representable in the on-disk framing.
@@ -159,16 +159,16 @@ pub(crate) fn encode_commit(
     base_generation: u64,
     ops: &[MutationOp],
     blob: &[u8],
-) -> Result<Vec<u8>, DbError> {
+) -> Result<Vec<u8>, StorageError> {
     let len = HEADER_LEN + ops.len() * OP_LEN + blob.len();
     // `len` and `op_count` are stored in the header's `u32` fields; a record or
     // op count exceeding `u32::MAX` is not representable in the on-disk framing,
     // so reject it instead of truncating (mirroring the base format's `u32`
     // section widths).
     let len_u32 = u32::try_from(len)
-        .map_err(|_overflow| DbError::invalid_store("delta-log record too large"))?;
+        .map_err(|_overflow| StorageError::invalid_store("delta-log record too large"))?;
     let op_count_u32 = u32::try_from(ops.len())
-        .map_err(|_overflow| DbError::invalid_store("delta-log op count too large"))?;
+        .map_err(|_overflow| StorageError::invalid_store("delta-log op count too large"))?;
     let header = LogRecordHeader {
         base_generation: base_generation.into(),
         lsn: lsn.into(),
@@ -200,7 +200,7 @@ enum RecordParse {
     /// The record is a torn tail: replay stops silently and keeps the prefix.
     Stop,
     /// The record is loudly corrupt; the wrapped error is returned to the caller.
-    Loud(DbError),
+    Loud(StorageError),
     /// A fully valid record decoded into `frame` occupying `len` bytes.
     Frame(CommitFrame, usize),
 }
@@ -249,7 +249,7 @@ fn decode_ops(record: &[u8], framed_min: usize, op_count: usize) -> (Vec<Mutatio
 /// # Performance
 ///
 /// This function is `O(1)`.
-fn tail_or_loud(is_last: bool, error: DbError) -> RecordParse {
+fn tail_or_loud(is_last: bool, error: StorageError) -> RecordParse {
     if is_last {
         RecordParse::Stop
     } else {
@@ -301,7 +301,7 @@ fn parse_one_record(base_generation: u64, remaining: &[u8], cursor: LsnCursor) -
     if header.magic.get() != OXGLOGR {
         return tail_or_loud(
             is_last,
-            DbError::LogCorrupt {
+            StorageError::LogCorrupt {
                 lsn,
                 reason: "delta-log record magic mismatch",
             },
@@ -313,7 +313,7 @@ fn parse_one_record(base_generation: u64, remaining: &[u8], cursor: LsnCursor) -
     if record_generation != base_generation {
         return tail_or_loud(
             is_last,
-            DbError::BaseGenerationMismatch {
+            StorageError::BaseGenerationMismatch {
                 expected: base_generation,
                 found: record_generation,
             },
@@ -328,7 +328,7 @@ fn parse_one_record(base_generation: u64, remaining: &[u8], cursor: LsnCursor) -
     if len < framed_min || len < HEADER_LEN {
         return tail_or_loud(
             is_last,
-            DbError::LogCorrupt {
+            StorageError::LogCorrupt {
                 lsn,
                 reason: "delta-log record length undershoots its framing",
             },
@@ -345,7 +345,7 @@ fn parse_one_record(base_generation: u64, remaining: &[u8], cursor: LsnCursor) -
     if record_crc(record) != header.crc32c.get() {
         return tail_or_loud(
             is_last,
-            DbError::LogCorrupt {
+            StorageError::LogCorrupt {
                 lsn,
                 reason: "delta-log record checksum mismatch",
             },
@@ -355,7 +355,7 @@ fn parse_one_record(base_generation: u64, remaining: &[u8], cursor: LsnCursor) -
     // (f) Strictly ascending LSN. A CRC-valid record after another CRC-valid
     // record is never a torn tail; an out-of-order LSN here is loud corruption.
     if cursor.seen && lsn <= cursor.last_lsn {
-        return RecordParse::Loud(DbError::LogCorrupt {
+        return RecordParse::Loud(StorageError::LogCorrupt {
             lsn,
             reason: "delta-log record LSN not strictly ascending",
         });
@@ -388,14 +388,14 @@ fn parse_one_record(base_generation: u64, remaining: &[u8], cursor: LsnCursor) -
 ///
 /// # Errors
 ///
-/// Returns [`DbError::LogCorrupt`] for a non-tail framing, magic, CRC, or LSN
-/// violation, and [`DbError::BaseGenerationMismatch`] for a non-tail base
+/// Returns [`StorageError::LogCorrupt`] for a non-tail framing, magic, CRC, or LSN
+/// violation, and [`StorageError::BaseGenerationMismatch`] for a non-tail base
 /// generation mismatch.
 ///
 /// # Performance
 ///
 /// This function is `O(log.len())`.
-pub(crate) fn replay(base_generation: u64, log: &[u8]) -> Result<ReplayOutcome, DbError> {
+pub(crate) fn replay(base_generation: u64, log: &[u8]) -> Result<ReplayOutcome, StorageError> {
     let mut frames: Vec<CommitFrame> = Vec::new();
     let mut offset = 0usize;
     let mut valid_len = 0usize;
@@ -438,41 +438,43 @@ pub(crate) fn replay(base_generation: u64, log: &[u8]) -> Result<ReplayOutcome, 
 ///
 /// # Errors
 ///
-/// Returns [`DbError::NotFound`] when `super.oxgdb` is absent,
-/// [`DbError::InvalidStore`] when its size, magic, CRC, format version, or
-/// reserved words are wrong, and [`DbError::io`] for other IO failures.
+/// Returns [`StorageError::NotFound`] when `super.oxgdb` is absent,
+/// [`StorageError::InvalidStore`] when its size, magic, CRC, format version, or
+/// reserved words are wrong, and [`StorageError::io`] for other IO failures.
 ///
 /// # Performance
 ///
 /// This function is `O(1)`; the superblock is fixed-size.
-pub(crate) fn read_superblock(root: &Path) -> Result<SuperblockRecord, DbError> {
+pub(crate) fn read_superblock(root: &Path) -> Result<SuperblockRecord, StorageError> {
     let path = root.join(SUPERBLOCK_FILE);
     let mut file = File::open(&path).map_err(|error| match error.kind() {
-        std::io::ErrorKind::NotFound => DbError::NotFound,
-        _other => DbError::io("open superblock", error),
+        std::io::ErrorKind::NotFound => StorageError::NotFound,
+        _other => StorageError::io("open superblock", error),
     })?;
     let mut bytes = Vec::new();
     file.read_to_end(&mut bytes)
-        .map_err(|error| DbError::io("read superblock", error))?;
+        .map_err(|error| StorageError::io("read superblock", error))?;
     let record = SuperblockRecord::read_from_bytes(bytes.as_slice())
-        .map_err(|_error| DbError::invalid_store("superblock size mismatch"))?;
+        .map_err(|_error| StorageError::invalid_store("superblock size mismatch"))?;
     if record.magic != SUPERBLOCK_MAGIC {
-        return Err(DbError::invalid_store("superblock magic mismatch"));
+        return Err(StorageError::invalid_store("superblock magic mismatch"));
     }
     let expected = checksum(&bytes[..SUPERBLOCK_CRC_PREFIX_LEN]);
     if record.crc32c.get() != expected {
-        return Err(DbError::invalid_store("superblock checksum mismatch"));
+        return Err(StorageError::invalid_store("superblock checksum mismatch"));
     }
     // A CRC-valid superblock from a future/incompatible format would otherwise be
     // silently accepted and then have its fields misread; gate on the documented
     // version and reserved-zero contracts.
     if record.format_version.get() != OXGDB_FORMAT_VERSION {
-        return Err(DbError::invalid_store(
+        return Err(StorageError::invalid_store(
             "superblock format version unsupported",
         ));
     }
     if record.flags.get() != 0 || record.pad.get() != 0 {
-        return Err(DbError::invalid_store("superblock reserved word not zero"));
+        return Err(StorageError::invalid_store(
+            "superblock reserved word not zero",
+        ));
     }
     Ok(record)
 }
@@ -484,14 +486,15 @@ pub(crate) fn read_superblock(root: &Path) -> Result<SuperblockRecord, DbError> 
 ///
 /// # Errors
 ///
-/// Returns [`DbError::io`] when creating, writing, syncing, renaming, or syncing
+/// Returns [`StorageError::io`] when creating, writing, syncing, renaming, or syncing
 /// the directory entry fails.
 ///
 /// # Performance
 ///
 /// This function is `O(1)`; the superblock is fixed-size.
-pub(crate) fn write_superblock(root: &Path, sb: &SuperblockRecord) -> Result<(), DbError> {
-    fs::create_dir_all(root).map_err(|error| DbError::io("create database directory", error))?;
+pub(crate) fn write_superblock(root: &Path, sb: &SuperblockRecord) -> Result<(), StorageError> {
+    fs::create_dir_all(root)
+        .map_err(|error| StorageError::io("create database directory", error))?;
     let mut record = *sb;
     record.crc32c = 0u32.into();
     let mut bytes = record.as_bytes().to_vec();
@@ -501,15 +504,15 @@ pub(crate) fn write_superblock(root: &Path, sb: &SuperblockRecord) -> Result<(),
 
     let temp_path = root.join(SUPERBLOCK_TEMP_FILE);
     let mut file =
-        File::create(&temp_path).map_err(|error| DbError::io("create superblock", error))?;
+        File::create(&temp_path).map_err(|error| StorageError::io("create superblock", error))?;
     file.write_all(&bytes)
-        .map_err(|error| DbError::io("write superblock", error))?;
+        .map_err(|error| StorageError::io("write superblock", error))?;
     file.flush()
-        .map_err(|error| DbError::io("flush superblock", error))?;
+        .map_err(|error| StorageError::io("flush superblock", error))?;
     file.sync_all()
-        .map_err(|error| DbError::io("sync superblock", error))?;
+        .map_err(|error| StorageError::io("sync superblock", error))?;
     fs::rename(&temp_path, root.join(SUPERBLOCK_FILE))
-        .map_err(|error| DbError::io("publish superblock", error))?;
+        .map_err(|error| StorageError::io("publish superblock", error))?;
     sync_directory(root)
 }
 
@@ -519,23 +522,23 @@ pub(crate) fn write_superblock(root: &Path, sb: &SuperblockRecord) -> Result<(),
 ///
 /// # Errors
 ///
-/// Returns [`DbError::io`] when seeking, writing, truncating, or syncing the log
+/// Returns [`StorageError::io`] when seeking, writing, truncating, or syncing the log
 /// fails.
 ///
 /// # Performance
 ///
 /// This function is `O(frame.len())`.
-pub(crate) fn append_commit(log: &mut File, frame: &[u8]) -> Result<(), DbError> {
+pub(crate) fn append_commit(log: &mut File, frame: &[u8]) -> Result<(), StorageError> {
     let eof = log
         .seek(SeekFrom::End(0))
-        .map_err(|error| DbError::io("seek delta-log end", error))?;
+        .map_err(|error| StorageError::io("seek delta-log end", error))?;
     if let Err(error) = log.write_all(frame) {
         rollback_to(log, eof);
-        return Err(DbError::io("append delta-log record", error));
+        return Err(StorageError::io("append delta-log record", error));
     }
     if let Err(error) = log.sync_all() {
         rollback_to(log, eof);
-        return Err(DbError::io("sync delta-log", error));
+        return Err(StorageError::io("sync delta-log", error));
     }
     Ok(())
 }
@@ -558,18 +561,18 @@ fn rollback_to(log: &File, eof: u64) {
 ///
 /// # Errors
 ///
-/// Returns [`DbError::io`] when the directory cannot be opened or synced.
+/// Returns [`StorageError::io`] when the directory cannot be opened or synced.
 ///
 /// # Performance
 ///
 /// This function is `O(1)`.
 #[cfg(unix)]
-fn sync_directory(path: &Path) -> Result<(), DbError> {
+fn sync_directory(path: &Path) -> Result<(), StorageError> {
     let directory =
-        File::open(path).map_err(|error| DbError::io("open database directory", error))?;
+        File::open(path).map_err(|error| StorageError::io("open database directory", error))?;
     directory
         .sync_all()
-        .map_err(|error| DbError::io("sync database directory", error))
+        .map_err(|error| StorageError::io("sync database directory", error))
 }
 
 /// Treats directory sync as unsupported on non-Unix targets.
@@ -578,7 +581,7 @@ fn sync_directory(path: &Path) -> Result<(), DbError> {
 ///
 /// This function is `O(1)`.
 #[cfg(not(unix))]
-fn sync_directory(_path: &Path) -> Result<(), DbError> {
+fn sync_directory(_path: &Path) -> Result<(), StorageError> {
     Ok(())
 }
 
@@ -646,7 +649,7 @@ mod tests {
         let flip_at = HEADER_LEN + 8;
         log[flip_at] ^= 0xFF;
         match replay(0, &log) {
-            Err(DbError::LogCorrupt { .. }) => {}
+            Err(StorageError::LogCorrupt { .. }) => {}
             other => panic!("expected LogCorrupt, got {other:?}"),
         }
     }
@@ -662,7 +665,7 @@ mod tests {
         log.extend_from_slice(&g2);
         log.extend_from_slice(&g1b);
         match replay(1, &log) {
-            Err(DbError::BaseGenerationMismatch { expected, found }) => {
+            Err(StorageError::BaseGenerationMismatch { expected, found }) => {
                 assert_eq!(expected, 1);
                 assert_eq!(found, 2);
             }
@@ -736,7 +739,7 @@ mod tests {
         bytes[8] ^= 0xFF;
         std::fs::write(&path, &bytes).expect("rewrite");
         match read_superblock(&root) {
-            Err(DbError::InvalidStore { .. }) => {}
+            Err(StorageError::InvalidStore { .. }) => {}
             other => panic!("expected InvalidStore, got {other:?}"),
         }
         let _ignore = std::fs::remove_dir_all(&root);
@@ -764,7 +767,7 @@ mod tests {
         // `write_superblock` stamps a valid CRC over the (future-version) bytes.
         write_superblock(&root, &sb).expect("write");
         match read_superblock(&root) {
-            Err(DbError::InvalidStore { .. }) => {}
+            Err(StorageError::InvalidStore { .. }) => {}
             other => panic!("expected InvalidStore, got {other:?}"),
         }
         let _ignore = std::fs::remove_dir_all(&root);

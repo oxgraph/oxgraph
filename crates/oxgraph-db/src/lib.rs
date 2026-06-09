@@ -45,7 +45,7 @@ pub use crate::{
     database::{
         CatalogSummary, CheckpointPolicy, CommitOutcome, Db, Match, ReadPin, Reader, Stats, Writer,
     },
-    error::DbError,
+    error::{CatalogError, DbError, IdFamily, QueryError, StorageError, TxnError},
     id::{
         CheckpointGeneration, CommitSeq, ElementId, IncidenceId, IndexId, LabelId, ProjectionId,
         PropertyKeyId, RelationId, RelationTypeId, RoleId, TransactionId,

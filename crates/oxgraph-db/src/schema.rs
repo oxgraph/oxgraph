@@ -187,13 +187,12 @@ impl Bound {
     ///
     /// This method is `O(log n + name length)`.
     pub fn role(&self, name: &str) -> Result<RoleId, DbError> {
-        self.roles
-            .get(name)
-            .copied()
-            .ok_or_else(|| DbError::UnknownName {
+        self.roles.get(name).copied().ok_or_else(|| {
+            DbError::Catalog(crate::error::CatalogError::UnknownName {
                 kind: "role",
                 name: name.to_owned(),
             })
+        })
     }
 
     /// Resolves a label handle.
@@ -206,13 +205,12 @@ impl Bound {
     ///
     /// This method is `O(log n + name length)`.
     pub fn label(&self, name: &str) -> Result<LabelId, DbError> {
-        self.labels
-            .get(name)
-            .copied()
-            .ok_or_else(|| DbError::UnknownName {
+        self.labels.get(name).copied().ok_or_else(|| {
+            DbError::Catalog(crate::error::CatalogError::UnknownName {
                 kind: "label",
                 name: name.to_owned(),
             })
+        })
     }
 
     /// Resolves a relation-type handle.
@@ -225,13 +223,12 @@ impl Bound {
     ///
     /// This method is `O(log n + name length)`.
     pub fn relation_type(&self, name: &str) -> Result<RelationTypeId, DbError> {
-        self.relation_types
-            .get(name)
-            .copied()
-            .ok_or_else(|| DbError::UnknownName {
+        self.relation_types.get(name).copied().ok_or_else(|| {
+            DbError::Catalog(crate::error::CatalogError::UnknownName {
                 kind: "relation type",
                 name: name.to_owned(),
             })
+        })
     }
 
     /// Resolves a typed property-key handle, checking the value type matches `T`.
@@ -245,21 +242,21 @@ impl Bound {
     ///
     /// This method is `O(log n + name length)`.
     pub fn key<T: ValueType>(&self, name: &str) -> Result<Key<T>, DbError> {
-        let (id, value_type) =
-            self.keys
-                .get(name)
-                .copied()
-                .ok_or_else(|| DbError::UnknownName {
-                    kind: "property key",
-                    name: name.to_owned(),
-                })?;
+        let (id, value_type) = self.keys.get(name).copied().ok_or_else(|| {
+            DbError::Catalog(crate::error::CatalogError::UnknownName {
+                kind: "property key",
+                name: name.to_owned(),
+            })
+        })?;
         if value_type == T::TYPE {
             Ok(Key::from_id(id))
         } else {
-            Err(DbError::SchemaConflict {
-                name: name.to_owned(),
-                reason: "property key value type differs from the requested typed handle",
-            })
+            Err(DbError::Catalog(
+                crate::error::CatalogError::SchemaConflict {
+                    name: name.to_owned(),
+                    reason: "property key value type differs from the requested typed handle",
+                },
+            ))
         }
     }
 
@@ -275,21 +272,21 @@ impl Bound {
     ///
     /// This method is `O(log n + name length)`.
     pub fn equality_index<T: ValueType>(&self, name: &str) -> Result<EqualityIndex<T>, DbError> {
-        let (id, value_type) =
-            self.equality_indexes
-                .get(name)
-                .copied()
-                .ok_or_else(|| DbError::UnknownName {
-                    kind: "index",
-                    name: name.to_owned(),
-                })?;
+        let (id, value_type) = self.equality_indexes.get(name).copied().ok_or_else(|| {
+            DbError::Catalog(crate::error::CatalogError::UnknownName {
+                kind: "index",
+                name: name.to_owned(),
+            })
+        })?;
         if value_type == T::TYPE {
             Ok(EqualityIndex::from_id(id))
         } else {
-            Err(DbError::SchemaConflict {
-                name: name.to_owned(),
-                reason: "equality index value type differs from the requested typed handle",
-            })
+            Err(DbError::Catalog(
+                crate::error::CatalogError::SchemaConflict {
+                    name: name.to_owned(),
+                    reason: "equality index value type differs from the requested typed handle",
+                },
+            ))
         }
     }
 
@@ -303,12 +300,11 @@ impl Bound {
     ///
     /// This method is `O(log n + name length)`.
     pub fn projection(&self, name: &str) -> Result<ProjectionId, DbError> {
-        self.projections
-            .get(name)
-            .copied()
-            .ok_or_else(|| DbError::UnknownName {
+        self.projections.get(name).copied().ok_or_else(|| {
+            DbError::Catalog(crate::error::CatalogError::UnknownName {
                 kind: "projection",
                 name: name.to_owned(),
             })
+        })
     }
 }

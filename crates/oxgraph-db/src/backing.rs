@@ -25,7 +25,7 @@
 //!
 //! Before any borrow, [`Base::open`] verifies the [`wire::SECTION_BASE_TRAILER`]
 //! CRC over the covered prefix. That full scan touches every covered byte, so a
-//! truncated or corrupted base surfaces as a clean [`DbError`] at open.
+//! truncated or corrupted base surfaces as a clean [`StorageError`] at open.
 //!
 //! # Performance
 //!
@@ -43,7 +43,7 @@ use zerocopy::{
     byteorder::{LE, U64},
 };
 
-use crate::{Catalog, DbError, crc, freeze, index::BorrowedBaseIndex, wire};
+use crate::{Catalog, StorageError, crc, freeze, index::BorrowedBaseIndex, wire};
 
 /// Immutable backing bytes for one base file: a read-only memory map or a fully
 /// owned vector. Both expose `&[u8]` through [`Deref`], so the borrow path in
@@ -104,17 +104,17 @@ impl Deref for Backing {
 ///
 /// # Errors
 ///
-/// Returns [`DbError::NotFound`] when the file is absent and [`DbError::Io`] for
+/// Returns [`StorageError::NotFound`] when the file is absent and [`StorageError::Io`] for
 /// any other open, map, or read failure.
 ///
 /// # Performance
 ///
 /// `O(1)` for the mmap path (one syscall, lazy faults); `O(base bytes)` for the
 /// owned read.
-pub(crate) fn open_backing(path: &Path, force_owned: bool) -> Result<Backing, DbError> {
+pub(crate) fn open_backing(path: &Path, force_owned: bool) -> Result<Backing, StorageError> {
     let file = File::open(path).map_err(|error| match error.kind() {
-        std::io::ErrorKind::NotFound => DbError::NotFound,
-        _kind => DbError::io("open base file", error),
+        std::io::ErrorKind::NotFound => StorageError::NotFound,
+        _kind => StorageError::io("open base file", error),
     })?;
     map_or_read(file, force_owned)
 }
@@ -124,18 +124,18 @@ pub(crate) fn open_backing(path: &Path, force_owned: bool) -> Result<Backing, Db
 ///
 /// # Errors
 ///
-/// Returns [`DbError::Io`] when the map or read fails.
+/// Returns [`StorageError::Io`] when the map or read fails.
 ///
 /// # Performance
 ///
 /// `O(1)` for the mmap path; `O(base bytes)` when `force_owned`.
 #[cfg(all(unix, not(miri)))]
-fn map_or_read(file: File, force_owned: bool) -> Result<Backing, DbError> {
+fn map_or_read(file: File, force_owned: bool) -> Result<Backing, StorageError> {
     if force_owned {
         return read_owned(file);
     }
-    let map =
-        oxgraph_mmap::map_read_only(&file).map_err(|error| DbError::io("mmap base file", error))?;
+    let map = oxgraph_mmap::map_read_only(&file)
+        .map_err(|error| StorageError::io("mmap base file", error))?;
     Ok(Backing::Mmap(map))
 }
 
@@ -144,13 +144,13 @@ fn map_or_read(file: File, force_owned: bool) -> Result<Backing, DbError> {
 ///
 /// # Errors
 ///
-/// Returns [`DbError::Io`] when the read fails.
+/// Returns [`StorageError::Io`] when the read fails.
 ///
 /// # Performance
 ///
 /// This function is `O(base bytes)`.
 #[cfg(not(all(unix, not(miri))))]
-fn map_or_read(file: File, force_owned: bool) -> Result<Backing, DbError> {
+fn map_or_read(file: File, force_owned: bool) -> Result<Backing, StorageError> {
     // No mmap on this target; the backing is always owned, so `force_owned` is
     // already satisfied.
     let _ = force_owned;
@@ -161,15 +161,15 @@ fn map_or_read(file: File, force_owned: bool) -> Result<Backing, DbError> {
 ///
 /// # Errors
 ///
-/// Returns [`DbError::Io`] when the read fails.
+/// Returns [`StorageError::Io`] when the read fails.
 ///
 /// # Performance
 ///
 /// This function is `O(base bytes)`.
-fn read_owned(mut file: File) -> Result<Backing, DbError> {
+fn read_owned(mut file: File) -> Result<Backing, StorageError> {
     let mut bytes = Vec::new();
     file.read_to_end(&mut bytes)
-        .map_err(|error| DbError::io("read base file", error))?;
+        .map_err(|error| StorageError::io("read base file", error))?;
     Ok(Backing::owned(bytes))
 }
 
@@ -441,21 +441,21 @@ impl Base {
     ///
     /// The base CRC is verified FIRST: the [`wire::SECTION_BASE_TRAILER`] record
     /// is read, the CRC over `bytes[..trailer_payload_offset]` is recomputed and
-    /// compared, and a mismatch is rejected as [`DbError::InvalidStore`] before
+    /// compared, and a mismatch is rejected as [`StorageError::InvalidStore`] before
     /// the [`Yoke`] attach. Only then is the [`BaseView`] attached:
     /// [`oxgraph_snapshot::Snapshot`] is opened inside the closure to extract the
     /// typed slices and build the owned catalog/header, and is dropped there.
     ///
     /// # Errors
     ///
-    /// Returns [`DbError::NotFound`] when the file is absent, [`DbError::Io`] on
-    /// an IO failure, and [`DbError::InvalidStore`] when the base is malformed,
+    /// Returns [`StorageError::NotFound`] when the file is absent, [`StorageError::Io`] on
+    /// an IO failure, and [`StorageError::InvalidStore`] when the base is malformed,
     /// the trailer is missing, or the CRC does not match.
     ///
     /// # Performance
     ///
     /// This function is `O(base bytes)`.
-    pub(crate) fn open(path: &Path, force_owned: bool) -> Result<Self, DbError> {
+    pub(crate) fn open(path: &Path, force_owned: bool) -> Result<Self, StorageError> {
         let backing = open_backing(path, force_owned)?;
         Self::attach(backing)
     }
@@ -468,14 +468,14 @@ impl Base {
     ///
     /// # Errors
     ///
-    /// Returns [`DbError::InvalidStore`] when the bytes are malformed, the
+    /// Returns [`StorageError::InvalidStore`] when the bytes are malformed, the
     /// trailer is missing, or the CRC does not match.
     ///
     /// # Performance
     ///
     /// This function is `O(base bytes)`.
     #[cfg(test)]
-    pub(crate) fn open_owned_bytes(bytes: Vec<u8>) -> Result<Self, DbError> {
+    pub(crate) fn open_owned_bytes(bytes: Vec<u8>) -> Result<Self, StorageError> {
         Self::attach(Backing::owned(bytes))
     }
 
@@ -483,13 +483,13 @@ impl Base {
     ///
     /// # Errors
     ///
-    /// Returns [`DbError::InvalidStore`] when CRC verification or section
+    /// Returns [`StorageError::InvalidStore`] when CRC verification or section
     /// extraction fails.
     ///
     /// # Performance
     ///
     /// This function is `O(base bytes)`.
-    fn attach(backing: Backing) -> Result<Self, DbError> {
+    fn attach(backing: Backing) -> Result<Self, StorageError> {
         verify_base_crc(&backing)?;
         let cart = Box::new(BaseCart { bytes: backing });
         let yoke = Yoke::try_attach_to_cart(cart, |cart: &BaseCart| attach_view(&cart.bytes))?;
@@ -517,32 +517,32 @@ impl Base {
 ///
 /// # Errors
 ///
-/// Returns [`DbError::InvalidStore`] when the bytes are malformed, the trailer
+/// Returns [`StorageError::InvalidStore`] when the bytes are malformed, the trailer
 /// is missing or truncated, or the recorded CRC does not match the recomputed
 /// one.
 ///
 /// # Performance
 ///
 /// This function is `O(base bytes)` for the single CRC scan.
-fn verify_base_crc(bytes: &[u8]) -> Result<(), DbError> {
+fn verify_base_crc(bytes: &[u8]) -> Result<(), StorageError> {
     let snapshot =
-        Snapshot::open(bytes).map_err(|error| DbError::invalid_store(error.to_string()))?;
+        Snapshot::open(bytes).map_err(|error| StorageError::invalid_store(error.to_string()))?;
     let trailer_section = snapshot
         .section(wire::SECTION_BASE_TRAILER)
-        .ok_or_else(|| DbError::invalid_store("base is missing its content trailer"))?;
+        .ok_or_else(|| StorageError::invalid_store("base is missing its content trailer"))?;
     let payload = trailer_section.bytes();
     let trailer = wire::BaseTrailer::ref_from_prefix(payload)
         .map(|(record, _rest)| record)
-        .map_err(|_error| DbError::invalid_store("base trailer payload is truncated"))?;
+        .map_err(|_error| StorageError::invalid_store("base trailer payload is truncated"))?;
     let payload_offset = payload.as_ptr().addr() - bytes.as_ptr().addr();
     let covered = bytes
         .get(..payload_offset)
-        .ok_or_else(|| DbError::invalid_store("base trailer offset out of bounds"))?;
+        .ok_or_else(|| StorageError::invalid_store("base trailer offset out of bounds"))?;
     let recomputed = crc::checksum(covered);
     if recomputed == trailer.crc32c.get() {
         Ok(())
     } else {
-        Err(DbError::invalid_store("base content CRC mismatch"))
+        Err(StorageError::invalid_store("base content CRC mismatch"))
     }
 }
 
@@ -553,7 +553,7 @@ fn verify_base_crc(bytes: &[u8]) -> Result<(), DbError> {
 ///
 /// # Errors
 ///
-/// Returns [`DbError::InvalidStore`] when the bytes are malformed, a section is
+/// Returns [`StorageError::InvalidStore`] when the bytes are malformed, a section is
 /// not borrowable as its typed slice, the header is missing, the format version
 /// is unsupported, or the property array is not sorted by `(subject_kind,
 /// subject_id, key)` (the canonical order [`crate::wire::encode_subject`]
@@ -563,17 +563,17 @@ fn verify_base_crc(bytes: &[u8]) -> Result<(), DbError> {
 ///
 /// This function is `O(catalog + name bytes + properties)`; the bulk arrays are
 /// borrowed in `O(1)` and the property-sort check is one `O(properties)` scan.
-fn attach_view(bytes: &[u8]) -> Result<BaseView<'_>, DbError> {
+fn attach_view(bytes: &[u8]) -> Result<BaseView<'_>, StorageError> {
     let snapshot =
-        Snapshot::open(bytes).map_err(|error| DbError::invalid_store(error.to_string()))?;
+        Snapshot::open(bytes).map_err(|error| StorageError::invalid_store(error.to_string()))?;
 
     let headers =
         freeze::typed_records::<wire::DbHeaderRecord>(&snapshot, wire::SECTION_DB_HEADER)?;
     let header_record = headers
         .first()
-        .ok_or_else(|| DbError::invalid_store("base is missing the header section"))?;
+        .ok_or_else(|| StorageError::invalid_store("base is missing the header section"))?;
     if header_record.format_version.get() != wire::OXGDB_FORMAT_VERSION {
-        return Err(DbError::UnsupportedFormat {
+        return Err(StorageError::UnsupportedFormat {
             found: header_record.format_version.get(),
             expected: wire::OXGDB_FORMAT_VERSION,
         });
@@ -582,7 +582,8 @@ fn attach_view(bytes: &[u8]) -> Result<BaseView<'_>, DbError> {
 
     let string_table = freeze::raw_blob(&snapshot, wire::SECTION_STRING_TABLE);
     let defs = freeze::typed_records::<U64<LE>>(&snapshot, wire::SECTION_CATALOG_DEFS)?;
-    let catalog = freeze::decode_catalog(&snapshot, string_table, defs)?;
+    let catalog = freeze::decode_catalog(&snapshot, string_table, defs)
+        .map_err(|error| StorageError::invalid_store(error.to_string()))?;
 
     let properties =
         freeze::typed_records::<wire::PropertyWire>(&snapshot, wire::SECTION_PROPERTY_RECORDS)?;
@@ -622,7 +623,7 @@ fn attach_view(bytes: &[u8]) -> Result<BaseView<'_>, DbError> {
 ///
 /// # Errors
 ///
-/// Returns [`DbError::InvalidStore`] when a posting section's frame is malformed,
+/// Returns [`StorageError::InvalidStore`] when a posting section's frame is malformed,
 /// a directory or pool cannot be reinterpreted as its typed slice, or a directory
 /// entry slices outside its pool.
 ///
@@ -630,7 +631,7 @@ fn attach_view(bytes: &[u8]) -> Result<BaseView<'_>, DbError> {
 ///
 /// This function is `O(directory entries)` for the bounds validation; the borrows
 /// themselves are `O(1)`.
-fn attach_index<'a>(snapshot: &Snapshot<'a>) -> Result<BorrowedBaseIndex<'a>, DbError> {
+fn attach_index<'a>(snapshot: &Snapshot<'a>) -> Result<BorrowedBaseIndex<'a>, StorageError> {
     let (label_dir, label_pool) = posting_slices(snapshot, wire::SECTION_INDEX_LABEL_POSTINGS)?;
     let (relation_type_dir, relation_type_pool) =
         posting_slices(snapshot, wire::SECTION_INDEX_RELATION_TYPE_POSTINGS)?;
@@ -653,6 +654,7 @@ fn attach_index<'a>(snapshot: &Snapshot<'a>) -> Result<BorrowedBaseIndex<'a>, Db
         relation_incidence_dir,
         relation_incidence_pool,
     )
+    .map_err(|error| StorageError::invalid_store(error.to_string()))
 }
 
 /// Splits one framed posting section into its directory `[T]` slice and its value
@@ -661,7 +663,7 @@ fn attach_index<'a>(snapshot: &Snapshot<'a>) -> Result<BorrowedBaseIndex<'a>, Db
 ///
 /// # Errors
 ///
-/// Returns [`DbError::InvalidStore`] when the frame prefix is malformed or a
+/// Returns [`StorageError::InvalidStore`] when the frame prefix is malformed or a
 /// region cannot be reinterpreted as its typed slice.
 ///
 /// # Performance
@@ -674,7 +676,7 @@ fn attach_index<'a>(snapshot: &Snapshot<'a>) -> Result<BorrowedBaseIndex<'a>, Db
 fn posting_slices<'a, T>(
     snapshot: &Snapshot<'a>,
     kind: u32,
-) -> Result<(&'a [T], &'a [U64<LE>]), DbError>
+) -> Result<(&'a [T], &'a [U64<LE>]), StorageError>
 where
     T: FromBytes + zerocopy::Immutable + zerocopy::KnownLayout,
 {
@@ -683,9 +685,9 @@ where
     };
     let (dir_bytes, pool_bytes) = freeze::split_posting_section(section.bytes())?;
     let dir = <[T]>::ref_from_bytes(dir_bytes)
-        .map_err(|_error| DbError::invalid_store("posting directory is not a whole array"))?;
+        .map_err(|_error| StorageError::invalid_store("posting directory is not a whole array"))?;
     let pool = <[U64<LE>]>::ref_from_bytes(pool_bytes)
-        .map_err(|_error| DbError::invalid_store("posting value pool is not a whole array"))?;
+        .map_err(|_error| StorageError::invalid_store("posting value pool is not a whole array"))?;
     Ok((dir, pool))
 }
 
@@ -711,24 +713,24 @@ const fn property_sort_key(record: &wire::PropertyWire) -> (u32, u64, u64) {
 /// triple order, and the write order is implicitly tied to the
 /// [`crate::PropertySubject`] variant order matching the
 /// [`crate::wire::encode_subject`] kind tags (see those docs); this open-time
-/// scan turns any future desynchronization into a loud [`DbError`] at open
+/// scan turns any future desynchronization into a loud [`StorageError`] at open
 /// rather than a silent missed record on the read path.
 ///
 /// # Errors
 ///
-/// Returns [`DbError::InvalidStore`] when two adjacent records are out of order.
+/// Returns [`StorageError::InvalidStore`] when two adjacent records are out of order.
 ///
 /// # Performance
 ///
 /// This function is `O(properties)`: one linear adjacency scan.
-fn verify_properties_sorted(properties: &[wire::PropertyWire]) -> Result<(), DbError> {
+fn verify_properties_sorted(properties: &[wire::PropertyWire]) -> Result<(), StorageError> {
     let ordered = properties
         .windows(2)
         .all(|pair| property_sort_key(&pair[0]) <= property_sort_key(&pair[1]));
     if ordered {
         Ok(())
     } else {
-        Err(DbError::invalid_store(
+        Err(StorageError::invalid_store(
             "base property records are not sorted by (subject_kind, subject_id, key)",
         ))
     }
@@ -788,7 +790,7 @@ mod tests {
     /// `verify_properties_sorted` accepts an ascending array and rejects any
     /// out-of-order adjacency, in each of the three sort dimensions. This is the
     /// open-time guard that converts a `PropertySubject`/`encode_subject` desync
-    /// from a silent missed read into a loud `DbError`.
+    /// from a silent missed read into a loud `StorageError`.
     #[test]
     fn property_sort_check_accepts_sorted_rejects_unsorted() {
         use zerocopy::byteorder::{U32, U64};
@@ -817,7 +819,7 @@ mod tests {
     }
 
     /// A base whose header records an unsupported OXGDB format version is
-    /// rejected at open with [`DbError::UnsupportedFormat`] — the "no legacy
+    /// rejected at open with [`StorageError::UnsupportedFormat`] — the "no legacy
     /// reader, no rebuild fallback" contract for the persisted-index format bump.
     /// The format byte is patched and the trailer CRC re-stamped over the new
     /// prefix, so the failure is the version check, not a CRC mismatch.
@@ -856,7 +858,7 @@ mod tests {
         assert!(
             matches!(
                 result,
-                Err(DbError::UnsupportedFormat { found, expected })
+                Err(StorageError::UnsupportedFormat { found, expected })
                     if found == bogus && expected == wire::OXGDB_FORMAT_VERSION
             ),
             "unsupported format must be rejected loudly, got {result:?}",
@@ -873,7 +875,7 @@ mod tests {
         bytes[16] ^= 0xFF;
         let result = Base::open_owned_bytes(bytes).map(|_base| ());
         assert!(
-            matches!(result, Err(DbError::InvalidStore { .. })),
+            matches!(result, Err(StorageError::InvalidStore { .. })),
             "corrupt base must fail, got {result:?}",
         );
     }
@@ -971,7 +973,10 @@ mod tests {
             ));
             let _ = std::fs::remove_file(&path);
             let result = Base::open(&path, true).map(|_base| ());
-            assert!(matches!(result, Err(DbError::NotFound)), "got {result:?}");
+            assert!(
+                matches!(result, Err(StorageError::NotFound)),
+                "got {result:?}"
+            );
         }
     }
 }

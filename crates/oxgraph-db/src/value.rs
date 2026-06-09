@@ -156,7 +156,8 @@ impl TryFrom<u64> for PropertyValue {
     ///
     /// # Errors
     ///
-    /// Returns [`DbError::ValueOutOfRange`] when the value exceeds `i64::MAX`.
+    /// Returns [`DbError::Query(crate::error::QueryError::ValueOutOfRange)`] when the value exceeds
+    /// `i64::MAX`.
     ///
     /// # Performance
     ///
@@ -164,7 +165,7 @@ impl TryFrom<u64> for PropertyValue {
     fn try_from(value: u64) -> Result<Self, Self::Error> {
         i64::try_from(value)
             .map(Self::Integer)
-            .map_err(|_overflow| DbError::ValueOutOfRange)
+            .map_err(|_overflow| DbError::Query(crate::error::QueryError::ValueOutOfRange))
     }
 }
 
@@ -176,7 +177,8 @@ impl TryFrom<usize> for PropertyValue {
     ///
     /// # Errors
     ///
-    /// Returns [`DbError::ValueOutOfRange`] when the value exceeds `i64::MAX`.
+    /// Returns [`DbError::Query(crate::error::QueryError::ValueOutOfRange)`] when the value exceeds
+    /// `i64::MAX`.
     ///
     /// # Performance
     ///
@@ -184,7 +186,7 @@ impl TryFrom<usize> for PropertyValue {
     fn try_from(value: usize) -> Result<Self, Self::Error> {
         i64::try_from(value)
             .map(Self::Integer)
-            .map_err(|_overflow| DbError::ValueOutOfRange)
+            .map_err(|_overflow| DbError::Query(crate::error::QueryError::ValueOutOfRange))
     }
 }
 

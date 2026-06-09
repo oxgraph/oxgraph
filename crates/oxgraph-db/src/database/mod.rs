@@ -159,8 +159,9 @@ impl Db {
     ///
     /// # Errors
     ///
-    /// Returns [`DbError::WriterLockHeld`] when another writer holds the lock or
-    /// [`DbError::TransactionIdOverflow`] when writer ids are exhausted.
+    /// Returns [`DbError::Txn(crate::error::TxnError::WriterLockHeld)`] when another writer holds
+    /// the lock or [`DbError::Txn(crate::error::TxnError::TransactionIdOverflow)`] when writer
+    /// ids are exhausted.
     ///
     /// # Performance
     ///
@@ -172,7 +173,7 @@ impl Db {
         let transaction_id = self
             .last_transaction_id
             .checked_next()
-            .ok_or(DbError::TransactionIdOverflow)?;
+            .ok_or(DbError::Txn(crate::error::TxnError::TransactionIdOverflow))?;
         // Burn the id eagerly so it is session-local-visible even on rollback;
         // it only becomes durable when a dirty commit writes its frame, and a
         // reopen recovers the durable high-water mark from the log.
@@ -212,8 +213,8 @@ impl Db {
     ///
     /// # Errors
     ///
-    /// Returns [`DbError::WriterLockHeld`] when another writer holds the lock,
-    /// `f`'s error (after rolling back the staged delta), or a commit error.
+    /// Returns [`DbError::Txn(crate::error::TxnError::WriterLockHeld)`] when another writer holds
+    /// the lock, `f`'s error (after rolling back the staged delta), or a commit error.
     ///
     /// # Performance
     ///
@@ -255,61 +256,65 @@ impl Db {
         let catalog = view.catalog();
         let mut bound = Bound::default();
         for name in &schema.roles {
-            let id = catalog.role_id(name).ok_or_else(|| DbError::UnknownName {
-                kind: "role",
-                name: name.clone(),
+            let id = catalog.role_id(name).ok_or_else(|| {
+                DbError::Catalog(crate::error::CatalogError::UnknownName {
+                    kind: "role",
+                    name: name.clone(),
+                })
             })?;
             bound.roles.insert(name.clone(), id);
         }
         for name in &schema.labels {
-            let id = catalog.label_id(name).ok_or_else(|| DbError::UnknownName {
-                kind: "label",
-                name: name.clone(),
+            let id = catalog.label_id(name).ok_or_else(|| {
+                DbError::Catalog(crate::error::CatalogError::UnknownName {
+                    kind: "label",
+                    name: name.clone(),
+                })
             })?;
             bound.labels.insert(name.clone(), id);
         }
         for name in &schema.relation_types {
-            let id = catalog
-                .relation_type_id(name)
-                .ok_or_else(|| DbError::UnknownName {
+            let id = catalog.relation_type_id(name).ok_or_else(|| {
+                DbError::Catalog(crate::error::CatalogError::UnknownName {
                     kind: "relation type",
                     name: name.clone(),
-                })?;
+                })
+            })?;
             bound.relation_types.insert(name.clone(), id);
         }
         for (name, _family, value_type) in &schema.keys {
-            let id = catalog
-                .property_key_id(name)
-                .ok_or_else(|| DbError::UnknownName {
+            let id = catalog.property_key_id(name).ok_or_else(|| {
+                DbError::Catalog(crate::error::CatalogError::UnknownName {
                     kind: "property key",
                     name: name.clone(),
-                })?;
+                })
+            })?;
             bound.keys.insert(name.clone(), (id, *value_type));
         }
         for (name, key_name) in &schema.equality_indexes {
-            let (_key_id, value_type) =
-                *bound
-                    .keys
-                    .get(key_name)
-                    .ok_or_else(|| DbError::UnknownName {
-                        kind: "property key",
-                        name: key_name.clone(),
-                    })?;
-            let id = catalog.index_id(name).ok_or_else(|| DbError::UnknownName {
-                kind: "index",
-                name: name.clone(),
+            let (_key_id, value_type) = *bound.keys.get(key_name).ok_or_else(|| {
+                DbError::Catalog(crate::error::CatalogError::UnknownName {
+                    kind: "property key",
+                    name: key_name.clone(),
+                })
+            })?;
+            let id = catalog.index_id(name).ok_or_else(|| {
+                DbError::Catalog(crate::error::CatalogError::UnknownName {
+                    kind: "index",
+                    name: name.clone(),
+                })
             })?;
             bound
                 .equality_indexes
                 .insert(name.clone(), (id, value_type));
         }
         for spec in &schema.graph_projections {
-            let id = catalog
-                .projection_id(&spec.name)
-                .ok_or_else(|| DbError::UnknownName {
+            let id = catalog.projection_id(&spec.name).ok_or_else(|| {
+                DbError::Catalog(crate::error::CatalogError::UnknownName {
                     kind: "projection",
                     name: spec.name.clone(),
-                })?;
+                })
+            })?;
             bound.projections.insert(spec.name.clone(), id);
         }
         Ok(bound)

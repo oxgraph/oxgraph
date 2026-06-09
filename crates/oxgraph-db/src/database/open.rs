@@ -45,8 +45,8 @@ impl Db {
     ///
     /// # Errors
     ///
-    /// Returns [`DbError::AlreadyExists`] when a store already exists, or
-    /// [`DbError::Io`]/[`DbError::InvalidStore`] when creation fails.
+    /// Returns [`DbError::Storage(crate::error::StorageError::AlreadyExists)`] when a store already
+    /// exists, or [`DbError::Io`]/[`DbError::InvalidStore`] when creation fails.
     ///
     /// # Performance
     ///
@@ -54,7 +54,7 @@ impl Db {
     pub fn create(path: impl AsRef<Path>) -> Result<Self, DbError> {
         let root = path.as_ref().to_path_buf();
         if root.join(wal::SUPERBLOCK_FILE).exists() {
-            return Err(DbError::AlreadyExists);
+            return Err(DbError::Storage(crate::error::StorageError::AlreadyExists));
         }
         // Base-0: an empty merged view (empty base under an empty overlay).
         let empty_base = crate::overlay::BaseRecords::empty();
@@ -220,7 +220,7 @@ pub(super) fn create_empty_log(root: &Path, generation: u64) -> Result<(), DbErr
         std::fs::File::create(&path).map_err(|error| DbError::io("create delta-log", error))?;
     file.sync_all()
         .map_err(|error| DbError::io("sync delta-log", error))?;
-    storage::sync_directory(root)
+    Ok(storage::sync_directory(root)?)
 }
 
 /// Opens the live delta-log for appending (create when absent, read+append).
@@ -258,7 +258,7 @@ pub(super) fn write_superblock(
     commit_seq: u64,
     transaction_id: u64,
 ) -> Result<(), DbError> {
-    wal::write_superblock(
+    Ok(wal::write_superblock(
         root,
         &SuperblockRecord {
             magic: crate::wire::SUPERBLOCK_MAGIC,
@@ -272,5 +272,5 @@ pub(super) fn write_superblock(
             crc32c: 0u32.into(),
             pad: 0u32.into(),
         },
-    )
+    )?)
 }
