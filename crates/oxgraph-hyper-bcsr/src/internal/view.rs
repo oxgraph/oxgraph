@@ -177,6 +177,37 @@ where
         Ok(Self { counts, sections })
     }
 
+    /// Builds a view over already-validated sections, skipping re-validation.
+    ///
+    /// The hypergraph builders validate their frozen output exactly once at
+    /// [`BcsrValidation::Strict`] inside `freeze`, so re-running the
+    /// validation walk for every frozen-wrapper `as_view` borrow would be
+    /// redundant; this constructor is crate-internal so every external input
+    /// still validates through [`Self::open`] / [`Self::open_with`].
+    ///
+    /// Counts are derived structurally from the slice lengths. Sections that
+    /// passed [`validate_sections`] have non-empty offset slices and a total
+    /// incidence count that fits `usize`, so the saturating arithmetic below
+    /// is exact for every valid input.
+    ///
+    /// # Performance
+    ///
+    /// This function is `O(1)`.
+    pub(crate) const fn from_validated_sections(
+        sections: BcsrSections<'view, OffsetWord, VertexWord, RelationWord>,
+    ) -> Self {
+        let p_outgoing = sections.vertex_outgoing_hyperedges.len();
+        let p_incoming = sections.vertex_incoming_hyperedges.len();
+        let counts = DerivedCounts {
+            vertex_count: sections.vertex_outgoing_offsets.len().saturating_sub(1),
+            hyperedge_count: sections.head_offsets.len().saturating_sub(1),
+            p_outgoing,
+            p_incoming,
+            total_incidences: p_outgoing.saturating_add(p_incoming),
+        };
+        Self { counts, sections }
+    }
+
     /// Returns the number of vertices in this view.
     ///
     /// # Performance

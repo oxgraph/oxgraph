@@ -28,6 +28,195 @@ use crate::{
 /// Private shorthand for the generic BCSR view.
 type View<'a, V, R, I, O, VW, RW> = BcsrHypergraph<'a, V, R, I, O, VW, RW>;
 
+/// By-value traversal constructors whose returned iterators borrow the
+/// underlying sections (`'view`), not the view value itself.
+///
+/// The view is `Copy`, so callers holding only a temporary copy — such as the
+/// frozen build wrappers delegating through `as_view` — can hand the returned
+/// iterators out for the full section lifetime. The borrowed-view trait impls
+/// below delegate here so each traversal is implemented once.
+impl<'view, V, R, I, O, VW, RW> View<'view, V, R, I, O, VW, RW>
+where
+    V: LayoutIndex,
+    R: LayoutIndex,
+    I: LayoutIndex,
+    O: LayoutWord<Index = I>,
+    VW: LayoutWord<Index = V>,
+    RW: LayoutWord<Index = R>,
+{
+    /// By-value variant of [`ElementIncidences::element_incidences`].
+    ///
+    /// # Performance
+    ///
+    /// Construction is `O(1)`; advancing the iterator is `O(log d_h)` per
+    /// item for maximum hyperedge participant-set size `d_h`.
+    pub(crate) fn detached_element_incidences(
+        self,
+        element: BcsrVertexId<V>,
+    ) -> BcsrElementIncidences<'view, O, VW, RW> {
+        let sections = self.sections();
+        let counts = self.counts();
+        let v_index = index_to_usize_validated(element.get());
+        let outgoing = vertex_bucket(
+            sections.vertex_outgoing_offsets,
+            sections.vertex_outgoing_hyperedges,
+            v_index,
+        );
+        let incoming = vertex_bucket(
+            sections.vertex_incoming_offsets,
+            sections.vertex_incoming_hyperedges,
+            v_index,
+        );
+        BcsrElementIncidences::new(v_index, counts.p_outgoing, outgoing, incoming, sections)
+    }
+
+    /// By-value variant of [`HyperedgeParticipants::hyperedge_participants`].
+    ///
+    /// # Performance
+    ///
+    /// Construction is `O(1)`; advancing the iterator is `O(1)`.
+    pub(crate) fn detached_hyperedge_participants(
+        self,
+        hyperedge: BcsrHyperedgeId<R>,
+    ) -> BcsrChainedParticipants<'view, VW> {
+        let sections = self.sections();
+        let h_index = index_to_usize_validated(hyperedge.get());
+        let head = vertex_bucket(sections.head_offsets, sections.head_participants, h_index);
+        let tail = vertex_bucket(sections.tail_offsets, sections.tail_participants, h_index);
+        BcsrVertexSlice::new(head).chain(BcsrVertexSlice::new(tail))
+    }
+
+    /// By-value variant of [`IncidentHyperedges::incident_hyperedges`].
+    ///
+    /// # Performance
+    ///
+    /// Construction is `O(1)`; advancing the iterator is `O(1)`.
+    pub(crate) fn detached_incident_hyperedges(
+        self,
+        vertex: BcsrVertexId<V>,
+    ) -> BcsrChainedHyperedges<'view, RW> {
+        let sections = self.sections();
+        let v_index = index_to_usize_validated(vertex.get());
+        let outgoing = vertex_bucket(
+            sections.vertex_outgoing_offsets,
+            sections.vertex_outgoing_hyperedges,
+            v_index,
+        );
+        let incoming = vertex_bucket(
+            sections.vertex_incoming_offsets,
+            sections.vertex_incoming_hyperedges,
+            v_index,
+        );
+        BcsrHyperedgeSlice::new(outgoing).chain(BcsrHyperedgeSlice::new(incoming))
+    }
+
+    /// By-value variant of [`DirectedHyperedgeParticipants::source_participants`].
+    ///
+    /// # Performance
+    ///
+    /// Construction is `O(1)`; advancing the iterator is `O(1)`.
+    pub(crate) fn detached_source_participants(
+        self,
+        hyperedge: BcsrHyperedgeId<R>,
+    ) -> BcsrVertexSlice<'view, VW> {
+        let sections = self.sections();
+        let h_index = index_to_usize_validated(hyperedge.get());
+        let head = vertex_bucket(sections.head_offsets, sections.head_participants, h_index);
+        BcsrVertexSlice::new(head)
+    }
+
+    /// By-value variant of [`DirectedHyperedgeParticipants::target_participants`].
+    ///
+    /// # Performance
+    ///
+    /// Construction is `O(1)`; advancing the iterator is `O(1)`.
+    pub(crate) fn detached_target_participants(
+        self,
+        hyperedge: BcsrHyperedgeId<R>,
+    ) -> BcsrVertexSlice<'view, VW> {
+        let sections = self.sections();
+        let h_index = index_to_usize_validated(hyperedge.get());
+        let tail = vertex_bucket(sections.tail_offsets, sections.tail_participants, h_index);
+        BcsrVertexSlice::new(tail)
+    }
+
+    /// By-value variant of [`DirectedVertexHyperedges::outgoing_hyperedges`].
+    ///
+    /// # Performance
+    ///
+    /// Construction is `O(1)`; advancing the iterator is `O(1)`.
+    pub(crate) fn detached_outgoing_hyperedges(
+        self,
+        vertex: BcsrVertexId<V>,
+    ) -> BcsrHyperedgeSlice<'view, RW> {
+        let sections = self.sections();
+        let v_index = index_to_usize_validated(vertex.get());
+        let outgoing = vertex_bucket(
+            sections.vertex_outgoing_offsets,
+            sections.vertex_outgoing_hyperedges,
+            v_index,
+        );
+        BcsrHyperedgeSlice::new(outgoing)
+    }
+
+    /// By-value variant of [`DirectedVertexHyperedges::incoming_hyperedges`].
+    ///
+    /// # Performance
+    ///
+    /// Construction is `O(1)`; advancing the iterator is `O(1)`.
+    pub(crate) fn detached_incoming_hyperedges(
+        self,
+        vertex: BcsrVertexId<V>,
+    ) -> BcsrHyperedgeSlice<'view, RW> {
+        let sections = self.sections();
+        let v_index = index_to_usize_validated(vertex.get());
+        let incoming = vertex_bucket(
+            sections.vertex_incoming_offsets,
+            sections.vertex_incoming_hyperedges,
+            v_index,
+        );
+        BcsrHyperedgeSlice::new(incoming)
+    }
+
+    /// By-value variant of [`ElementSuccessors::element_successors`].
+    ///
+    /// # Performance
+    ///
+    /// Construction is `O(1)`; advancing the iterator is `O(1)` amortised.
+    pub(crate) fn detached_element_successors(
+        self,
+        vertex: BcsrVertexId<V>,
+    ) -> BcsrSuccessorVertices<'view, RW, O, VW> {
+        let sections = self.sections();
+        let v_index = index_to_usize_validated(vertex.get());
+        let outgoing = vertex_bucket(
+            sections.vertex_outgoing_offsets,
+            sections.vertex_outgoing_hyperedges,
+            v_index,
+        );
+        BcsrSuccessorVertices::new(outgoing, sections.tail_offsets, sections.tail_participants)
+    }
+
+    /// By-value variant of [`ElementPredecessors::element_predecessors`].
+    ///
+    /// # Performance
+    ///
+    /// Construction is `O(1)`; advancing the iterator is `O(1)` amortised.
+    pub(crate) fn detached_element_predecessors(
+        self,
+        vertex: BcsrVertexId<V>,
+    ) -> BcsrPredecessorVertices<'view, RW, O, VW> {
+        let sections = self.sections();
+        let v_index = index_to_usize_validated(vertex.get());
+        let incoming = vertex_bucket(
+            sections.vertex_incoming_offsets,
+            sections.vertex_incoming_hyperedges,
+            v_index,
+        );
+        BcsrPredecessorVertices::new(incoming, sections.head_offsets, sections.head_participants)
+    }
+}
+
 impl<V, R, I, O, VW, RW> TopologyBase for View<'_, V, R, I, O, VW, RW>
 where
     V: LayoutIndex,
@@ -297,20 +486,7 @@ where
         Self: 'view;
 
     fn element_incidences(&self, element: BcsrVertexId<V>) -> Self::Incidences<'_> {
-        let sections = self.sections();
-        let counts = self.counts();
-        let v_index = index_to_usize_validated(element.get());
-        let outgoing = vertex_bucket(
-            sections.vertex_outgoing_offsets,
-            sections.vertex_outgoing_hyperedges,
-            v_index,
-        );
-        let incoming = vertex_bucket(
-            sections.vertex_incoming_offsets,
-            sections.vertex_incoming_hyperedges,
-            v_index,
-        );
-        BcsrElementIncidences::new(v_index, counts.p_outgoing, outgoing, incoming, sections)
+        self.detached_element_incidences(element)
     }
 }
 
@@ -374,11 +550,7 @@ where
         Self: 'view;
 
     fn hyperedge_participants(&self, hyperedge: BcsrHyperedgeId<R>) -> Self::Participants<'_> {
-        let sections = self.sections();
-        let h_index = index_to_usize_validated(hyperedge.get());
-        let head = vertex_bucket(sections.head_offsets, sections.head_participants, h_index);
-        let tail = vertex_bucket(sections.tail_offsets, sections.tail_participants, h_index);
-        BcsrVertexSlice::new(head).chain(BcsrVertexSlice::new(tail))
+        self.detached_hyperedge_participants(hyperedge)
     }
 }
 
@@ -397,19 +569,7 @@ where
         Self: 'view;
 
     fn incident_hyperedges(&self, vertex: BcsrVertexId<V>) -> Self::IncidentHyperedges<'_> {
-        let sections = self.sections();
-        let v_index = index_to_usize_validated(vertex.get());
-        let outgoing = vertex_bucket(
-            sections.vertex_outgoing_offsets,
-            sections.vertex_outgoing_hyperedges,
-            v_index,
-        );
-        let incoming = vertex_bucket(
-            sections.vertex_incoming_offsets,
-            sections.vertex_incoming_hyperedges,
-            v_index,
-        );
-        BcsrHyperedgeSlice::new(outgoing).chain(BcsrHyperedgeSlice::new(incoming))
+        self.detached_incident_hyperedges(vertex)
     }
 }
 
@@ -433,17 +593,11 @@ where
         Self: 'view;
 
     fn source_participants(&self, hyperedge: BcsrHyperedgeId<R>) -> Self::SourceParticipants<'_> {
-        let sections = self.sections();
-        let h_index = index_to_usize_validated(hyperedge.get());
-        let head = vertex_bucket(sections.head_offsets, sections.head_participants, h_index);
-        BcsrVertexSlice::new(head)
+        self.detached_source_participants(hyperedge)
     }
 
     fn target_participants(&self, hyperedge: BcsrHyperedgeId<R>) -> Self::TargetParticipants<'_> {
-        let sections = self.sections();
-        let h_index = index_to_usize_validated(hyperedge.get());
-        let tail = vertex_bucket(sections.tail_offsets, sections.tail_participants, h_index);
-        BcsrVertexSlice::new(tail)
+        self.detached_target_participants(hyperedge)
     }
 }
 
@@ -503,25 +657,11 @@ where
         Self: 'view;
 
     fn outgoing_hyperedges(&self, vertex: BcsrVertexId<V>) -> Self::OutgoingHyperedges<'_> {
-        let sections = self.sections();
-        let v_index = index_to_usize_validated(vertex.get());
-        let outgoing = vertex_bucket(
-            sections.vertex_outgoing_offsets,
-            sections.vertex_outgoing_hyperedges,
-            v_index,
-        );
-        BcsrHyperedgeSlice::new(outgoing)
+        self.detached_outgoing_hyperedges(vertex)
     }
 
     fn incoming_hyperedges(&self, vertex: BcsrVertexId<V>) -> Self::IncomingHyperedges<'_> {
-        let sections = self.sections();
-        let v_index = index_to_usize_validated(vertex.get());
-        let incoming = vertex_bucket(
-            sections.vertex_incoming_offsets,
-            sections.vertex_incoming_hyperedges,
-            v_index,
-        );
-        BcsrHyperedgeSlice::new(incoming)
+        self.detached_incoming_hyperedges(vertex)
     }
 }
 
@@ -540,14 +680,7 @@ where
         Self: 'view;
 
     fn element_successors(&self, vertex: BcsrVertexId<V>) -> Self::Successors<'_> {
-        let sections = self.sections();
-        let v_index = index_to_usize_validated(vertex.get());
-        let outgoing = vertex_bucket(
-            sections.vertex_outgoing_offsets,
-            sections.vertex_outgoing_hyperedges,
-            v_index,
-        );
-        BcsrSuccessorVertices::new(outgoing, sections.tail_offsets, sections.tail_participants)
+        self.detached_element_successors(vertex)
     }
 }
 
@@ -566,14 +699,7 @@ where
         Self: 'view;
 
     fn element_predecessors(&self, vertex: BcsrVertexId<V>) -> Self::Predecessors<'_> {
-        let sections = self.sections();
-        let v_index = index_to_usize_validated(vertex.get());
-        let incoming = vertex_bucket(
-            sections.vertex_incoming_offsets,
-            sections.vertex_incoming_hyperedges,
-            v_index,
-        );
-        BcsrPredecessorVertices::new(incoming, sections.head_offsets, sections.head_participants)
+        self.detached_element_predecessors(vertex)
     }
 }
 

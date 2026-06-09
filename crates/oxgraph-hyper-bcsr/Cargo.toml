@@ -53,5 +53,9 @@ required-features = ["build", "build-property-arrow"]
 name = "build_proptest"
 required-features = ["build-property-arrow"]
 
+[[test]]
+name = "frozen_view_equivalence"
+required-features = ["build"]
+
 [lints]
 workspace = true
