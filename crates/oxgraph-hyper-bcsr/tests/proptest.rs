@@ -13,10 +13,13 @@ use oxgraph_hyper::{
     HyperedgeParticipants, IncidentHyperedgeCount, IncidentHyperedges, RelationIncidenceCount,
 };
 use oxgraph_hyper_bcsr::{
-    BcsrError, BcsrHyperedgeId, BcsrHypergraph, BcsrRoleSide, BcsrSections, BcsrValidation,
+    BcsrError, BcsrHyperedgeId, BcsrNativeHypergraph, BcsrRoleSide, BcsrSections, BcsrValidation,
     BcsrVertexId,
 };
 use proptest::prelude::*;
+
+/// Native `u32`-indexed view used by every property in this file.
+type NativeView<'view> = BcsrNativeHypergraph<'view, u32, u32, u32>;
 
 /// Per-hyperedge picks tuple drawn from the strategy:
 /// `(vertex_count, hyperedge_count, head_picks, tail_picks)`. Each pick is a
@@ -281,8 +284,8 @@ proptest! {
     ) {
         let owned = build_owned_bcsr(vertex_count, hyperedge_count, &head_picks, &tail_picks)?;
         let sections = owned.sections();
-        prop_assert!(BcsrHypergraph::open(sections).is_ok());
-        prop_assert!(BcsrHypergraph::open_with(sections, BcsrValidation::Strict).is_ok());
+        prop_assert!(NativeView::open(sections).is_ok());
+        prop_assert!(NativeView::open_with(sections, BcsrValidation::Strict).is_ok());
     }
 
     /// Per-hyperedge and per-vertex traversal counts agree with the explicit
@@ -294,7 +297,7 @@ proptest! {
         (vertex_count, hyperedge_count, head_picks, tail_picks) in gen_bcsr_picks()
     ) {
         let owned = build_owned_bcsr(vertex_count, hyperedge_count, &head_picks, &tail_picks)?;
-        let view = match BcsrHypergraph::open_with(owned.sections(), BcsrValidation::Strict) {
+        let view = match NativeView::open_with(owned.sections(), BcsrValidation::Strict) {
             Ok(value) => value,
             Err(error) => return Err(TestCaseError::fail(format!(
                 "Strict open rejected valid input: {error:?}"
@@ -338,7 +341,7 @@ proptest! {
         (vertex_count, hyperedge_count, head_picks, tail_picks) in gen_bcsr_picks()
     ) {
         let owned = build_owned_bcsr(vertex_count, hyperedge_count, &head_picks, &tail_picks)?;
-        let view = match BcsrHypergraph::open(owned.sections()) {
+        let view = match NativeView::open(owned.sections()) {
             Ok(value) => value,
             Err(error) => return Err(TestCaseError::fail(format!(
                 "Layout open rejected valid input: {error:?}"
@@ -377,11 +380,11 @@ proptest! {
         };
 
         prop_assert!(
-            BcsrHypergraph::open(tampered_sections).is_ok(),
+            NativeView::open(tampered_sections).is_ok(),
             "Layout should accept a single-entry-bucket swap"
         );
 
-        match BcsrHypergraph::open_with(tampered_sections, BcsrValidation::Strict) {
+        match NativeView::open_with(tampered_sections, BcsrValidation::Strict) {
             Err(BcsrError::CrossDirectionMismatch { side: BcsrRoleSide::Outgoing, .. }) => {}
             other => return Err(TestCaseError::fail(format!(
                 "expected CrossDirectionMismatch{{side:Outgoing,..}} after tampering; got {other:?}"

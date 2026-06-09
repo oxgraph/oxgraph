@@ -21,8 +21,7 @@ use std::hint::black_box;
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use oxgraph_hyper::{DirectedHyperedgeParticipants, DirectedVertexSuccessors, IncidentHyperedges};
 use oxgraph_hyper_bcsr::{
-    BcsrHyperedgeId, BcsrHypergraph, BcsrNativeHypergraph, BcsrSections, BcsrValidation,
-    BcsrVertexId,
+    BcsrHyperedgeId, BcsrNativeHypergraph, BcsrSections, BcsrValidation, BcsrVertexId,
 };
 
 /// Fixed head and tail size used by the synthetic regular hypergraph.
@@ -207,7 +206,7 @@ fn pairs_throughput(vertex_count: u32) -> u64 {
 
 /// Opens a borrowed view over `slices` or panics with a clear message.
 fn open_view(slices: &RegularSlices) -> BcsrNativeHypergraph<'_, u32, u32, u32> {
-    match BcsrHypergraph::open(slices.sections()) {
+    match BcsrNativeHypergraph::<u32, u32, u32>::open(slices.sections()) {
         Ok(value) => value,
         Err(error) => panic!("regular fixture invalid: {error:?}"),
     }
@@ -224,7 +223,8 @@ fn bench_open_layout(c: &mut Criterion) {
             vertex_count,
             |b, _| {
                 b.iter(|| {
-                    let view = BcsrHypergraph::open(black_box(slices.sections()));
+                    let view =
+                        BcsrNativeHypergraph::<u32, u32, u32>::open(black_box(slices.sections()));
                     black_box(view)
                 });
             },
@@ -244,7 +244,7 @@ fn bench_open_strict(c: &mut Criterion) {
             vertex_count,
             |b, _| {
                 b.iter(|| {
-                    let view = BcsrHypergraph::open_with(
+                    let view = BcsrNativeHypergraph::<u32, u32, u32>::open_with(
                         black_box(slices.sections()),
                         BcsrValidation::Strict,
                     );

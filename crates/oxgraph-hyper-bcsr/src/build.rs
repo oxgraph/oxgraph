@@ -1023,9 +1023,12 @@ where
     RelationIndex: LayoutIndex + LayoutWord<Index = RelationIndex>,
     IncidenceIndex: LayoutIndex + LayoutWord<Index = IncidenceIndex>,
 {
-    BcsrHypergraph::open_with(topology.sections(), BcsrValidation::Strict)
-        .map(|_view| ())
-        .map_err(|source| HyperBuildError::InvalidTopology { source })
+    BcsrNativeHypergraph::<VertexIndex, RelationIndex, IncidenceIndex>::open_with(
+        topology.sections(),
+        BcsrValidation::Strict,
+    )
+    .map(|_view| ())
+    .map_err(|source| HyperBuildError::InvalidTopology { source })
 }
 
 fn vertex_slot<VertexIndex: LayoutIndex>(vertex: HyperVertexId<VertexIndex>) -> usize {
