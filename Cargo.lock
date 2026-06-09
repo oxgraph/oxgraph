@@ -1429,6 +1429,7 @@ dependencies = [
  "arrow-schema",
  "arrow-select",
  "criterion",
+ "oxgraph-layout-util",
  "oxgraph-snapshot",
  "oxgraph-topology",
  "proptest",
