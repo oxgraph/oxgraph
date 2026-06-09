@@ -48,6 +48,8 @@ mod proofs;
 
 #[cfg(feature = "alloc")]
 pub use crate::container::SnapshotBuilder;
+#[cfg(feature = "alloc")]
+pub use crate::container::{SectionSink, SnapshotWriter};
 pub use crate::{
     container::{
         FORMAT_MAGIC, FORMAT_MAJOR, FORMAT_MINOR, HEADER_SIZE, HeaderOnlySnapshot,

@@ -41,6 +41,7 @@ use zerocopy::byteorder::{LE, U64};
 use crate::{
     DbError, ElementId, IncidenceId, LabelId, PropertyKeyId, PropertySubject, RelationId,
     RelationTypeId,
+    overlay::StateView,
     state::{ElementRecord, IncidenceRecord, RelationRecord},
     value::{PropertyType, PropertyValue},
     wire,
@@ -299,6 +300,62 @@ impl OwnedBaseIndex {
         let mut element_incidences: BTreeMap<ElementId, BTreeSet<IncidenceId>> = BTreeMap::new();
         let mut relation_incidences: BTreeMap<RelationId, BTreeSet<IncidenceId>> = BTreeMap::new();
         for record in incidences.values() {
+            element_incidences
+                .entry(record.element)
+                .or_default()
+                .insert(record.id);
+            relation_incidences
+                .entry(record.relation)
+                .or_default()
+                .insert(record.id);
+        }
+        Self {
+            label_members,
+            relation_type_members,
+            property_equality,
+            element_incidences,
+            relation_incidences,
+        }
+    }
+
+    /// Builds the owned index by walking a merged [`StateView`] directly, so
+    /// the freeze path derives the postings without first re-materializing the
+    /// whole state into scratch record maps.
+    ///
+    /// Equal to [`Self::from_records`] over the same visible state (the
+    /// record-map form remains the differential oracle for the open path).
+    ///
+    /// # Performance
+    ///
+    /// This function is `O(visible records + labels + properties)`.
+    pub(crate) fn from_state(view: &impl StateView) -> Self {
+        let mut label_members: BTreeMap<LabelId, BTreeSet<ElementId>> = BTreeMap::new();
+        for record in view.elements() {
+            for label in &record.labels {
+                label_members.entry(*label).or_default().insert(record.id);
+            }
+        }
+        let mut relation_type_members: BTreeMap<RelationTypeId, BTreeSet<RelationId>> =
+            BTreeMap::new();
+        for record in view.relations() {
+            if let Some(relation_type) = record.relation_type {
+                relation_type_members
+                    .entry(relation_type)
+                    .or_default()
+                    .insert(record.id);
+            }
+        }
+        let mut property_equality: BTreeMap<EqualityKey, BTreeSet<PropertySubject>> =
+            BTreeMap::new();
+        for (subject, key, value) in view.properties() {
+            property_equality
+                .entry((key, value.into_owned()))
+                .or_default()
+                .insert(subject);
+        }
+        let mut element_incidences: BTreeMap<ElementId, BTreeSet<IncidenceId>> = BTreeMap::new();
+        let mut relation_incidences: BTreeMap<RelationId, BTreeSet<IncidenceId>> = BTreeMap::new();
+        for record in view.incidences() {
             element_incidences
                 .entry(record.element)
                 .or_default()
