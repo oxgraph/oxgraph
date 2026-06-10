@@ -1600,21 +1600,17 @@ where
 
 /// Converts an identity-map payload slice into explicit little-endian words.
 ///
+/// Thin wrapper over [`oxgraph_layout_util::slice_to_le`].
+///
 /// # Performance
 ///
 /// This function is `O(values.len())`.
 #[cfg(feature = "build-property-arrow")]
-pub fn identity_slice_to_le<I>(
-    values: &[I],
-) -> Vec<<I as oxgraph_property::PropertyIndex>::LittleEndianWord>
+pub fn identity_slice_to_le<I>(values: &[I]) -> Vec<I::LittleEndianWord>
 where
     I: PropertySnapshotMetaWord,
 {
-    values
-        .iter()
-        .copied()
-        .map(oxgraph_property::PropertyIndex::to_le_word)
-        .collect()
+    oxgraph_layout_util::slice_to_le(values)
 }
 
 /// Exports a frozen hypergraph topology as a BCSR snapshot.

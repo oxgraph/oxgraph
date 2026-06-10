@@ -1095,13 +1095,13 @@ where
         let index = indices.value(position);
         let Some(index_usize) = index.to_usize() else {
             return Err(PropertyError::SparseIndexOutOfBounds {
-                index: index.to_u64(),
+                index: index.into(),
                 len,
             });
         };
         if index_usize >= len {
             return Err(PropertyError::SparseIndexOutOfBounds {
-                index: index.to_u64(),
+                index: index.into(),
                 len,
             });
         }

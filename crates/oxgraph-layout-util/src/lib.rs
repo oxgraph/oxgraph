@@ -40,7 +40,7 @@ use alloc::vec::Vec;
 use core::{error::Error, fmt, hash::Hash, iter::FusedIterator, marker::PhantomData};
 
 use zerocopy::{
-    FromBytes, Immutable, IntoBytes, KnownLayout,
+    FromBytes, Immutable, IntoBytes, KnownLayout, Unaligned,
     byteorder::{LE, U16, U32, U64},
 };
 
@@ -305,15 +305,23 @@ impl_le_layout_word!(U64<LE>, u64);
 
 /// A little-endian storage word usable in persisted snapshot payloads.
 ///
-/// Sealed marker over [`LayoutWord`] plus the zerocopy byte-view bounds. Only
-/// the explicit little-endian words implement it — native integers are
-/// excluded so persisted payloads always carry a defined byte order.
+/// Sealed marker over [`LayoutWord`] plus the zerocopy byte-view bounds,
+/// including [`Unaligned`] — persisted words are byte-aligned by design, so
+/// generic wire records composed of them stay padding-free. Only the explicit
+/// little-endian words implement it — native integers are excluded so
+/// persisted payloads always carry a defined byte order.
 ///
 /// # Performance
 ///
 /// `perf: unspecified`; this is a marker trait.
 pub trait LayoutSnapshotWord:
-    sealed::LayoutSnapshotWord + LayoutWord + FromBytes + Immutable + IntoBytes + KnownLayout
+    sealed::LayoutSnapshotWord
+    + LayoutWord
+    + FromBytes
+    + Immutable
+    + IntoBytes
+    + KnownLayout
+    + Unaligned
 {
 }
 

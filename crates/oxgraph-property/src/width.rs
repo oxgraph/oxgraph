@@ -8,11 +8,8 @@
 use std::vec::Vec;
 
 use arrow_array::{PrimitiveArray, types::ArrowPrimitiveType};
+use oxgraph_layout_util::SnapshotWidth;
 use oxgraph_topology::{ElementIndex, IncidenceIndex, RelationIndex, TopologyBase};
-use zerocopy::{
-    FromBytes, Immutable, IntoBytes, KnownLayout, Unaligned,
-    byteorder::{LE, U16, U32, U64},
-};
 
 use crate::model::{IdFamily, PropertyError};
 
@@ -86,57 +83,20 @@ mod sealed {
 
 /// Unsigned index width usable for sparse property indexes.
 ///
+/// This is the thin Arrow-specific layer over the shared
+/// [`SnapshotWidth`](oxgraph_layout_util::SnapshotWidth) contract: the
+/// `usize`/little-endian-word conversions and [`SnapshotWidth::WIDTH_CODE`]
+/// resolve through that trait, so `I::LittleEndianWord` and `I::to_le_word`
+/// have one definition substrate-wide. This trait only adds the Arrow
+/// primitive-array vocabulary plus the `Into<u64>` diagnostic widening.
+///
 /// # Performance
 ///
-/// Implementations perform checked conversions in `O(1)`.
-pub trait PropertyIndex: sealed::PropertyIndex + Copy + Ord {
+/// Implementations perform conversions in `O(1)` and array construction in
+/// `O(values.len())`.
+pub trait PropertyIndex: sealed::PropertyIndex + SnapshotWidth + Into<u64> {
     /// Arrow unsigned primitive type for sparse index arrays.
     type ArrowType: ArrowPrimitiveType<Native = Self> + 'static;
-
-    /// Little-endian word used when this width appears in snapshots.
-    type LittleEndianWord: FromBytes + Immutable + IntoBytes + KnownLayout + Unaligned + Copy;
-
-    /// Returns `self` as `usize`, or `None` if the target platform cannot hold it.
-    ///
-    /// # Performance
-    ///
-    /// This function is `O(1)`.
-    fn to_usize(self) -> Option<usize>;
-
-    /// Converts `value` into this index width if it fits.
-    ///
-    /// # Performance
-    ///
-    /// This function is `O(1)`.
-    fn from_usize(value: usize) -> Option<Self>;
-
-    /// Converts `value` into this index width if it fits.
-    ///
-    /// # Performance
-    ///
-    /// This function is `O(1)`.
-    fn from_u64(value: u64) -> Option<Self>;
-
-    /// Returns `self` as `u64` for diagnostics.
-    ///
-    /// # Performance
-    ///
-    /// This function is `O(1)`.
-    fn to_u64(self) -> u64;
-
-    /// Encodes `self` as a little-endian snapshot word.
-    ///
-    /// # Performance
-    ///
-    /// This function is `O(1)`.
-    fn to_le_word(self) -> Self::LittleEndianWord;
-
-    /// Decodes a little-endian snapshot word.
-    ///
-    /// # Performance
-    ///
-    /// This function is `O(1)`.
-    fn from_le_word(word: Self::LittleEndianWord) -> Self;
 
     /// Builds an Arrow primitive array from native index values.
     ///
@@ -148,18 +108,14 @@ pub trait PropertyIndex: sealed::PropertyIndex + Copy + Ord {
 
 /// Metadata/canonical-ID word width for property and identity snapshot sections.
 ///
+/// Derives each width-specific section kind from the crate's 4-aligned base
+/// constants or-ed with [`SnapshotWidth::WIDTH_CODE`] (inherited through
+/// [`PropertyIndex`]), so the two-bit width encoding has one source of truth.
+///
 /// # Performance
 ///
-/// Implementations perform checked conversions in `O(1)`.
+/// Reading the kind constants is `O(1)`.
 pub trait PropertySnapshotMetaWord: sealed::PropertySnapshotMetaWord + PropertyIndex {
-    /// Two-bit width discriminant carried in a section kind's low bits:
-    /// `0b00` = `u16`, `0b01` = `u32`, `0b10` = `u64` (`0b11` reserved).
-    ///
-    /// Mirrors `oxgraph_layout_util::SnapshotWidth::WIDTH_CODE` for the same
-    /// width; the in-crate impls forward to it so the encoding has one source
-    /// of truth.
-    const WIDTH_CODE: u32;
-
     /// Property descriptor section kind for this metadata width.
     const PROPERTY_DESCRIPTORS_KIND: u32 =
         SNAPSHOT_KIND_PROPERTY_DESCRIPTORS_BASE | Self::WIDTH_CODE;
@@ -185,36 +141,11 @@ pub trait PropertySnapshotMetaWord: sealed::PropertySnapshotMetaWord + PropertyI
 
 /// Implements property width traits for one unsigned integer.
 macro_rules! impl_property_width {
-    ($index:ty, $arrow:ty, $word:ty) => {
+    ($index:ty, $arrow:ty) => {
         impl sealed::PropertyIndex for $index {}
 
         impl PropertyIndex for $index {
             type ArrowType = $arrow;
-            type LittleEndianWord = $word;
-
-            fn to_usize(self) -> Option<usize> {
-                usize::try_from(self).ok()
-            }
-
-            fn from_usize(value: usize) -> Option<Self> {
-                <$index>::try_from(value).ok()
-            }
-
-            fn from_u64(value: u64) -> Option<Self> {
-                <$index>::try_from(value).ok()
-            }
-
-            fn to_u64(self) -> u64 {
-                u64::from(self)
-            }
-
-            fn to_le_word(self) -> Self::LittleEndianWord {
-                <$word>::new(self)
-            }
-
-            fn from_le_word(word: Self::LittleEndianWord) -> Self {
-                word.get()
-            }
 
             fn primitive_array(values: Vec<Self>) -> PrimitiveArray<Self::ArrowType> {
                 PrimitiveArray::<$arrow>::from(values)
@@ -223,17 +154,15 @@ macro_rules! impl_property_width {
 
         impl sealed::PropertySnapshotMetaWord for $index {}
 
-        impl PropertySnapshotMetaWord for $index {
-            const WIDTH_CODE: u32 = <$index as oxgraph_layout_util::SnapshotWidth>::WIDTH_CODE;
-        }
+        impl PropertySnapshotMetaWord for $index {}
     };
 }
 
-impl_property_width!(u16, arrow_array::types::UInt16Type, U16<LE>);
+impl_property_width!(u16, arrow_array::types::UInt16Type);
 
-impl_property_width!(u32, arrow_array::types::UInt32Type, U32<LE>);
+impl_property_width!(u32, arrow_array::types::UInt32Type);
 
-impl_property_width!(u64, arrow_array::types::UInt64Type, U64<LE>);
+impl_property_width!(u64, arrow_array::types::UInt64Type);
 
 /// Marker trait selecting which axis of a topology view a property layer
 /// keys against (elements, relations, or incidences).
@@ -394,7 +323,7 @@ pub(crate) fn le_word_to_u64<W>(word: W::LittleEndianWord) -> u64
 where
     W: PropertySnapshotMetaWord,
 {
-    W::from_le_word(word).to_u64()
+    W::from_le_word(word).into()
 }
 
 /// Decodes a little-endian metadata word as `u32`.
