@@ -128,15 +128,17 @@ impl WriteOverlay {
         self.log.is_empty()
     }
 
-    /// Encodes this writer's mutation log into a WAL frame: the ordered ops with
-    /// the nine-value watermark appended as the final op, plus the interned blob.
+    /// Takes this writer's mutation log as a WAL frame: the ordered ops with
+    /// the nine-value watermark appended as the final op, plus the interned
+    /// blob. The log is left empty — commit calls this exactly once, and the
+    /// subsequent freeze does not carry the log — so no frame bytes are
+    /// cloned.
     ///
     /// # Performance
     ///
-    /// This method is `O(op count + blob length)`; it clones the log so the
-    /// writer's published-overlay fold can still run.
-    pub(crate) fn encode_frame(&self) -> (Vec<MutationOp>, Vec<u8>) {
-        let mut log = self.log.clone();
+    /// This method is `O(1)`; it moves the log out.
+    pub(crate) fn take_frame(&mut self) -> (Vec<MutationOp>, Vec<u8>) {
+        let mut log = core::mem::take(&mut self.log);
         log.push_watermark(self.next);
         (log.ops, log.blob)
     }
@@ -516,24 +518,30 @@ impl WriteOverlay {
     }
 
     /// Returns the merged-visible value of `(subject, key)` BEFORE a pending
-    /// property mutation: the overlay value when this writer already set it, the
-    /// base value when the overlay has not touched it, or `None` when the overlay
-    /// removed it or neither layer has it. The index maintainer uses this as the
-    /// posting the subject is leaving.
+    /// property mutation, borrowed from the writer's property delta or the
+    /// base: the overlay value when this writer already set it, the base value
+    /// when the overlay has not touched it, or `None` when the overlay removed
+    /// it or neither layer has it. An associated function over the delta map
+    /// (not `&self`), so callers hold the borrow while mutating the disjoint
+    /// index field — the index maintainer receives the leaving posting without
+    /// cloning it.
     ///
     /// # Performance
     ///
-    /// This method is `O(log change + log n)`.
-    fn visible_property(
-        &self,
-        base: &BaseRecords,
+    /// This function is `O(log change + log n)`.
+    fn visible_property_in<'state>(
+        properties: &'state BTreeMap<
+            PropertySubject,
+            BTreeMap<PropertyKeyId, Option<PropertyValue>>,
+        >,
+        base: &'state BaseRecords,
         subject: PropertySubject,
         key: PropertyKeyId,
-    ) -> Option<PropertyValue> {
-        self.properties
+    ) -> Option<&'state PropertyValue> {
+        properties
             .get(&subject)
             .and_then(|keys| keys.get(&key))
-            .map_or_else(|| base.property(subject, key).cloned(), Clone::clone)
+            .map_or_else(|| base.property(subject, key), Option::as_ref)
     }
 
     /// Returns whether the merged-visible value of `(subject, key)` already equals
@@ -615,29 +623,35 @@ impl WriteOverlay {
     }
 
     /// Returns every merged-visible property of `subject` BEFORE a pending
-    /// tombstone, so the index can withdraw each `(key, value)` posting it leaves.
+    /// tombstone, borrowed from the writer's property delta or the base, so
+    /// the index can withdraw each `(key, value)` posting it leaves without
+    /// cloning the values. An associated function over the delta map so the
+    /// caller can hold the borrow while mutating the disjoint index field.
     ///
     /// # Performance
     ///
-    /// This method is `O(subject's base + overlay properties)`.
-    fn visible_subject_properties(
-        &self,
-        base: &BaseRecords,
+    /// This function is `O(subject's base + overlay properties)`.
+    fn visible_subject_properties_in<'state>(
+        properties: &'state BTreeMap<
+            PropertySubject,
+            BTreeMap<PropertyKeyId, Option<PropertyValue>>,
+        >,
+        base: &'state BaseRecords,
         subject: PropertySubject,
-    ) -> BTreeMap<PropertyKeyId, PropertyValue> {
-        let mut visible: BTreeMap<PropertyKeyId, PropertyValue> = BTreeMap::new();
+    ) -> BTreeMap<PropertyKeyId, &'state PropertyValue> {
+        let mut visible: BTreeMap<PropertyKeyId, &PropertyValue> = BTreeMap::new();
         if let Some(keys) = base.properties.get(&subject) {
             for (key, value) in keys {
-                visible.insert(*key, value.clone());
+                visible.insert(*key, value);
             }
         }
-        let Some(keys) = self.properties.get(&subject) else {
+        let Some(keys) = properties.get(&subject) else {
             return visible;
         };
         for (key, entry) in keys {
             // A set overrides the base value; a removal masks it.
             if let Some(value) = entry {
-                visible.insert(*key, value.clone());
+                visible.insert(*key, value);
             } else {
                 visible.remove(key);
             }
@@ -752,7 +766,7 @@ impl WriteOverlay {
     fn tombstone_element_inner(&mut self, base: &BaseRecords, id: ElementId) {
         let subject = PropertySubject::Element(id);
         let labels = self.visible_element_labels(base, id);
-        let properties = self.visible_subject_properties(base, subject);
+        let properties = Self::visible_subject_properties_in(&self.properties, base, subject);
         self.index.on_tombstone_element(id, &labels, &properties);
         self.elements.insert(id, None);
         self.tombstone_subject_properties(base, subject);
@@ -778,7 +792,7 @@ impl WriteOverlay {
     fn tombstone_relation_inner(&mut self, base: &BaseRecords, id: RelationId) {
         let subject = PropertySubject::Relation(id);
         let relation_type = self.visible_relation_type(base, id);
-        let properties = self.visible_subject_properties(base, subject);
+        let properties = Self::visible_subject_properties_in(&self.properties, base, subject);
         self.index
             .on_tombstone_relation(id, relation_type, &properties);
         self.relations.insert(id, None);
@@ -805,8 +819,9 @@ impl WriteOverlay {
     /// This method is `O(log change + subject's properties)`.
     fn tombstone_incidence_inner(&mut self, base: &BaseRecords, id: IncidenceId) {
         let subject = PropertySubject::Incidence(id);
-        let properties = self.visible_subject_properties(base, subject);
-        if let Some(record) = self.visible_incidence(base, id) {
+        let record = self.visible_incidence(base, id);
+        let properties = Self::visible_subject_properties_in(&self.properties, base, subject);
+        if let Some(record) = record {
             self.index
                 .on_tombstone_incidence(id, record.relation, record.element, &properties);
         }
@@ -1037,9 +1052,8 @@ impl WriteOverlay {
         key: PropertyKeyId,
         value: PropertyValue,
     ) {
-        let previous = self.visible_property(base, subject, key);
-        self.index
-            .on_set_property(subject, key, previous.as_ref(), &value);
+        let previous = Self::visible_property_in(&self.properties, base, subject, key);
+        self.index.on_set_property(subject, key, previous, &value);
         self.properties
             .entry(subject)
             .or_default()
@@ -1080,9 +1094,8 @@ impl WriteOverlay {
         subject: PropertySubject,
         key: PropertyKeyId,
     ) {
-        let previous = self.visible_property(base, subject, key);
-        self.index
-            .on_remove_property(subject, key, previous.as_ref());
+        let previous = Self::visible_property_in(&self.properties, base, subject, key);
+        self.index.on_remove_property(subject, key, previous);
         self.properties
             .entry(subject)
             .or_default()
