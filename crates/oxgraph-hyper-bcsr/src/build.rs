@@ -29,8 +29,8 @@ use oxgraph_hyper::{
     RelationIndex as RelationIndexTrait, RelationWeight, TopologyBase, TopologyCounts,
 };
 use oxgraph_layout_util::{
-    IdOutOfBounds, LayoutIndex, OffsetOverflow, build_offset_index, id_to_slot, index_from_usize,
-    slot_or_max,
+    IdOutOfBounds, LayoutIndex, LayoutWord, OffsetOverflow, build_offset_index, id_to_slot,
+    index_from_usize, slot_or_max,
 };
 #[cfg(feature = "build-property-arrow")]
 use oxgraph_property::{
@@ -39,7 +39,12 @@ use oxgraph_property::{
 };
 use oxgraph_snapshot::{PlanError, SnapshotBuilder};
 
-use crate::BcsrSnapshotIndex;
+use crate::{
+    BcsrChainedHyperedges, BcsrChainedParticipants, BcsrChainedRelationIncidences,
+    BcsrElementIncidences, BcsrError, BcsrHyperedgeSlice, BcsrHypergraph, BcsrNativeHypergraph,
+    BcsrParticipantSlice, BcsrPredecessorVertices, BcsrRole, BcsrSections, BcsrSnapshotIndex,
+    BcsrSuccessorVertices, BcsrValidation, BcsrVertexSlice,
+};
 
 /// Result returned by unweighted hypergraph freeze operations.
 type FrozenHypergraphResult<VertexIndex, RelationIndex, IncidenceIndex> = Result<
@@ -72,15 +77,6 @@ type VertexRelationIndex<RelationIndex, IncidenceIndex> = (Vec<IncidenceIndex>, 
 /// Result returned by vertex-to-relation index construction.
 type VertexRelationIndexResult<VertexIndex, RelationIndex, IncidenceIndex> = Result<
     VertexRelationIndex<RelationIndex, IncidenceIndex>,
-    HyperBuildError<VertexIndex, RelationIndex, IncidenceIndex>,
->;
-
-/// Element-to-incidence offset and incidence arrays.
-type ElementIncidenceIndex<IncidenceIndex> = (Vec<IncidenceIndex>, Vec<IncidenceIndex>);
-
-/// Result returned by element-to-incidence index construction.
-type ElementIncidenceIndexResult<VertexIndex, RelationIndex, IncidenceIndex> = Result<
-    ElementIncidenceIndex<IncidenceIndex>,
     HyperBuildError<VertexIndex, RelationIndex, IncidenceIndex>,
 >;
 
@@ -177,6 +173,15 @@ pub enum HyperBuildError<VertexIndex, RelationIndex, IncidenceIndex> {
         /// Value that did not fit.
         value: usize,
     },
+    /// Freeze-time validation of the built topology failed.
+    ///
+    /// `freeze` validates its own output exactly once through the borrowed
+    /// view's [`BcsrValidation::Strict`] logic; this variant indicates a
+    /// builder bug, not a caller error.
+    InvalidTopology {
+        /// Underlying section-validation error.
+        source: BcsrError,
+    },
     /// An attached property layer used an unknown future ID family.
     #[cfg(feature = "build-property-arrow")]
     UnsupportedPropertyFamily {
@@ -238,6 +243,12 @@ where
             Self::IdOverflow { value } => {
                 write!(formatter, "hypergraph builder ID overflow at {value}")
             }
+            Self::InvalidTopology { source } => {
+                write!(
+                    formatter,
+                    "frozen topology failed strict validation: {source}"
+                )
+            }
             #[cfg(feature = "build-property-arrow")]
             Self::UnsupportedPropertyFamily { id_family } => write!(
                 formatter,
@@ -273,6 +284,7 @@ where
             #[cfg(feature = "build-property-arrow")]
             Self::Property { source } => Some(source),
             Self::SnapshotPlan { source } => Some(source),
+            Self::InvalidTopology { source } => Some(source),
             Self::InvalidVertex { .. }
             | Self::InvalidHyperedge { .. }
             | Self::InvalidParticipant { .. }
@@ -425,18 +437,30 @@ where
 
     /// Freezes the current builder contents into an owned immutable view.
     ///
+    /// The built arrays are validated exactly once at
+    /// [`BcsrValidation::Strict`] through the borrowed view's checked logic,
+    /// so [`FrozenHypergraph::as_view`] can skip re-validation.
+    ///
     /// # Errors
     ///
     /// Returns [`HyperBuildError::IdOverflow`] if any offset or dense ID cannot
-    /// fit in the selected index widths.
+    /// fit in the selected index widths, or
+    /// [`HyperBuildError::InvalidTopology`] if the freeze-time validation pass
+    /// rejects the built arrays (a builder bug).
     ///
     /// # Performance
     ///
     /// `O(v + h + p log p)` for vertices `v`, hyperedges `h`, and participants
-    /// `p`.
-    pub fn freeze(&self) -> FrozenHypergraphResult<VertexIndex, RelationIndex, IncidenceIndex> {
+    /// `p`, including the freeze-time Strict validation walk.
+    pub fn freeze(&self) -> FrozenHypergraphResult<VertexIndex, RelationIndex, IncidenceIndex>
+    where
+        VertexIndex: LayoutWord<Index = VertexIndex>,
+        RelationIndex: LayoutWord<Index = RelationIndex>,
+        IncidenceIndex: LayoutWord<Index = IncidenceIndex>,
+    {
         let normalized = self.normalized_hyperedges();
         let (topology, _weights) = build_topology(self.vertex_count, &normalized)?;
+        validate_frozen_topology(&topology)?;
         Ok(FrozenHypergraph { topology })
     }
 
@@ -717,25 +741,35 @@ where
 
     /// Freezes the current builder contents into an owned immutable view.
     ///
+    /// The built arrays are validated exactly once at
+    /// [`BcsrValidation::Strict`] through the borrowed view's checked logic,
+    /// so [`FrozenWeightedHypergraph::as_view`] can skip re-validation.
+    ///
     /// # Errors
     ///
     /// Returns [`HyperBuildError::IdOverflow`] if any offset or dense ID cannot
-    /// fit in the selected index widths.
+    /// fit in the selected index widths, or
+    /// [`HyperBuildError::InvalidTopology`] if the freeze-time validation pass
+    /// rejects the built arrays (a builder bug).
     ///
     /// # Performance
     ///
     /// `O(v + h + p log p)` for vertices `v`, hyperedges `h`, and participants
-    /// `p`.
+    /// `p`, including the freeze-time Strict validation walk.
     pub fn freeze(
         &self,
     ) -> FrozenWeightedHypergraphResult<VertexIndex, RelationIndex, IncidenceIndex, EW, RW, IW>
     where
+        VertexIndex: LayoutWord<Index = VertexIndex>,
+        RelationIndex: LayoutWord<Index = RelationIndex>,
+        IncidenceIndex: LayoutWord<Index = IncidenceIndex>,
         EW: Clone,
         RW: Clone,
         IW: Clone,
     {
         let normalized = self.normalized_hyperedges();
         let (topology, incidence_weights) = build_topology(self.vertex_count, &normalized)?;
+        validate_frozen_topology(&topology)?;
         Ok(FrozenWeightedHypergraph {
             topology,
             element_weights: self.element_weights.clone().into_boxed_slice(),
@@ -775,10 +809,19 @@ where
 
 /// Owned immutable unweighted directed hypergraph topology.
 ///
+/// Incidence and adjacency queries delegate to the borrowed
+/// [`BcsrNativeHypergraph`] view over the eight canonical arrays (see
+/// [`Self::as_view`]), so build path and view path share one traversal
+/// implementation and one `IncidenceId` numbering.
+///
 /// # Performance
 ///
-/// Count, containment, index, endpoint, and traversal methods are `O(1)` or
-/// `O(degree)` for incidence and adjacency iteration.
+/// Count, containment, index, and endpoint methods are `O(1)`, except
+/// incidence-to-hyperedge resolution
+/// ([`IncidenceRelation::incidence_relation`]), which is `O(log h)` for `h`
+/// hyperedges. Adjacency iteration is `O(degree)`; per-vertex incidence
+/// iteration ([`ElementIncidences::element_incidences`]) is
+/// `O(degree · log d_h)` for maximum hyperedge participant-set size `d_h`.
 #[derive(Clone, Debug)]
 #[must_use]
 pub struct FrozenHypergraph<VertexIndex, RelationIndex, IncidenceIndex>
@@ -790,7 +833,43 @@ where
     topology: FrozenTopology<VertexIndex, RelationIndex, IncidenceIndex>,
 }
 
+impl<VertexIndex, RelationIndex, IncidenceIndex>
+    FrozenHypergraph<VertexIndex, RelationIndex, IncidenceIndex>
+where
+    VertexIndex: LayoutIndex,
+    RelationIndex: LayoutIndex,
+    IncidenceIndex: LayoutIndex,
+{
+    /// Borrows this frozen topology as a zero-copy [`BcsrNativeHypergraph`].
+    ///
+    /// The build path and the borrowed view share all three ID spaces: vertex
+    /// and hyperedge IDs are dense insertion-order in both, and participant
+    /// (incidence) IDs are assigned in the view's head-block-then-tail-block
+    /// order at freeze time. The view reports incidence roles as
+    /// [`BcsrRole::Head`] / [`BcsrRole::Tail`], corresponding to this graph's
+    /// [`HyperParticipantRole::Source`] / [`HyperParticipantRole::Target`].
+    /// Construction skips re-validation because `freeze` already validated
+    /// these arrays once at [`BcsrValidation::Strict`].
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(1)`.
+    #[must_use]
+    pub fn as_view(&self) -> BcsrNativeHypergraph<'_, VertexIndex, RelationIndex, IncidenceIndex>
+    where
+        VertexIndex: LayoutWord<Index = VertexIndex>,
+        RelationIndex: LayoutWord<Index = RelationIndex>,
+        IncidenceIndex: LayoutWord<Index = IncidenceIndex>,
+    {
+        self.topology.as_view()
+    }
+}
+
 /// Owned immutable weighted directed hypergraph topology.
+///
+/// Topology queries share [`FrozenHypergraph`]'s delegation to the borrowed
+/// [`BcsrNativeHypergraph`] view (see [`Self::as_view`]) and its perf
+/// contract, including the `O(log h)` incidence-to-hyperedge resolution.
 ///
 /// # Performance
 ///
@@ -809,6 +888,45 @@ where
     incidence_weights: Box<[IW]>,
 }
 
+impl<VertexIndex, RelationIndex, IncidenceIndex, EW, RW, IW>
+    FrozenWeightedHypergraph<VertexIndex, RelationIndex, IncidenceIndex, EW, RW, IW>
+where
+    VertexIndex: LayoutIndex,
+    RelationIndex: LayoutIndex,
+    IncidenceIndex: LayoutIndex,
+{
+    /// Borrows this frozen topology as a zero-copy [`BcsrNativeHypergraph`].
+    ///
+    /// The build path and the borrowed view share all three ID spaces: vertex
+    /// and hyperedge IDs are dense insertion-order in both, and participant
+    /// (incidence) IDs are assigned in the view's head-block-then-tail-block
+    /// order at freeze time. The view reports incidence roles as
+    /// [`BcsrRole::Head`] / [`BcsrRole::Tail`], corresponding to this graph's
+    /// [`HyperParticipantRole::Source`] / [`HyperParticipantRole::Target`].
+    /// Construction skips re-validation because `freeze` already validated
+    /// these arrays once at [`BcsrValidation::Strict`]. Weights are not part
+    /// of the view; they stay on this owned wrapper.
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(1)`.
+    #[must_use]
+    pub fn as_view(&self) -> BcsrNativeHypergraph<'_, VertexIndex, RelationIndex, IncidenceIndex>
+    where
+        VertexIndex: LayoutWord<Index = VertexIndex>,
+        RelationIndex: LayoutWord<Index = RelationIndex>,
+        IncidenceIndex: LayoutWord<Index = IncidenceIndex>,
+    {
+        self.topology.as_view()
+    }
+}
+
+/// Owned canonical bipartite-CSR arrays produced by `freeze`.
+///
+/// Holds exactly the eight arrays the borrowed view consumes (plus the vertex
+/// count); every incidence- or adjacency-keyed query is answered by
+/// delegating to a [`BcsrNativeHypergraph`] over these arrays via
+/// [`Self::as_view`], so no derived index arrays are materialized.
 #[derive(Clone, Debug)]
 struct FrozenTopology<VertexIndex, RelationIndex, IncidenceIndex>
 where
@@ -825,11 +943,6 @@ where
     vertex_outgoing_hyperedges: Box<[RelationIndex]>,
     vertex_incoming_offsets: Box<[IncidenceIndex]>,
     vertex_incoming_hyperedges: Box<[RelationIndex]>,
-    participant_elements: Box<[VertexIndex]>,
-    participant_relations: Box<[RelationIndex]>,
-    participant_roles: Box<[HyperParticipantRole]>,
-    element_incidence_offsets: Box<[IncidenceIndex]>,
-    element_incidence_ids: Box<[IncidenceIndex]>,
 }
 
 impl<VertexIndex, RelationIndex, IncidenceIndex>
@@ -843,122 +956,76 @@ where
         self.head_offsets.len().saturating_sub(1)
     }
 
-    fn vertex_slot(vertex: HyperVertexId<VertexIndex>) -> usize {
-        vertex.get().to_usize().unwrap_or(usize::MAX)
-    }
-
-    fn hyperedge_slot(hyperedge: HyperedgeId<RelationIndex>) -> usize {
-        hyperedge.get().to_usize().unwrap_or(usize::MAX)
-    }
-
-    fn offset(value: IncidenceIndex, fallback: usize) -> usize {
-        value.to_usize().unwrap_or(fallback)
-    }
-
-    fn head_range(&self, hyperedge: HyperedgeId<RelationIndex>) -> core::ops::Range<usize> {
-        let slot = Self::hyperedge_slot(hyperedge);
-        let fallback = self.head_participants.len();
-        Self::offset(self.head_offsets[slot], fallback)
-            ..Self::offset(self.head_offsets[slot + 1], fallback)
-    }
-
-    fn tail_range(&self, hyperedge: HyperedgeId<RelationIndex>) -> core::ops::Range<usize> {
-        let slot = Self::hyperedge_slot(hyperedge);
-        let fallback = self.tail_participants.len();
-        Self::offset(self.tail_offsets[slot], fallback)
-            ..Self::offset(self.tail_offsets[slot + 1], fallback)
-    }
-
-    /// Returns the incidence-ID range of `hyperedge`'s head (source) block.
+    /// Returns the total incidence (participant) count.
     ///
-    /// Head incidence IDs equal their position in the head block directly
-    /// (`[0, P_head)`), so this is the head offset range unshifted. This mirrors
-    /// the borrowed view's head-block-then-tail-block incidence numbering.
-    fn source_incidence_range(
-        &self,
-        hyperedge: HyperedgeId<RelationIndex>,
-    ) -> core::ops::Range<usize> {
-        self.head_range(hyperedge)
+    /// Head and tail participants are separately allocated slices, so the sum
+    /// cannot overflow `usize`.
+    fn total_participants(&self) -> usize {
+        self.head_participants
+            .len()
+            .saturating_add(self.tail_participants.len())
     }
 
-    /// Returns the incidence-ID range of `hyperedge`'s tail (target) block.
+    /// Borrows the eight canonical arrays as view sections.
+    fn sections(&self) -> BcsrSections<'_, IncidenceIndex, VertexIndex, RelationIndex>
+    where
+        VertexIndex: LayoutWord<Index = VertexIndex>,
+        RelationIndex: LayoutWord<Index = RelationIndex>,
+        IncidenceIndex: LayoutWord<Index = IncidenceIndex>,
+    {
+        BcsrSections {
+            head_offsets: &self.head_offsets,
+            head_participants: &self.head_participants,
+            tail_offsets: &self.tail_offsets,
+            tail_participants: &self.tail_participants,
+            vertex_outgoing_offsets: &self.vertex_outgoing_offsets,
+            vertex_outgoing_hyperedges: &self.vertex_outgoing_hyperedges,
+            vertex_incoming_offsets: &self.vertex_incoming_offsets,
+            vertex_incoming_hyperedges: &self.vertex_incoming_hyperedges,
+        }
+    }
+
+    /// Borrows these arrays as a validated-input native view.
     ///
-    /// Tail incidence IDs are shifted past the whole head block, so this is the
-    /// tail offset range plus `P_head`.
-    fn target_incidence_range(
-        &self,
-        hyperedge: HyperedgeId<RelationIndex>,
-    ) -> core::ops::Range<usize> {
-        let head_block = self.head_participants.len();
-        let tail = self.tail_range(hyperedge);
-        (head_block + tail.start)..(head_block + tail.end)
+    /// `freeze` already validated the arrays once at
+    /// [`BcsrValidation::Strict`], so this skips re-validation.
+    fn as_view(&self) -> BcsrNativeHypergraph<'_, VertexIndex, RelationIndex, IncidenceIndex>
+    where
+        VertexIndex: LayoutWord<Index = VertexIndex>,
+        RelationIndex: LayoutWord<Index = RelationIndex>,
+        IncidenceIndex: LayoutWord<Index = IncidenceIndex>,
+    {
+        BcsrHypergraph::from_validated_sections(self.sections())
     }
+}
 
-    fn element_incidence_range(
-        &self,
-        vertex: HyperVertexId<VertexIndex>,
-    ) -> core::ops::Range<usize> {
-        let slot = Self::vertex_slot(vertex);
-        let fallback = self.element_incidence_ids.len();
-        Self::offset(self.element_incidence_offsets[slot], fallback)
-            ..Self::offset(self.element_incidence_offsets[slot + 1], fallback)
-    }
-
-    fn outgoing_hyperedge_range(
-        &self,
-        vertex: HyperVertexId<VertexIndex>,
-    ) -> core::ops::Range<usize> {
-        let slot = Self::vertex_slot(vertex);
-        let fallback = self.vertex_outgoing_hyperedges.len();
-        Self::offset(self.vertex_outgoing_offsets[slot], fallback)
-            ..Self::offset(self.vertex_outgoing_offsets[slot + 1], fallback)
-    }
-
-    fn incoming_hyperedge_range(
-        &self,
-        vertex: HyperVertexId<VertexIndex>,
-    ) -> core::ops::Range<usize> {
-        let slot = Self::vertex_slot(vertex);
-        let fallback = self.vertex_incoming_hyperedges.len();
-        Self::offset(self.vertex_incoming_offsets[slot], fallback)
-            ..Self::offset(self.vertex_incoming_offsets[slot + 1], fallback)
-    }
-
-    fn source_participants(
-        &self,
-        hyperedge: HyperedgeId<RelationIndex>,
-    ) -> VertexSliceIter<'_, VertexIndex> {
-        VertexSliceIter {
-            inner: self.head_participants[self.head_range(hyperedge)].iter(),
-        }
-    }
-
-    fn target_participants(
-        &self,
-        hyperedge: HyperedgeId<RelationIndex>,
-    ) -> VertexSliceIter<'_, VertexIndex> {
-        VertexSliceIter {
-            inner: self.tail_participants[self.tail_range(hyperedge)].iter(),
-        }
-    }
-
-    fn outgoing_hyperedges(
-        &self,
-        vertex: HyperVertexId<VertexIndex>,
-    ) -> HyperedgeSliceIter<'_, RelationIndex> {
-        HyperedgeSliceIter {
-            inner: self.vertex_outgoing_hyperedges[self.outgoing_hyperedge_range(vertex)].iter(),
-        }
-    }
-
-    fn incoming_hyperedges(
-        &self,
-        vertex: HyperVertexId<VertexIndex>,
-    ) -> HyperedgeSliceIter<'_, RelationIndex> {
-        HyperedgeSliceIter {
-            inner: self.vertex_incoming_hyperedges[self.incoming_hyperedge_range(vertex)].iter(),
-        }
-    }
+/// Validates a freshly built topology once at [`BcsrValidation::Strict`].
+///
+/// Builder output is valid by construction; this single freeze-time pass runs
+/// the borrowed view's checked validation logic over the eight canonical
+/// arrays as defense in depth, replacing hand-maintained build assertions.
+/// The frozen wrappers' `as_view` borrows then skip re-validation.
+///
+/// # Errors
+///
+/// Returns [`HyperBuildError::InvalidTopology`] when any Strict invariant
+/// fails, which would indicate a builder bug.
+///
+/// # Performance
+///
+/// `O(p · log d)` over `p` participants with maximum vertex degree `d`, plus
+/// a linear layout walk.
+fn validate_frozen_topology<VertexIndex, RelationIndex, IncidenceIndex>(
+    topology: &FrozenTopology<VertexIndex, RelationIndex, IncidenceIndex>,
+) -> Result<(), HyperBuildError<VertexIndex, RelationIndex, IncidenceIndex>>
+where
+    VertexIndex: LayoutIndex + LayoutWord<Index = VertexIndex>,
+    RelationIndex: LayoutIndex + LayoutWord<Index = RelationIndex>,
+    IncidenceIndex: LayoutIndex + LayoutWord<Index = IncidenceIndex>,
+{
+    BcsrHypergraph::open_with(topology.sections(), BcsrValidation::Strict)
+        .map(|_view| ())
+        .map_err(|source| HyperBuildError::InvalidTopology { source })
 }
 
 fn vertex_slot<VertexIndex: LayoutIndex>(vertex: HyperVertexId<VertexIndex>) -> usize {
@@ -992,9 +1059,9 @@ macro_rules! impl_topology_for {
         impl<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*> TopologyBase
             for $name<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*>
         where
-            VertexIndex: LayoutIndex,
-            RelationIndex: LayoutIndex,
-            IncidenceIndex: LayoutIndex,
+            VertexIndex: LayoutIndex + LayoutWord<Index = VertexIndex>,
+            RelationIndex: LayoutIndex + LayoutWord<Index = RelationIndex>,
+            IncidenceIndex: LayoutIndex + LayoutWord<Index = IncidenceIndex>,
         {
             type ElementId = HyperVertexId<VertexIndex>;
             type RelationId = HyperedgeId<RelationIndex>;
@@ -1003,9 +1070,9 @@ macro_rules! impl_topology_for {
         impl<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*> IncidenceBase
             for $name<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*>
         where
-            VertexIndex: LayoutIndex,
-            RelationIndex: LayoutIndex,
-            IncidenceIndex: LayoutIndex,
+            VertexIndex: LayoutIndex + LayoutWord<Index = VertexIndex>,
+            RelationIndex: LayoutIndex + LayoutWord<Index = RelationIndex>,
+            IncidenceIndex: LayoutIndex + LayoutWord<Index = IncidenceIndex>,
         {
             type IncidenceId = HyperParticipantId<IncidenceIndex>;
             type Role = HyperParticipantRole;
@@ -1014,9 +1081,9 @@ macro_rules! impl_topology_for {
         impl<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*> TopologyCounts
             for $name<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*>
         where
-            VertexIndex: LayoutIndex,
-            RelationIndex: LayoutIndex,
-            IncidenceIndex: LayoutIndex,
+            VertexIndex: LayoutIndex + LayoutWord<Index = VertexIndex>,
+            RelationIndex: LayoutIndex + LayoutWord<Index = RelationIndex>,
+            IncidenceIndex: LayoutIndex + LayoutWord<Index = IncidenceIndex>,
         {
             fn element_count(&self) -> usize {
                 self.$topology.vertex_count
@@ -1030,30 +1097,30 @@ macro_rules! impl_topology_for {
         impl<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*> HypergraphCounts
             for $name<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*>
         where
-            VertexIndex: LayoutIndex,
-            RelationIndex: LayoutIndex,
-            IncidenceIndex: LayoutIndex,
+            VertexIndex: LayoutIndex + LayoutWord<Index = VertexIndex>,
+            RelationIndex: LayoutIndex + LayoutWord<Index = RelationIndex>,
+            IncidenceIndex: LayoutIndex + LayoutWord<Index = IncidenceIndex>,
         {
         }
 
         impl<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*> IncidenceCounts
             for $name<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*>
         where
-            VertexIndex: LayoutIndex,
-            RelationIndex: LayoutIndex,
-            IncidenceIndex: LayoutIndex,
+            VertexIndex: LayoutIndex + LayoutWord<Index = VertexIndex>,
+            RelationIndex: LayoutIndex + LayoutWord<Index = RelationIndex>,
+            IncidenceIndex: LayoutIndex + LayoutWord<Index = IncidenceIndex>,
         {
             fn incidence_count(&self) -> usize {
-                self.$topology.participant_elements.len()
+                self.$topology.total_participants()
             }
         }
 
         impl<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*> ElementIndexTrait
             for $name<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*>
         where
-            VertexIndex: LayoutIndex,
-            RelationIndex: LayoutIndex,
-            IncidenceIndex: LayoutIndex,
+            VertexIndex: LayoutIndex + LayoutWord<Index = VertexIndex>,
+            RelationIndex: LayoutIndex + LayoutWord<Index = RelationIndex>,
+            IncidenceIndex: LayoutIndex + LayoutWord<Index = IncidenceIndex>,
         {
             fn element_bound(&self) -> usize {
                 self.$topology.vertex_count
@@ -1067,9 +1134,9 @@ macro_rules! impl_topology_for {
         impl<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*> RelationIndexTrait
             for $name<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*>
         where
-            VertexIndex: LayoutIndex,
-            RelationIndex: LayoutIndex,
-            IncidenceIndex: LayoutIndex,
+            VertexIndex: LayoutIndex + LayoutWord<Index = VertexIndex>,
+            RelationIndex: LayoutIndex + LayoutWord<Index = RelationIndex>,
+            IncidenceIndex: LayoutIndex + LayoutWord<Index = IncidenceIndex>,
         {
             fn relation_bound(&self) -> usize {
                 self.$topology.relation_count()
@@ -1083,12 +1150,12 @@ macro_rules! impl_topology_for {
         impl<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*> IncidenceIndexTrait
             for $name<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*>
         where
-            VertexIndex: LayoutIndex,
-            RelationIndex: LayoutIndex,
-            IncidenceIndex: LayoutIndex,
+            VertexIndex: LayoutIndex + LayoutWord<Index = VertexIndex>,
+            RelationIndex: LayoutIndex + LayoutWord<Index = RelationIndex>,
+            IncidenceIndex: LayoutIndex + LayoutWord<Index = IncidenceIndex>,
         {
             fn incidence_bound(&self) -> usize {
-                self.$topology.participant_elements.len()
+                self.$topology.total_participants()
             }
 
             fn incidence_index(&self, incidence: HyperParticipantId<IncidenceIndex>) -> usize {
@@ -1099,9 +1166,9 @@ macro_rules! impl_topology_for {
         impl<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*> ContainsElement
             for $name<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*>
         where
-            VertexIndex: LayoutIndex,
-            RelationIndex: LayoutIndex,
-            IncidenceIndex: LayoutIndex,
+            VertexIndex: LayoutIndex + LayoutWord<Index = VertexIndex>,
+            RelationIndex: LayoutIndex + LayoutWord<Index = RelationIndex>,
+            IncidenceIndex: LayoutIndex + LayoutWord<Index = IncidenceIndex>,
         {
             fn contains_element(&self, element: HyperVertexId<VertexIndex>) -> bool {
                 element
@@ -1114,9 +1181,9 @@ macro_rules! impl_topology_for {
         impl<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*> ContainsRelation
             for $name<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*>
         where
-            VertexIndex: LayoutIndex,
-            RelationIndex: LayoutIndex,
-            IncidenceIndex: LayoutIndex,
+            VertexIndex: LayoutIndex + LayoutWord<Index = VertexIndex>,
+            RelationIndex: LayoutIndex + LayoutWord<Index = RelationIndex>,
+            IncidenceIndex: LayoutIndex + LayoutWord<Index = IncidenceIndex>,
         {
             fn contains_relation(&self, relation: HyperedgeId<RelationIndex>) -> bool {
                 relation
@@ -1129,157 +1196,158 @@ macro_rules! impl_topology_for {
         impl<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*> ContainsIncidence
             for $name<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*>
         where
-            VertexIndex: LayoutIndex,
-            RelationIndex: LayoutIndex,
-            IncidenceIndex: LayoutIndex,
+            VertexIndex: LayoutIndex + LayoutWord<Index = VertexIndex>,
+            RelationIndex: LayoutIndex + LayoutWord<Index = RelationIndex>,
+            IncidenceIndex: LayoutIndex + LayoutWord<Index = IncidenceIndex>,
         {
             fn contains_incidence(&self, incidence: HyperParticipantId<IncidenceIndex>) -> bool {
                 incidence
                     .get()
                     .to_usize()
-                    .is_some_and(|slot| slot < self.$topology.participant_elements.len())
+                    .is_some_and(|slot| slot < self.$topology.total_participants())
             }
         }
 
         impl<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*> IncidenceElement
             for $name<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*>
         where
-            VertexIndex: LayoutIndex,
-            RelationIndex: LayoutIndex,
-            IncidenceIndex: LayoutIndex,
+            VertexIndex: LayoutIndex + LayoutWord<Index = VertexIndex>,
+            RelationIndex: LayoutIndex + LayoutWord<Index = RelationIndex>,
+            IncidenceIndex: LayoutIndex + LayoutWord<Index = IncidenceIndex>,
         {
             fn incidence_element(
                 &self,
                 incidence: HyperParticipantId<IncidenceIndex>,
             ) -> HyperVertexId<VertexIndex> {
-                HyperVertexId::new(self.$topology.participant_elements[participant_slot(incidence)])
+                self.$topology.as_view().incidence_element(incidence)
             }
         }
 
         impl<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*> IncidenceRelation
             for $name<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*>
         where
-            VertexIndex: LayoutIndex,
-            RelationIndex: LayoutIndex,
-            IncidenceIndex: LayoutIndex,
+            VertexIndex: LayoutIndex + LayoutWord<Index = VertexIndex>,
+            RelationIndex: LayoutIndex + LayoutWord<Index = RelationIndex>,
+            IncidenceIndex: LayoutIndex + LayoutWord<Index = IncidenceIndex>,
         {
+            // Perf: `O(log h)` — the view resolves the owning hyperedge by
+            // binary search over the offset arrays instead of the deleted
+            // `participant_relations` lookup table.
             fn incidence_relation(
                 &self,
                 incidence: HyperParticipantId<IncidenceIndex>,
             ) -> HyperedgeId<RelationIndex> {
-                HyperedgeId::new(self.$topology.participant_relations[participant_slot(incidence)])
+                self.$topology.as_view().incidence_relation(incidence)
             }
         }
 
         impl<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*> IncidenceRole
             for $name<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*>
         where
-            VertexIndex: LayoutIndex,
-            RelationIndex: LayoutIndex,
-            IncidenceIndex: LayoutIndex,
+            VertexIndex: LayoutIndex + LayoutWord<Index = VertexIndex>,
+            RelationIndex: LayoutIndex + LayoutWord<Index = RelationIndex>,
+            IncidenceIndex: LayoutIndex + LayoutWord<Index = IncidenceIndex>,
         {
             fn incidence_role(&self, incidence: HyperParticipantId<IncidenceIndex>) -> HyperParticipantRole {
-                self.$topology.participant_roles[participant_slot(incidence)]
+                match self.$topology.as_view().incidence_role(incidence) {
+                    BcsrRole::Head => HyperParticipantRole::Source,
+                    BcsrRole::Tail => HyperParticipantRole::Target,
+                }
             }
         }
 
         impl<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*> RelationIncidences
             for $name<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*>
         where
-            VertexIndex: LayoutIndex,
-            RelationIndex: LayoutIndex,
-            IncidenceIndex: LayoutIndex,
+            VertexIndex: LayoutIndex + LayoutWord<Index = VertexIndex>,
+            RelationIndex: LayoutIndex + LayoutWord<Index = RelationIndex>,
+            IncidenceIndex: LayoutIndex + LayoutWord<Index = IncidenceIndex>,
         {
             type Incidences<'view>
-                = core::iter::Chain<ParticipantRangeIter<IncidenceIndex>, ParticipantRangeIter<IncidenceIndex>>
+                = BcsrChainedRelationIncidences<IncidenceIndex>
             where
                 Self: 'view;
 
             fn relation_incidences(&self, relation: HyperedgeId<RelationIndex>) -> Self::Incidences<'_> {
-                ParticipantRangeIter::new(self.$topology.source_incidence_range(relation))
-                    .chain(ParticipantRangeIter::new(self.$topology.target_incidence_range(relation)))
+                self.$topology.as_view().relation_incidences(relation)
             }
         }
 
         impl<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*> ElementIncidences
             for $name<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*>
         where
-            VertexIndex: LayoutIndex,
-            RelationIndex: LayoutIndex,
-            IncidenceIndex: LayoutIndex,
+            VertexIndex: LayoutIndex + LayoutWord<Index = VertexIndex>,
+            RelationIndex: LayoutIndex + LayoutWord<Index = RelationIndex>,
+            IncidenceIndex: LayoutIndex + LayoutWord<Index = IncidenceIndex>,
         {
             type Incidences<'view>
-                = ParticipantSliceIter<'view, IncidenceIndex>
+                = BcsrElementIncidences<'view, IncidenceIndex, VertexIndex, RelationIndex>
             where
                 Self: 'view;
 
+            // Perf: advancing is `O(log d_h)` per item — the view locates the
+            // vertex inside each incident hyperedge's participant bucket
+            // instead of reading the deleted per-vertex incidence-ID table.
             fn element_incidences(&self, element: HyperVertexId<VertexIndex>) -> Self::Incidences<'_> {
-                ParticipantSliceIter {
-                    inner: self.$topology.element_incidence_ids[self.$topology.element_incidence_range(element)].iter(),
-                }
+                self.$topology.as_view().detached_element_incidences(element)
             }
         }
 
         impl<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*> RelationIncidenceCount
             for $name<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*>
         where
-            VertexIndex: LayoutIndex,
-            RelationIndex: LayoutIndex,
-            IncidenceIndex: LayoutIndex,
+            VertexIndex: LayoutIndex + LayoutWord<Index = VertexIndex>,
+            RelationIndex: LayoutIndex + LayoutWord<Index = RelationIndex>,
+            IncidenceIndex: LayoutIndex + LayoutWord<Index = IncidenceIndex>,
         {
             fn relation_incidence_count(&self, relation: HyperedgeId<RelationIndex>) -> usize {
-                self.$topology.source_incidence_range(relation).len()
-                    + self.$topology.target_incidence_range(relation).len()
+                self.$topology.as_view().relation_incidence_count(relation)
             }
         }
 
         impl<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*> ElementIncidenceCount
             for $name<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*>
         where
-            VertexIndex: LayoutIndex,
-            RelationIndex: LayoutIndex,
-            IncidenceIndex: LayoutIndex,
+            VertexIndex: LayoutIndex + LayoutWord<Index = VertexIndex>,
+            RelationIndex: LayoutIndex + LayoutWord<Index = RelationIndex>,
+            IncidenceIndex: LayoutIndex + LayoutWord<Index = IncidenceIndex>,
         {
             fn element_incidence_count(&self, element: HyperVertexId<VertexIndex>) -> usize {
-                self.$topology.element_incidence_range(element).len()
+                self.$topology.as_view().element_incidence_count(element)
             }
         }
 
         impl<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*> HyperedgeParticipants
             for $name<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*>
         where
-            VertexIndex: LayoutIndex,
-            RelationIndex: LayoutIndex,
-            IncidenceIndex: LayoutIndex,
+            VertexIndex: LayoutIndex + LayoutWord<Index = VertexIndex>,
+            RelationIndex: LayoutIndex + LayoutWord<Index = RelationIndex>,
+            IncidenceIndex: LayoutIndex + LayoutWord<Index = IncidenceIndex>,
         {
             type Participants<'view>
-                = core::iter::Chain<VertexSliceIter<'view, VertexIndex>, VertexSliceIter<'view, VertexIndex>>
+                = BcsrChainedParticipants<'view, VertexIndex>
             where
                 Self: 'view;
 
             fn hyperedge_participants(&self, hyperedge: HyperedgeId<RelationIndex>) -> Self::Participants<'_> {
-                self.source_participants(hyperedge)
-                    .chain(self.target_participants(hyperedge))
+                self.$topology.as_view().detached_hyperedge_participants(hyperedge)
             }
         }
 
         impl<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*> IncidentHyperedges
             for $name<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*>
         where
-            VertexIndex: LayoutIndex,
-            RelationIndex: LayoutIndex,
-            IncidenceIndex: LayoutIndex,
+            VertexIndex: LayoutIndex + LayoutWord<Index = VertexIndex>,
+            RelationIndex: LayoutIndex + LayoutWord<Index = RelationIndex>,
+            IncidenceIndex: LayoutIndex + LayoutWord<Index = IncidenceIndex>,
         {
             type IncidentHyperedges<'view>
-                = IncidentHyperedgeIter<'view, IncidenceIndex, RelationIndex>
+                = BcsrChainedHyperedges<'view, RelationIndex>
             where
                 Self: 'view;
 
             fn incident_hyperedges(&self, vertex: HyperVertexId<VertexIndex>) -> Self::IncidentHyperedges<'_> {
-                IncidentHyperedgeIter {
-                    incidences: self.element_incidences(vertex),
-                    participant_relations: &self.$topology.participant_relations,
-                }
+                self.$topology.as_view().detached_incident_hyperedges(vertex)
             }
         }
 
@@ -1290,126 +1358,118 @@ macro_rules! impl_topology_for {
         impl<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*> DirectedHyperedgeParticipants
             for $name<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*>
         where
-            VertexIndex: LayoutIndex,
-            RelationIndex: LayoutIndex,
-            IncidenceIndex: LayoutIndex,
+            VertexIndex: LayoutIndex + LayoutWord<Index = VertexIndex>,
+            RelationIndex: LayoutIndex + LayoutWord<Index = RelationIndex>,
+            IncidenceIndex: LayoutIndex + LayoutWord<Index = IncidenceIndex>,
         {
             type SourceParticipants<'view>
-                = VertexSliceIter<'view, VertexIndex>
+                = BcsrVertexSlice<'view, VertexIndex>
             where
                 Self: 'view;
             type TargetParticipants<'view>
-                = VertexSliceIter<'view, VertexIndex>
+                = BcsrVertexSlice<'view, VertexIndex>
             where
                 Self: 'view;
 
             fn source_participants(&self, hyperedge: HyperedgeId<RelationIndex>) -> Self::SourceParticipants<'_> {
-                self.$topology.source_participants(hyperedge)
+                self.$topology.as_view().detached_source_participants(hyperedge)
             }
 
             fn target_participants(&self, hyperedge: HyperedgeId<RelationIndex>) -> Self::TargetParticipants<'_> {
-                self.$topology.target_participants(hyperedge)
+                self.$topology.as_view().detached_target_participants(hyperedge)
             }
         }
 
         impl<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*> DirectedHyperedgeIncidences
             for $name<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*>
         where
-            VertexIndex: LayoutIndex,
-            RelationIndex: LayoutIndex,
-            IncidenceIndex: LayoutIndex,
+            VertexIndex: LayoutIndex + LayoutWord<Index = VertexIndex>,
+            RelationIndex: LayoutIndex + LayoutWord<Index = RelationIndex>,
+            IncidenceIndex: LayoutIndex + LayoutWord<Index = IncidenceIndex>,
         {
             type SourceIncidences<'view>
-                = ParticipantRangeIter<IncidenceIndex>
+                = BcsrParticipantSlice<IncidenceIndex>
             where
                 Self: 'view;
             type TargetIncidences<'view>
-                = ParticipantRangeIter<IncidenceIndex>
+                = BcsrParticipantSlice<IncidenceIndex>
             where
                 Self: 'view;
 
             fn source_incidences(&self, hyperedge: HyperedgeId<RelationIndex>) -> Self::SourceIncidences<'_> {
-                ParticipantRangeIter::new(self.$topology.source_incidence_range(hyperedge))
+                self.$topology.as_view().source_incidences(hyperedge)
             }
 
             fn target_incidences(&self, hyperedge: HyperedgeId<RelationIndex>) -> Self::TargetIncidences<'_> {
-                ParticipantRangeIter::new(self.$topology.target_incidence_range(hyperedge))
+                self.$topology.as_view().target_incidences(hyperedge)
             }
         }
 
         impl<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*> DirectedVertexHyperedges
             for $name<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*>
         where
-            VertexIndex: LayoutIndex,
-            RelationIndex: LayoutIndex,
-            IncidenceIndex: LayoutIndex,
+            VertexIndex: LayoutIndex + LayoutWord<Index = VertexIndex>,
+            RelationIndex: LayoutIndex + LayoutWord<Index = RelationIndex>,
+            IncidenceIndex: LayoutIndex + LayoutWord<Index = IncidenceIndex>,
         {
             type OutgoingHyperedges<'view>
-                = HyperedgeSliceIter<'view, RelationIndex>
+                = BcsrHyperedgeSlice<'view, RelationIndex>
             where
                 Self: 'view;
             type IncomingHyperedges<'view>
-                = HyperedgeSliceIter<'view, RelationIndex>
+                = BcsrHyperedgeSlice<'view, RelationIndex>
             where
                 Self: 'view;
 
             fn outgoing_hyperedges(&self, vertex: HyperVertexId<VertexIndex>) -> Self::OutgoingHyperedges<'_> {
-                self.$topology.outgoing_hyperedges(vertex)
+                self.$topology.as_view().detached_outgoing_hyperedges(vertex)
             }
 
             fn incoming_hyperedges(&self, vertex: HyperVertexId<VertexIndex>) -> Self::IncomingHyperedges<'_> {
-                self.$topology.incoming_hyperedges(vertex)
+                self.$topology.as_view().detached_incoming_hyperedges(vertex)
             }
         }
 
         impl<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*> ElementSuccessors
             for $name<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*>
         where
-            VertexIndex: LayoutIndex,
-            RelationIndex: LayoutIndex,
-            IncidenceIndex: LayoutIndex,
+            VertexIndex: LayoutIndex + LayoutWord<Index = VertexIndex>,
+            RelationIndex: LayoutIndex + LayoutWord<Index = RelationIndex>,
+            IncidenceIndex: LayoutIndex + LayoutWord<Index = IncidenceIndex>,
         {
             type Successors<'view>
-                = SuccessorIter<'view, VertexIndex, RelationIndex, IncidenceIndex>
+                = BcsrSuccessorVertices<'view, RelationIndex, IncidenceIndex, VertexIndex>
             where
                 Self: 'view;
 
             fn element_successors(&self, element: HyperVertexId<VertexIndex>) -> Self::Successors<'_> {
-                SuccessorIter {
-                    topology: &self.$topology,
-                    hyperedges: self.outgoing_hyperedges(element),
-                    current: None,
-                }
+                self.$topology.as_view().detached_element_successors(element)
             }
         }
 
         impl<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*> ElementPredecessors
             for $name<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*>
         where
-            VertexIndex: LayoutIndex,
-            RelationIndex: LayoutIndex,
-            IncidenceIndex: LayoutIndex,
+            VertexIndex: LayoutIndex + LayoutWord<Index = VertexIndex>,
+            RelationIndex: LayoutIndex + LayoutWord<Index = RelationIndex>,
+            IncidenceIndex: LayoutIndex + LayoutWord<Index = IncidenceIndex>,
         {
             type Predecessors<'view>
-                = PredecessorIter<'view, VertexIndex, RelationIndex, IncidenceIndex>
+                = BcsrPredecessorVertices<'view, RelationIndex, IncidenceIndex, VertexIndex>
             where
                 Self: 'view;
 
             fn element_predecessors(&self, element: HyperVertexId<VertexIndex>) -> Self::Predecessors<'_> {
-                PredecessorIter {
-                    topology: &self.$topology,
-                    hyperedges: self.incoming_hyperedges(element),
-                    current: None,
-                }
+                self.$topology.as_view().detached_element_predecessors(element)
             }
         }
 
         impl<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*> CanonicalElementIdentity
             for $name<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*>
         where
-            VertexIndex: LayoutIndex,
-            RelationIndex: LayoutIndex,
-            IncidenceIndex: LayoutIndex,
+            VertexIndex: LayoutIndex + LayoutWord<Index = VertexIndex>,
+            RelationIndex: LayoutIndex + LayoutWord<Index = RelationIndex>,
+            IncidenceIndex: LayoutIndex + LayoutWord<Index = IncidenceIndex>,
         {
             type CanonicalElementId = HyperVertexId<VertexIndex>;
 
@@ -1421,9 +1481,9 @@ macro_rules! impl_topology_for {
         impl<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*> LocalElementIdentity
             for $name<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*>
         where
-            VertexIndex: LayoutIndex,
-            RelationIndex: LayoutIndex,
-            IncidenceIndex: LayoutIndex,
+            VertexIndex: LayoutIndex + LayoutWord<Index = VertexIndex>,
+            RelationIndex: LayoutIndex + LayoutWord<Index = RelationIndex>,
+            IncidenceIndex: LayoutIndex + LayoutWord<Index = IncidenceIndex>,
         {
             fn local_element_id(&self, canonical: Self::CanonicalElementId) -> Option<Self::ElementId> {
                 self.contains_element(canonical).then_some(canonical)
@@ -1433,9 +1493,9 @@ macro_rules! impl_topology_for {
         impl<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*> CanonicalRelationIdentity
             for $name<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*>
         where
-            VertexIndex: LayoutIndex,
-            RelationIndex: LayoutIndex,
-            IncidenceIndex: LayoutIndex,
+            VertexIndex: LayoutIndex + LayoutWord<Index = VertexIndex>,
+            RelationIndex: LayoutIndex + LayoutWord<Index = RelationIndex>,
+            IncidenceIndex: LayoutIndex + LayoutWord<Index = IncidenceIndex>,
         {
             type CanonicalRelationId = HyperedgeId<RelationIndex>;
 
@@ -1447,9 +1507,9 @@ macro_rules! impl_topology_for {
         impl<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*> LocalRelationIdentity
             for $name<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*>
         where
-            VertexIndex: LayoutIndex,
-            RelationIndex: LayoutIndex,
-            IncidenceIndex: LayoutIndex,
+            VertexIndex: LayoutIndex + LayoutWord<Index = VertexIndex>,
+            RelationIndex: LayoutIndex + LayoutWord<Index = RelationIndex>,
+            IncidenceIndex: LayoutIndex + LayoutWord<Index = IncidenceIndex>,
         {
             fn local_relation_id(&self, canonical: Self::CanonicalRelationId) -> Option<Self::RelationId> {
                 self.contains_relation(canonical).then_some(canonical)
@@ -1459,9 +1519,9 @@ macro_rules! impl_topology_for {
         impl<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*> CanonicalIncidenceIdentity
             for $name<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*>
         where
-            VertexIndex: LayoutIndex,
-            RelationIndex: LayoutIndex,
-            IncidenceIndex: LayoutIndex,
+            VertexIndex: LayoutIndex + LayoutWord<Index = VertexIndex>,
+            RelationIndex: LayoutIndex + LayoutWord<Index = RelationIndex>,
+            IncidenceIndex: LayoutIndex + LayoutWord<Index = IncidenceIndex>,
         {
             type CanonicalIncidenceId = HyperParticipantId<IncidenceIndex>;
 
@@ -1476,9 +1536,9 @@ macro_rules! impl_topology_for {
         impl<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*> LocalIncidenceIdentity
             for $name<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*>
         where
-            VertexIndex: LayoutIndex,
-            RelationIndex: LayoutIndex,
-            IncidenceIndex: LayoutIndex,
+            VertexIndex: LayoutIndex + LayoutWord<Index = VertexIndex>,
+            RelationIndex: LayoutIndex + LayoutWord<Index = RelationIndex>,
+            IncidenceIndex: LayoutIndex + LayoutWord<Index = IncidenceIndex>,
         {
             fn local_incidence_id(
                 &self,
@@ -1496,9 +1556,9 @@ impl_topology_for!(FrozenWeightedHypergraph, [EW, RW, IW], topology);
 impl<VertexIndex, RelationIndex, IncidenceIndex, EW: Copy, RW, IW> ElementWeight
     for FrozenWeightedHypergraph<VertexIndex, RelationIndex, IncidenceIndex, EW, RW, IW>
 where
-    VertexIndex: LayoutIndex,
-    RelationIndex: LayoutIndex,
-    IncidenceIndex: LayoutIndex,
+    VertexIndex: LayoutIndex + LayoutWord<Index = VertexIndex>,
+    RelationIndex: LayoutIndex + LayoutWord<Index = RelationIndex>,
+    IncidenceIndex: LayoutIndex + LayoutWord<Index = IncidenceIndex>,
 {
     type Weight = EW;
 
@@ -1510,9 +1570,9 @@ where
 impl<VertexIndex, RelationIndex, IncidenceIndex, EW, RW: Copy, IW> RelationWeight
     for FrozenWeightedHypergraph<VertexIndex, RelationIndex, IncidenceIndex, EW, RW, IW>
 where
-    VertexIndex: LayoutIndex,
-    RelationIndex: LayoutIndex,
-    IncidenceIndex: LayoutIndex,
+    VertexIndex: LayoutIndex + LayoutWord<Index = VertexIndex>,
+    RelationIndex: LayoutIndex + LayoutWord<Index = RelationIndex>,
+    IncidenceIndex: LayoutIndex + LayoutWord<Index = IncidenceIndex>,
 {
     type Weight = RW;
 
@@ -1524,240 +1584,14 @@ where
 impl<VertexIndex, RelationIndex, IncidenceIndex, EW, RW, IW: Copy> IncidenceWeight
     for FrozenWeightedHypergraph<VertexIndex, RelationIndex, IncidenceIndex, EW, RW, IW>
 where
-    VertexIndex: LayoutIndex,
-    RelationIndex: LayoutIndex,
-    IncidenceIndex: LayoutIndex,
+    VertexIndex: LayoutIndex + LayoutWord<Index = VertexIndex>,
+    RelationIndex: LayoutIndex + LayoutWord<Index = RelationIndex>,
+    IncidenceIndex: LayoutIndex + LayoutWord<Index = IncidenceIndex>,
 {
     type Weight = IW;
 
     fn incidence_weight(&self, incidence: HyperParticipantId<IncidenceIndex>) -> Self::Weight {
         self.incidence_weights[participant_slot(incidence)]
-    }
-}
-
-/// Iterator over vertex IDs stored in frozen hypergraph slices.
-///
-/// # Performance
-///
-/// `next` is `O(1)`.
-pub struct VertexSliceIter<'view, VertexIndex> {
-    inner: core::slice::Iter<'view, VertexIndex>,
-}
-
-impl<VertexIndex: Copy> Iterator for VertexSliceIter<'_, VertexIndex> {
-    type Item = HyperVertexId<VertexIndex>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.inner.next().copied().map(HyperVertexId::new)
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        self.inner.size_hint()
-    }
-}
-
-impl<VertexIndex: Copy> ExactSizeIterator for VertexSliceIter<'_, VertexIndex> {}
-
-/// Iterator over hyperedge IDs stored in frozen hypergraph slices.
-///
-/// # Performance
-///
-/// `next` is `O(1)`.
-pub struct HyperedgeSliceIter<'view, RelationIndex> {
-    inner: core::slice::Iter<'view, RelationIndex>,
-}
-
-impl<RelationIndex: Copy> Iterator for HyperedgeSliceIter<'_, RelationIndex> {
-    type Item = HyperedgeId<RelationIndex>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.inner.next().copied().map(HyperedgeId::new)
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        self.inner.size_hint()
-    }
-}
-
-impl<RelationIndex: Copy> ExactSizeIterator for HyperedgeSliceIter<'_, RelationIndex> {}
-
-/// Iterator over participant IDs stored in frozen hypergraph slices.
-///
-/// # Performance
-///
-/// `next` is `O(1)`.
-pub struct ParticipantSliceIter<'view, IncidenceIndex> {
-    inner: core::slice::Iter<'view, IncidenceIndex>,
-}
-
-impl<IncidenceIndex: Copy> Iterator for ParticipantSliceIter<'_, IncidenceIndex> {
-    type Item = HyperParticipantId<IncidenceIndex>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.inner.next().copied().map(HyperParticipantId::new)
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        self.inner.size_hint()
-    }
-}
-
-impl<IncidenceIndex: Copy> ExactSizeIterator for ParticipantSliceIter<'_, IncidenceIndex> {}
-
-/// Iterator over contiguous participant IDs.
-///
-/// # Performance
-///
-/// `next` is `O(1)`.
-pub struct ParticipantRangeIter<IncidenceIndex> {
-    next: usize,
-    end: usize,
-    index_width: PhantomData<IncidenceIndex>,
-}
-
-impl<IncidenceIndex> ParticipantRangeIter<IncidenceIndex> {
-    const fn new(range: core::ops::Range<usize>) -> Self {
-        Self {
-            next: range.start,
-            end: range.end,
-            index_width: PhantomData,
-        }
-    }
-}
-
-impl<IncidenceIndex: LayoutIndex> Iterator for ParticipantRangeIter<IncidenceIndex> {
-    type Item = HyperParticipantId<IncidenceIndex>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.next == self.end {
-            return None;
-        }
-        let value = self.next;
-        self.next += 1;
-        IncidenceIndex::from_usize(value).map(HyperParticipantId::new)
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        let len = self.end - self.next;
-        (len, Some(len))
-    }
-}
-
-impl<IncidenceIndex: LayoutIndex> ExactSizeIterator for ParticipantRangeIter<IncidenceIndex> {}
-
-/// Iterator that maps vertex incidences to hyperedges.
-///
-/// # Performance
-///
-/// `next` is `O(1)`.
-pub struct IncidentHyperedgeIter<'view, IncidenceIndex, RelationIndex> {
-    incidences: ParticipantSliceIter<'view, IncidenceIndex>,
-    participant_relations: &'view [RelationIndex],
-}
-
-impl<IncidenceIndex, RelationIndex> Iterator
-    for IncidentHyperedgeIter<'_, IncidenceIndex, RelationIndex>
-where
-    IncidenceIndex: LayoutIndex,
-    RelationIndex: Copy,
-{
-    type Item = HyperedgeId<RelationIndex>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let incidence = self.incidences.next()?;
-        let slot = incidence.get().to_usize()?;
-        self.participant_relations
-            .get(slot)
-            .copied()
-            .map(HyperedgeId::new)
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        self.incidences.size_hint()
-    }
-}
-
-impl<IncidenceIndex, RelationIndex> ExactSizeIterator
-    for IncidentHyperedgeIter<'_, IncidenceIndex, RelationIndex>
-where
-    IncidenceIndex: LayoutIndex,
-    RelationIndex: Copy,
-{
-}
-
-/// Iterator over successor vertices reached via outgoing hyperedges.
-///
-/// # Performance
-///
-/// Each yielded successor is `O(1)` after the containing hyperedge is loaded.
-pub struct SuccessorIter<'view, VertexIndex, RelationIndex, IncidenceIndex>
-where
-    VertexIndex: LayoutIndex,
-    RelationIndex: LayoutIndex,
-    IncidenceIndex: LayoutIndex,
-{
-    topology: &'view FrozenTopology<VertexIndex, RelationIndex, IncidenceIndex>,
-    hyperedges: HyperedgeSliceIter<'view, RelationIndex>,
-    current: Option<VertexSliceIter<'view, VertexIndex>>,
-}
-
-impl<VertexIndex, RelationIndex, IncidenceIndex> Iterator
-    for SuccessorIter<'_, VertexIndex, RelationIndex, IncidenceIndex>
-where
-    VertexIndex: LayoutIndex,
-    RelationIndex: LayoutIndex,
-    IncidenceIndex: LayoutIndex,
-{
-    type Item = HyperVertexId<VertexIndex>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        loop {
-            if let Some(current) = &mut self.current
-                && let Some(vertex) = current.next()
-            {
-                return Some(vertex);
-            }
-            let hyperedge = self.hyperedges.next()?;
-            self.current = Some(self.topology.target_participants(hyperedge));
-        }
-    }
-}
-
-/// Iterator over predecessor vertices reached via incoming hyperedges.
-///
-/// # Performance
-///
-/// Each yielded predecessor is `O(1)` after the containing hyperedge is loaded.
-pub struct PredecessorIter<'view, VertexIndex, RelationIndex, IncidenceIndex>
-where
-    VertexIndex: LayoutIndex,
-    RelationIndex: LayoutIndex,
-    IncidenceIndex: LayoutIndex,
-{
-    topology: &'view FrozenTopology<VertexIndex, RelationIndex, IncidenceIndex>,
-    hyperedges: HyperedgeSliceIter<'view, RelationIndex>,
-    current: Option<VertexSliceIter<'view, VertexIndex>>,
-}
-
-impl<VertexIndex, RelationIndex, IncidenceIndex> Iterator
-    for PredecessorIter<'_, VertexIndex, RelationIndex, IncidenceIndex>
-where
-    VertexIndex: LayoutIndex,
-    RelationIndex: LayoutIndex,
-    IncidenceIndex: LayoutIndex,
-{
-    type Item = HyperVertexId<VertexIndex>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        loop {
-            if let Some(current) = &mut self.current
-                && let Some(vertex) = current.next()
-            {
-                return Some(vertex);
-            }
-            let hyperedge = self.hyperedges.next()?;
-            self.current = Some(self.topology.source_participants(hyperedge));
-        }
     }
 }
 
@@ -1912,9 +1746,6 @@ where
     let mut tail_offsets = Vec::with_capacity(records.len() + 1);
     let mut head_participants = Vec::new();
     let mut tail_participants = Vec::new();
-    let mut participant_elements = Vec::with_capacity(participant_count);
-    let mut participant_relations = Vec::with_capacity(participant_count);
-    let mut participant_roles = Vec::with_capacity(participant_count);
     let mut incidence_weights = Vec::with_capacity(participant_count);
 
     // Participant IDs are assigned in head-block-then-tail-block order so that
@@ -1926,28 +1757,22 @@ where
     // per-hyperedge head/tail offset arrays are derived in the same pass and so
     // remain canonical (`head_offsets[h]` is the head-block start of hyperedge
     // `h`, and head incidence IDs equal that head-block position directly).
+    // Incidence weights follow the same numbering, so `incidence_weights[i]`
+    // belongs to incidence ID `i`.
     head_offsets.push(index_from_usize(0).map_err(map_offset_overflow)?);
     tail_offsets.push(index_from_usize(0).map_err(map_offset_overflow)?);
     // Head block: all source incidences, hyperedge-major.
-    for (relation, record) in records.iter().enumerate() {
-        let relation_id = index_from_usize(relation).map_err(map_offset_overflow)?;
+    for record in records {
         for (vertex, weight) in &record.sources {
             head_participants.push(*vertex);
-            participant_elements.push(*vertex);
-            participant_relations.push(relation_id);
-            participant_roles.push(HyperParticipantRole::Source);
             incidence_weights.push(weight.clone());
         }
         head_offsets.push(index_from_usize(head_participants.len()).map_err(map_offset_overflow)?);
     }
     // Tail block: all target incidences, hyperedge-major, after the head block.
-    for (relation, record) in records.iter().enumerate() {
-        let relation_id = index_from_usize(relation).map_err(map_offset_overflow)?;
+    for record in records {
         for (vertex, weight) in &record.targets {
             tail_participants.push(*vertex);
-            participant_elements.push(*vertex);
-            participant_relations.push(relation_id);
-            participant_roles.push(HyperParticipantRole::Target);
             incidence_weights.push(weight.clone());
         }
         tail_offsets.push(index_from_usize(tail_participants.len()).map_err(map_offset_overflow)?);
@@ -1957,8 +1782,6 @@ where
         build_vertex_relation_index(vertex_count, records, HyperParticipantRole::Source)?;
     let (vertex_incoming_offsets, vertex_incoming_hyperedges) =
         build_vertex_relation_index(vertex_count, records, HyperParticipantRole::Target)?;
-    let (element_incidence_offsets, element_incidence_ids) =
-        build_element_incidence_index(vertex_count, &participant_elements)?;
 
     Ok((
         FrozenTopology {
@@ -1971,11 +1794,6 @@ where
             vertex_outgoing_hyperedges: vertex_outgoing_hyperedges.into_boxed_slice(),
             vertex_incoming_offsets: vertex_incoming_offsets.into_boxed_slice(),
             vertex_incoming_hyperedges: vertex_incoming_hyperedges.into_boxed_slice(),
-            participant_elements: participant_elements.into_boxed_slice(),
-            participant_relations: participant_relations.into_boxed_slice(),
-            participant_roles: participant_roles.into_boxed_slice(),
-            element_incidence_offsets: element_incidence_offsets.into_boxed_slice(),
-            element_incidence_ids: element_incidence_ids.into_boxed_slice(),
         },
         incidence_weights,
     ))
@@ -2006,25 +1824,6 @@ where
         }
     }
     build_offset_index::<IncidenceIndex, RelationIndex>(buckets).map_err(map_offset_overflow)
-}
-
-fn build_element_incidence_index<VertexIndex, RelationIndex, IncidenceIndex>(
-    vertex_count: usize,
-    participant_elements: &[VertexIndex],
-) -> ElementIncidenceIndexResult<VertexIndex, RelationIndex, IncidenceIndex>
-where
-    VertexIndex: LayoutIndex,
-    RelationIndex: LayoutIndex,
-    IncidenceIndex: LayoutIndex,
-{
-    let mut buckets = vec![Vec::<IncidenceIndex>::new(); vertex_count];
-    for (participant, vertex) in participant_elements.iter().copied().enumerate() {
-        let slot = vertex
-            .to_usize()
-            .ok_or(HyperBuildError::IdOverflow { value: usize::MAX })?;
-        buckets[slot].push(index_from_usize(participant).map_err(map_offset_overflow)?);
-    }
-    build_offset_index::<IncidenceIndex, IncidenceIndex>(buckets).map_err(map_offset_overflow)
 }
 
 fn ensure_vertices<VertexIndex, RelationIndex, IncidenceIndex, I>(
@@ -2209,7 +2008,7 @@ where
     let required = match id_family {
         IdFamily::Element => topology.vertex_count,
         IdFamily::Relation => topology.relation_count(),
-        IdFamily::Incidence => topology.participant_elements.len(),
+        IdFamily::Incidence => topology.total_participants(),
         unsupported => {
             return Err(HyperBuildError::UnsupportedPropertyFamily {
                 id_family: unsupported,
@@ -2279,7 +2078,7 @@ where
     RelationIndex: LayoutIndex,
     IncidenceIndex: LayoutIndex,
 {
-    let total = topology.participant_elements.len();
+    let total = topology.total_participants();
     let mut map = Vec::with_capacity(total);
     for incidence in 0..total {
         map.push(index_from_usize(incidence).map_err(map_offset_overflow)?);

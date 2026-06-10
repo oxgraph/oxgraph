@@ -285,13 +285,14 @@ pub mod graph_build {
 #[cfg(feature = "hyper-build")]
 pub mod hyper_build {
     // The builder index-width contract is the shared `LayoutIndex`, re-exported
-    // at [`crate::layout`]; the `hyper-build` feature enables it.
+    // at [`crate::layout`]; the `hyper-build` feature enables it. Frozen
+    // hypergraph traversal yields the borrowed view's `Bcsr*` iterator family,
+    // re-exported at [`crate::hyper_bcsr`]; the build module no longer defines
+    // duplicate iterator types.
     pub use oxgraph_hyper_bcsr::build::{
         FrozenHypergraph, FrozenWeightedHypergraph, HyperBuildError, HyperParticipantId,
-        HyperParticipantRole, HyperVertexId, HyperedgeId, HyperedgeSliceIter, HypergraphBuilder,
-        IncidentHyperedgeIter, ParticipantRangeIter, ParticipantSliceIter, PredecessorIter,
-        SuccessorIter, VertexSliceIter, WeightedHypergraphBuilder, export_bcsr_snapshot,
-        export_weighted_bcsr_snapshot,
+        HyperParticipantRole, HyperVertexId, HyperedgeId, HypergraphBuilder,
+        WeightedHypergraphBuilder, export_bcsr_snapshot, export_weighted_bcsr_snapshot,
     };
     #[cfg(feature = "hyper-property-arrow")]
     pub use oxgraph_hyper_bcsr::build::{
