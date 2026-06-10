@@ -58,6 +58,13 @@ pub(crate) const OXGDB_FORMAT_VERSION: u32 = 2;
 /// `perf: unspecified`; this is a compile-time constant.
 pub(crate) const OXGDB_SECTION_VERSION: u32 = 1;
 
+/// Upper bound on the section kinds one base snapshot emits — the freeze
+/// path's [`oxgraph_snapshot::SnapshotWriter`] table reservation: header (1) +
+/// catalog (7) + topology (5) + properties (2) + index postings (6) + string
+/// table (1) + trailer (1). Exceeding it fails the freeze loudly, so adding a
+/// section kind without bumping this constant is caught by every test.
+pub(crate) const MAX_BASE_SECTION_KINDS: usize = 23;
+
 /// Sentinel `u64` standing in for "no relation type" inside a [`RelationWire`].
 /// Valid canonical ids are allocated from `1`, so `0` can never collide with a
 /// real [`RelationTypeId`] and is a safe absence marker.

@@ -16,7 +16,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use oxgraph_snapshot::{Snapshot, SnapshotBuilder};
+use oxgraph_snapshot::{Snapshot, SnapshotWriter};
 use zerocopy::{
     FromBytes, IntoBytes,
     byteorder::{LE, U32, U64},
@@ -29,7 +29,6 @@ use crate::{
     crc,
     index::OwnedBaseIndex,
     overlay::StateView,
-    state::{ElementRecord, IncidenceRecord, RelationRecord},
     value::PropertyType,
     wire,
 };
@@ -166,7 +165,7 @@ pub(crate) fn raw_blob<'view>(snapshot: &Snapshot<'view>, kind: u32) -> &'view [
 /// # Performance
 ///
 /// This function is `O(records.len() * size_of::<T>())`.
-fn add_typed<T>(builder: &mut SnapshotBuilder, kind: u32, records: &[T]) -> Result<(), DbError>
+fn add_typed<T>(builder: &mut SnapshotWriter, kind: u32, records: &[T]) -> Result<(), DbError>
 where
     T: zerocopy::IntoBytes + zerocopy::Immutable,
 {
@@ -174,9 +173,8 @@ where
         return Ok(());
     }
     builder
-        .add_section_typed(kind, wire::OXGDB_SECTION_VERSION, records)
-        .map_err(|error| DbError::invalid_store(error.to_string()))?;
-    Ok(())
+        .section_typed(kind, wire::OXGDB_SECTION_VERSION, records)
+        .map_err(|error| DbError::invalid_store(error.to_string()))
 }
 
 /// Adds a raw byte-blob section, skipping it when empty.
@@ -188,14 +186,16 @@ where
 /// # Performance
 ///
 /// This function is `O(blob.len())`.
-fn add_blob(builder: &mut SnapshotBuilder, kind: u32, blob: Vec<u8>) -> Result<(), DbError> {
+fn add_blob(builder: &mut SnapshotWriter, kind: u32, blob: &[u8]) -> Result<(), DbError> {
     if blob.is_empty() {
         return Ok(());
     }
-    builder
-        .add_section(kind, wire::OXGDB_SECTION_VERSION, 0, blob)
+    let mut sink = builder
+        .begin_section(kind, wire::OXGDB_SECTION_VERSION, 0)
         .map_err(|error| DbError::invalid_store(error.to_string()))?;
-    Ok(())
+    sink.write(blob);
+    sink.end()
+        .map_err(|error| DbError::invalid_store(error.to_string()))
 }
 
 /// Encodes a merged state `view` (plus durable `stamps`) into deterministic
@@ -217,14 +217,15 @@ fn add_blob(builder: &mut SnapshotBuilder, kind: u32, blob: Vec<u8>) -> Result<(
 /// This function is `O(catalog + topology + properties)`; the trailer pass adds
 /// one extra `O(base bytes)` CRC scan.
 pub(crate) fn freeze_view(view: &impl StateView, stamps: FreezeStamps) -> Result<Vec<u8>, DbError> {
-    let mut builder = SnapshotBuilder::new();
+    let mut builder = SnapshotWriter::new(wire::MAX_BASE_SECTION_KINDS)
+        .map_err(|error| DbError::invalid_store(error.to_string()))?;
     let mut strings = StringTable::default();
     encode_header(&mut builder, view, stamps)?;
     encode_catalog(&mut builder, view.catalog(), &mut strings)?;
     encode_topology(&mut builder, view)?;
     encode_properties(&mut builder, view)?;
     encode_index(&mut builder, view)?;
-    add_blob(&mut builder, wire::SECTION_STRING_TABLE, strings.bytes)?;
+    add_blob(&mut builder, wire::SECTION_STRING_TABLE, &strings.bytes)?;
     // The trailer is added LAST so its payload is the final region in the byte
     // stream; its CRC then covers the entire prefix before it. The CRC field is
     // a placeholder zero here and is patched after `finish` lays the bytes out.
@@ -299,7 +300,7 @@ fn append_base_trailer(bytes: &mut [u8]) -> Result<(), DbError> {
 ///
 /// This function is `O(1)`.
 fn encode_header(
-    builder: &mut SnapshotBuilder,
+    builder: &mut SnapshotWriter,
     view: &impl StateView,
     stamps: FreezeStamps,
 ) -> Result<(), DbError> {
@@ -335,7 +336,7 @@ fn encode_header(
 ///
 /// This function is `O(catalog entries + name bytes)`.
 fn encode_catalog(
-    builder: &mut SnapshotBuilder,
+    builder: &mut SnapshotWriter,
     catalog: &Catalog,
     strings: &mut StringTable,
 ) -> Result<(), DbError> {
@@ -450,46 +451,77 @@ fn def_wire(
 /// # Performance
 ///
 /// This function is `O(topology size + labels)`.
-fn encode_topology(builder: &mut SnapshotBuilder, view: &impl StateView) -> Result<(), DbError> {
-    let mut element_records = Vec::new();
+fn encode_topology(builder: &mut SnapshotWriter, view: &impl StateView) -> Result<(), DbError> {
     let mut element_labels: Vec<U64<LE>> = Vec::new();
-    for record in view.elements() {
-        let label_off = checked_u32(element_labels.len())?;
-        element_labels.extend(record.labels.iter().map(|label| U64::new(label.get())));
-        element_records.push(wire::ElementWire {
-            id: U64::new(record.id.get()),
-            label_off: U32::new(label_off),
-            label_len: U32::new(checked_u32(record.labels.len())?),
-        });
+    let mut elements = view.elements().peekable();
+    if elements.peek().is_some() {
+        let mut sink = builder
+            .begin_section(
+                wire::SECTION_ELEMENT_RECORDS,
+                wire::OXGDB_SECTION_VERSION,
+                0,
+            )
+            .map_err(|error| DbError::invalid_store(error.to_string()))?;
+        for record in elements {
+            let label_off = checked_u32(element_labels.len())?;
+            element_labels.extend(record.labels.iter().map(|label| U64::new(label.get())));
+            sink.write_typed(&[wire::ElementWire {
+                id: U64::new(record.id.get()),
+                label_off: U32::new(label_off),
+                label_len: U32::new(checked_u32(record.labels.len())?),
+            }]);
+        }
+        sink.end()
+            .map_err(|error| DbError::invalid_store(error.to_string()))?;
     }
-    add_typed(builder, wire::SECTION_ELEMENT_RECORDS, &element_records)?;
     add_typed(builder, wire::SECTION_ELEMENT_LABELS, &element_labels)?;
 
-    let mut relation_records = Vec::new();
     let mut relation_labels: Vec<U64<LE>> = Vec::new();
-    for record in view.relations() {
-        let label_off = checked_u32(relation_labels.len())?;
-        relation_labels.extend(record.labels.iter().map(|label| U64::new(label.get())));
-        relation_records.push(wire::RelationWire {
-            id: U64::new(record.id.get()),
-            relation_type: U64::new(wire::encode_relation_type(record.relation_type)),
-            label_off: U32::new(label_off),
-            label_len: U32::new(checked_u32(record.labels.len())?),
-        });
+    let mut relations = view.relations().peekable();
+    if relations.peek().is_some() {
+        let mut sink = builder
+            .begin_section(
+                wire::SECTION_RELATION_RECORDS,
+                wire::OXGDB_SECTION_VERSION,
+                0,
+            )
+            .map_err(|error| DbError::invalid_store(error.to_string()))?;
+        for record in relations {
+            let label_off = checked_u32(relation_labels.len())?;
+            relation_labels.extend(record.labels.iter().map(|label| U64::new(label.get())));
+            sink.write_typed(&[wire::RelationWire {
+                id: U64::new(record.id.get()),
+                relation_type: U64::new(wire::encode_relation_type(record.relation_type)),
+                label_off: U32::new(label_off),
+                label_len: U32::new(checked_u32(record.labels.len())?),
+            }]);
+        }
+        sink.end()
+            .map_err(|error| DbError::invalid_store(error.to_string()))?;
     }
-    add_typed(builder, wire::SECTION_RELATION_RECORDS, &relation_records)?;
     add_typed(builder, wire::SECTION_RELATION_LABELS, &relation_labels)?;
 
-    let mut incidence_records = Vec::new();
-    for record in view.incidences() {
-        incidence_records.push(wire::IncidenceWire {
-            id: U64::new(record.id.get()),
-            relation: U64::new(record.relation.get()),
-            element: U64::new(record.element.get()),
-            role: U64::new(record.role.get()),
-        });
+    let mut incidences = view.incidences().peekable();
+    if incidences.peek().is_some() {
+        let mut sink = builder
+            .begin_section(
+                wire::SECTION_INCIDENCE_RECORDS,
+                wire::OXGDB_SECTION_VERSION,
+                0,
+            )
+            .map_err(|error| DbError::invalid_store(error.to_string()))?;
+        for record in incidences {
+            sink.write_typed(&[wire::IncidenceWire {
+                id: U64::new(record.id.get()),
+                relation: U64::new(record.relation.get()),
+                element: U64::new(record.element.get()),
+                role: U64::new(record.role.get()),
+            }]);
+        }
+        sink.end()
+            .map_err(|error| DbError::invalid_store(error.to_string()))?;
     }
-    add_typed(builder, wire::SECTION_INCIDENCE_RECORDS, &incidence_records)
+    Ok(())
 }
 
 /// Encodes the merged view's typed property records and their side text blob.
@@ -505,32 +537,42 @@ fn encode_topology(builder: &mut SnapshotBuilder, view: &impl StateView) -> Resu
 /// # Performance
 ///
 /// This function is `O(properties + text bytes)`.
-fn encode_properties(builder: &mut SnapshotBuilder, view: &impl StateView) -> Result<(), DbError> {
-    let mut records = Vec::new();
+fn encode_properties(builder: &mut SnapshotWriter, view: &impl StateView) -> Result<(), DbError> {
     let mut text: Vec<u8> = Vec::new();
-    for (subject, key, value) in view.properties() {
-        let (subject_kind, subject_id) = wire::encode_subject(subject);
-        let (scalar, text_off, text_len) = match value.as_ref() {
-            PropertyValue::Boolean(flag) => (u64::from(*flag), 0, 0),
-            PropertyValue::Integer(number) => ((*number).cast_unsigned(), 0, 0),
-            PropertyValue::Text(string) => {
-                let off = checked_u32(text.len())?;
-                text.extend_from_slice(string.as_bytes());
-                (0, off, checked_u32(string.len())?)
-            }
-        };
-        records.push(wire::PropertyWire {
-            subject_kind: U32::new(subject_kind),
-            value_tag: U32::new(wire::property_type_tag(value.value_type())),
-            subject_id: U64::new(subject_id),
-            key: U64::new(key.get()),
-            scalar: U64::new(scalar),
-            text_off: U32::new(text_off),
-            text_len: U32::new(text_len),
-        });
+    let mut properties = view.properties().peekable();
+    if properties.peek().is_some() {
+        let mut sink = builder
+            .begin_section(
+                wire::SECTION_PROPERTY_RECORDS,
+                wire::OXGDB_SECTION_VERSION,
+                0,
+            )
+            .map_err(|error| DbError::invalid_store(error.to_string()))?;
+        for (subject, key, value) in properties {
+            let (subject_kind, subject_id) = wire::encode_subject(subject);
+            let (scalar, text_off, text_len) = match value.as_ref() {
+                PropertyValue::Boolean(flag) => (u64::from(*flag), 0, 0),
+                PropertyValue::Integer(number) => ((*number).cast_unsigned(), 0, 0),
+                PropertyValue::Text(string) => {
+                    let off = checked_u32(text.len())?;
+                    text.extend_from_slice(string.as_bytes());
+                    (0, off, checked_u32(string.len())?)
+                }
+            };
+            sink.write_typed(&[wire::PropertyWire {
+                subject_kind: U32::new(subject_kind),
+                value_tag: U32::new(wire::property_type_tag(value.value_type())),
+                subject_id: U64::new(subject_id),
+                key: U64::new(key.get()),
+                scalar: U64::new(scalar),
+                text_off: U32::new(text_off),
+                text_len: U32::new(text_len),
+            }]);
+        }
+        sink.end()
+            .map_err(|error| DbError::invalid_store(error.to_string()))?;
     }
-    add_typed(builder, wire::SECTION_PROPERTY_RECORDS, &records)?;
-    add_blob(builder, wire::SECTION_PROPERTY_TEXT, text)
+    add_blob(builder, wire::SECTION_PROPERTY_TEXT, &text)
 }
 
 /// Builds the derived [`OwnedBaseIndex`] for this generation from the view's
@@ -550,28 +592,8 @@ fn encode_properties(builder: &mut SnapshotBuilder, view: &impl StateView) -> Re
 ///
 /// This function is `O(base records + labels + properties)`: one index build plus
 /// one serialization pass.
-fn encode_index(builder: &mut SnapshotBuilder, view: &impl StateView) -> Result<(), DbError> {
-    let mut elements: BTreeMap<ElementId, ElementRecord> = BTreeMap::new();
-    for record in view.elements() {
-        elements.insert(record.id, record.into_owned());
-    }
-    let mut relations: BTreeMap<RelationId, RelationRecord> = BTreeMap::new();
-    for record in view.relations() {
-        relations.insert(record.id, record.into_owned());
-    }
-    let mut incidences: BTreeMap<IncidenceId, IncidenceRecord> = BTreeMap::new();
-    for record in view.incidences() {
-        incidences.insert(record.id, record.into_owned());
-    }
-    let mut properties: BTreeMap<PropertySubject, BTreeMap<PropertyKeyId, PropertyValue>> =
-        BTreeMap::new();
-    for (subject, key, value) in view.properties() {
-        properties
-            .entry(subject)
-            .or_default()
-            .insert(key, value.into_owned());
-    }
-    let index = OwnedBaseIndex::from_records(&elements, &relations, &incidences, &properties);
+fn encode_index(builder: &mut SnapshotWriter, view: &impl StateView) -> Result<(), DbError> {
+    let index = OwnedBaseIndex::from_state(view);
     let (
         label_members,
         relation_type_members,
@@ -670,7 +692,7 @@ impl RawId for IncidenceId {
 ///
 /// This function is `O(postings + members)`.
 fn encode_simple_posting<K, M>(
-    builder: &mut SnapshotBuilder,
+    builder: &mut SnapshotWriter,
     kind: u32,
     map: &BTreeMap<K, BTreeSet<M>>,
 ) -> Result<(), DbError>
@@ -711,7 +733,7 @@ where
 ///
 /// This function is `O(postings + subjects + text bytes)`.
 fn encode_equality_posting(
-    builder: &mut SnapshotBuilder,
+    builder: &mut SnapshotWriter,
     map: &BTreeMap<(PropertyKeyId, PropertyValue), BTreeSet<PropertySubject>>,
 ) -> Result<(), DbError> {
     if map.is_empty() {
@@ -766,7 +788,7 @@ fn encode_equality_posting(
         });
     }
     add_framed_section(builder, wire::SECTION_INDEX_EQUALITY, &dir, &pool)?;
-    add_blob(builder, wire::SECTION_INDEX_EQUALITY_TEXT, text)
+    add_blob(builder, wire::SECTION_INDEX_EQUALITY_TEXT, &text)
 }
 
 /// Rebuilds the catalog from its record sections and the definition-body run.
@@ -861,7 +883,7 @@ pub(crate) const POSTING_FRAME_PREFIX_LEN: usize = 2 * size_of::<U64<LE>>();
 ///
 /// This function is `O(directory bytes + pool bytes)`.
 fn add_framed_section<T>(
-    builder: &mut SnapshotBuilder,
+    builder: &mut SnapshotWriter,
     kind: u32,
     dir: &[T],
     pool: &[U64<LE>],
@@ -871,16 +893,15 @@ where
 {
     let dir_bytes = dir.as_bytes();
     let pool_bytes = pool.as_bytes();
-    let mut payload =
-        Vec::with_capacity(POSTING_FRAME_PREFIX_LEN + dir_bytes.len() + pool_bytes.len());
-    payload.extend_from_slice(U64::<LE>::new(dir_bytes.len() as u64).as_bytes());
-    payload.extend_from_slice(U64::<LE>::new(pool_bytes.len() as u64).as_bytes());
-    payload.extend_from_slice(dir_bytes);
-    payload.extend_from_slice(pool_bytes);
-    builder
-        .add_section(kind, wire::OXGDB_SECTION_VERSION, 3, payload)
+    let mut sink = builder
+        .begin_section(kind, wire::OXGDB_SECTION_VERSION, 3)
         .map_err(|error| DbError::invalid_store(error.to_string()))?;
-    Ok(())
+    sink.write(U64::<LE>::new(dir_bytes.len() as u64).as_bytes());
+    sink.write(U64::<LE>::new(pool_bytes.len() as u64).as_bytes());
+    sink.write(dir_bytes);
+    sink.write(pool_bytes);
+    sink.end()
+        .map_err(|error| DbError::invalid_store(error.to_string()))
 }
 
 /// Splits a framed posting section's raw bytes into its directory byte slice and

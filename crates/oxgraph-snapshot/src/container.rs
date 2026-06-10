@@ -1375,3 +1375,297 @@ impl SnapshotBuilder {
         Ok(out)
     }
 }
+
+/// Write-through snapshot encoder that lays payload bytes out at their final
+/// offsets in a single buffer.
+///
+/// [`SnapshotBuilder`] owns every payload and copies the whole snapshot again
+/// at finish, holding ~2x the encoded bytes at peak; this writer streams each
+/// payload directly into the final buffer instead.
+///
+/// The table region is reserved up-front for `max_sections` entries; sections
+/// written beyond the reservation are rejected. When fewer sections are
+/// written, the unused table slots remain zero between the table and the first
+/// payload — the same class of never-dereferenced bytes as alignment padding
+/// (every entry offset stays in bounds and monotonic, so validation accepts
+/// the layout). Writing exactly `max_sections` sections produces bytes
+/// identical to [`SnapshotBuilder::finish`] for the same logical input.
+///
+/// # Performance
+///
+/// Each write appends `O(written bytes)`; [`finish`](Self::finish) is `O(s)`
+/// for `s` sections (header + table patch, no payload copy).
+#[cfg(feature = "alloc")]
+#[derive(Clone, Debug)]
+#[must_use]
+pub struct SnapshotWriter {
+    /// Final snapshot bytes, laid out in place from byte zero (header and
+    /// table are zero until [`Self::finish`] patches them).
+    buf: Vec<u8>,
+    /// Staged section entries, patched into the reserved table at finish.
+    entries: Vec<RawSectionEntry>,
+    /// Reserved table capacity in entries.
+    max_sections: usize,
+}
+
+#[cfg(feature = "alloc")]
+impl SnapshotWriter {
+    /// Constructs a writer whose table region reserves `max_sections` entries.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PlanError::TooManySections`] when `max_sections` exceeds
+    /// [`MAX_SECTION_COUNT`].
+    ///
+    /// # Performance
+    ///
+    /// This function is `O(reserved table bytes)` (one zero-filled
+    /// allocation).
+    pub fn new(max_sections: usize) -> Result<Self, PlanError> {
+        Self::with_payload_capacity(max_sections, 0)
+    }
+
+    /// Constructs a writer reserving `max_sections` table entries and
+    /// pre-allocating `payload_capacity` additional buffer bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PlanError::TooManySections`] when `max_sections` exceeds
+    /// [`MAX_SECTION_COUNT`].
+    ///
+    /// # Performance
+    ///
+    /// This function is `O(reserved table bytes)` (one zero-filled
+    /// allocation).
+    pub fn with_payload_capacity(
+        max_sections: usize,
+        payload_capacity: usize,
+    ) -> Result<Self, PlanError> {
+        if max_sections > MAX_SECTION_COUNT as usize {
+            return Err(PlanError::TooManySections {
+                count: max_sections,
+            });
+        }
+        let table_len = max_sections
+            .checked_mul(SECTION_ENTRY_SIZE)
+            .ok_or(PlanError::PayloadOverflow)?;
+        let reserved = HEADER_SIZE
+            .checked_add(table_len)
+            .ok_or(PlanError::PayloadOverflow)?;
+        let mut buf = Vec::with_capacity(reserved.saturating_add(payload_capacity));
+        buf.resize(reserved, 0);
+        Ok(Self {
+            buf,
+            entries: Vec::with_capacity(max_sections),
+            max_sections,
+        })
+    }
+
+    /// Starts a section, zero-padding the buffer to the requested alignment,
+    /// and returns the sink that streams its payload bytes.
+    ///
+    /// The section's entry is recorded when the sink's [`SectionSink::end`]
+    /// is called; a sink dropped without `end` leaves its bytes as
+    /// never-referenced slack and records no entry.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PlanError::AlignmentTooLarge`] when `alignment_log2` exceeds
+    /// the format cap, [`PlanError::TooManySections`] when the reservation is
+    /// exhausted, or [`PlanError::DuplicateKind`] when `kind` collides with an
+    /// earlier section.
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(s)` for the in-progress section count (duplicate-kind
+    /// scan) plus `O(padding)` zero fill.
+    pub fn begin_section(
+        &mut self,
+        kind: u32,
+        version: u32,
+        alignment_log2: u8,
+    ) -> Result<SectionSink<'_>, PlanError> {
+        if alignment_log2 > MAX_ALIGNMENT_LOG2 {
+            return Err(PlanError::AlignmentTooLarge { alignment_log2 });
+        }
+        if self.entries.len() >= self.max_sections {
+            return Err(PlanError::TooManySections {
+                count: self.entries.len() + 1,
+            });
+        }
+        for prior in &self.entries {
+            if prior.kind.get() == kind {
+                return Err(PlanError::DuplicateKind { kind });
+            }
+        }
+        let aligned = align_up_checked(self.buf.len(), alignment_log2)?;
+        self.buf.resize(aligned, 0);
+        Ok(SectionSink {
+            start: aligned,
+            kind,
+            version,
+            alignment_log2,
+            writer: self,
+        })
+    }
+
+    /// Writes one whole section whose alignment is derived from `T`, copying
+    /// the records via [`zerocopy::IntoBytes`] directly into the final buffer.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PlanError`] for the same reasons as
+    /// [`begin_section`](Self::begin_section), plus
+    /// [`PlanError::AlignmentTooLarge`] when `align_of::<T>()` exceeds the
+    /// format cap.
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(s + records.len() * size_of::<T>())`.
+    pub fn section_typed<T>(
+        &mut self,
+        kind: u32,
+        version: u32,
+        records: &[T],
+    ) -> Result<(), PlanError>
+    where
+        T: zerocopy::IntoBytes + zerocopy::Immutable,
+    {
+        let alignment = core::mem::align_of::<T>();
+        let alignment_log2 = match u8::try_from(alignment.trailing_zeros()) {
+            Ok(value) => value,
+            Err(_error) => {
+                return Err(PlanError::AlignmentTooLarge {
+                    alignment_log2: u8::MAX,
+                });
+            }
+        };
+        let mut sink = self.begin_section(kind, version, alignment_log2)?;
+        sink.write_typed(records);
+        sink.end()
+    }
+
+    /// Returns the number of sections recorded so far.
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(1)`.
+    #[must_use]
+    pub const fn section_count(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Patches the header and the reserved table with the recorded entries and
+    /// returns the encoded snapshot bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PlanError::PayloadOverflow`] when the total encoded length is
+    /// not representable as `u64`.
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(s)` for `s` sections; payload bytes are not copied.
+    pub fn finish(mut self) -> Result<Vec<u8>, PlanError> {
+        u64::try_from(self.buf.len()).map_err(|_error| PlanError::PayloadOverflow)?;
+        let section_count_u32 = match u32::try_from(self.entries.len()) {
+            Ok(value) => value,
+            Err(_error) => {
+                return Err(PlanError::TooManySections {
+                    count: self.entries.len(),
+                });
+            }
+        };
+        let header = RawHeader {
+            magic: FORMAT_MAGIC,
+            format_major: U32::new(FORMAT_MAJOR),
+            format_minor: U32::new(FORMAT_MINOR),
+            header_size: U32::new(HEADER_SIZE_U32),
+            section_count: U32::new(section_count_u32),
+            reserved: [0; 8],
+        };
+        self.buf[..HEADER_SIZE].copy_from_slice(header.as_bytes());
+        for (index, entry) in self.entries.iter().enumerate() {
+            let entry_offset = HEADER_SIZE + index * SECTION_ENTRY_SIZE;
+            self.buf[entry_offset..entry_offset + SECTION_ENTRY_SIZE]
+                .copy_from_slice(entry.as_bytes());
+        }
+        Ok(self.buf)
+    }
+}
+
+/// Streaming payload sink for one in-progress [`SnapshotWriter`] section.
+///
+/// Bytes written here land directly at their final offsets in the snapshot
+/// buffer. [`Self::end`] records the section's table entry; dropping the sink
+/// without `end` records nothing and leaves the written bytes as
+/// never-referenced slack.
+///
+/// # Performance
+///
+/// Each write is `O(written bytes)` (one `Vec` append).
+#[cfg(feature = "alloc")]
+#[must_use]
+pub struct SectionSink<'writer> {
+    /// Writer whose buffer receives the payload bytes.
+    writer: &'writer mut SnapshotWriter,
+    /// Buffer offset where this section's payload starts.
+    start: usize,
+    /// Section kind recorded at [`Self::end`].
+    kind: u32,
+    /// Section version recorded at [`Self::end`].
+    version: u32,
+    /// Declared payload alignment recorded at [`Self::end`].
+    alignment_log2: u8,
+}
+
+#[cfg(feature = "alloc")]
+impl SectionSink<'_> {
+    /// Appends raw payload bytes to this section.
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(bytes.len())`.
+    pub fn write(&mut self, bytes: &[u8]) {
+        self.writer.buf.extend_from_slice(bytes);
+    }
+
+    /// Appends typed records to this section via [`zerocopy::IntoBytes`].
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(records.len() * size_of::<T>())`.
+    pub fn write_typed<T>(&mut self, records: &[T])
+    where
+        T: zerocopy::IntoBytes + zerocopy::Immutable,
+    {
+        self.write(records.as_bytes());
+    }
+
+    /// Finishes this section, recording its table entry.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PlanError::PayloadOverflow`] when the section offset or
+    /// length is not representable as `u64`.
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(1)`.
+    pub fn end(self) -> Result<(), PlanError> {
+        let offset = u64::try_from(self.start).map_err(|_error| PlanError::PayloadOverflow)?;
+        let length = u64::try_from(self.writer.buf.len() - self.start)
+            .map_err(|_error| PlanError::PayloadOverflow)?;
+        self.writer.entries.push(RawSectionEntry {
+            offset: U64::new(offset),
+            length: U64::new(length),
+            kind: U32::new(self.kind),
+            version: U32::new(self.version),
+            reserved_checksum: [0; 4],
+            alignment_log2: self.alignment_log2,
+            flags: 0,
+            reserved: [0; 2],
+        });
+        Ok(())
+    }
+}
