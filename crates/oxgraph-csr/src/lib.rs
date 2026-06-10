@@ -16,14 +16,16 @@
 //!
 //! # Snapshot section kinds
 //!
-//! | Family | Description |
-//! | ------ | ----------- |
-//! | `CSR_OFFSETS_*` | CSR offsets array (`node_count + 1` little-endian words) |
-//! | `CSR_TARGETS_*` | CSR targets array (one little-endian word per edge) |
+//! | Family | Base | Description |
+//! | ------ | ---- | ----------- |
+//! | `CSR_OFFSETS` | [`SNAPSHOT_KIND_CSR_OFFSETS_BASE`] | CSR offsets array (`node_count + 1` little-endian words) |
+//! | `CSR_TARGETS` | [`SNAPSHOT_KIND_CSR_TARGETS_BASE`] | CSR targets array (one little-endian word per edge) |
 //!
-//! The `_U16` / `_U32` / `_U64` suffix selects the little-endian word width.
-//! All section-kind constants are `perf: unspecified` — compile-time `u32`
-//! tags.
+//! Each persisted kind is `BASE | WIDTH_CODE`, where
+//! [`SnapshotWidth::WIDTH_CODE`] selects the little-endian word width in the
+//! low two bits (`0b00` = `u16`, `0b01` = `u32`, `0b10` = `u64`).
+//! [`CsrSnapshotIndex`] derives the per-width kinds. All section-kind
+//! constants are `perf: unspecified` — compile-time `u32` tags.
 #![no_std]
 
 #[cfg(feature = "build")]
@@ -51,19 +53,17 @@ use oxgraph_layout_util::{
 pub use oxgraph_layout_util::{LayoutIndex, LayoutSnapshotWord, LayoutWord};
 use oxgraph_snapshot::{SectionBindError, SectionViewError, Snapshot};
 
-/// Section kind for a CSR `u16` offsets array.
-pub const SNAPSHOT_KIND_CSR_OFFSETS_U16: u32 = 0x0001;
-/// Section kind for a CSR `u32` offsets array.
-pub const SNAPSHOT_KIND_CSR_OFFSETS_U32: u32 = 0x0002;
-/// Section kind for a CSR `u64` offsets array.
-pub const SNAPSHOT_KIND_CSR_OFFSETS_U64: u32 = 0x0003;
-
-/// Section kind for a CSR `u16` targets array.
-pub const SNAPSHOT_KIND_CSR_TARGETS_U16: u32 = 0x0004;
-/// Section kind for a CSR `u32` targets array.
-pub const SNAPSHOT_KIND_CSR_TARGETS_U32: u32 = 0x0005;
-/// Section kind for a CSR `u64` targets array.
-pub const SNAPSHOT_KIND_CSR_TARGETS_U64: u32 = 0x0006;
+/// 4-aligned base section kind for CSR offsets arrays; the persisted kind is
+/// `BASE | WIDTH_CODE` for the offsets word width.
+pub const SNAPSHOT_KIND_CSR_OFFSETS_BASE: u32 = 0x0004;
+/// 4-aligned base section kind for CSR targets arrays; the persisted kind is
+/// `BASE | WIDTH_CODE` for the targets word width.
+///
+/// Sits one 4-aligned step above [`SNAPSHOT_KIND_CSR_OFFSETS_BASE`] so that
+/// every derived offsets kind sorts below every derived targets kind, keeping
+/// the exporter's offsets-then-targets emission strictly ascending for any
+/// node/edge width mix.
+pub const SNAPSHOT_KIND_CSR_TARGETS_BASE: u32 = 0x0008;
 
 /// Section version written and expected for CSR offsets/targets payloads.
 pub const SNAPSHOT_CSR_SECTION_VERSION: u32 = 1;
@@ -71,9 +71,10 @@ pub const SNAPSHOT_CSR_SECTION_VERSION: u32 = 1;
 /// Width-specific section-kind tags for persisted CSR offsets/targets payloads.
 ///
 /// This is the thin CSR-specific layer over the shared
-/// [`SnapshotWidth`](oxgraph_layout_util::SnapshotWidth) contract: it adds only
-/// the per-width section-kind and version constants. The little-endian storage
-/// word and the native/LE conversions come from `SnapshotWidth`, so
+/// [`SnapshotWidth`](oxgraph_layout_util::SnapshotWidth) contract: it derives
+/// the per-width section kinds from the crate's 4-aligned base constants and
+/// [`SnapshotWidth::WIDTH_CODE`]. The little-endian storage word and the
+/// native/LE conversions come from `SnapshotWidth`, so
 /// `EdgeIndex::LittleEndianWord` and `EdgeIndex::to_le_word` keep resolving
 /// through that trait.
 ///
@@ -84,54 +85,33 @@ pub const SNAPSHOT_CSR_SECTION_VERSION: u32 = 1;
 ///
 /// Reading the kind/version constants is `O(1)`.
 pub trait CsrSnapshotIndex: SnapshotWidth {
-    /// Width-specific CSR offsets section kind.
+    /// Width-specific CSR offsets section kind
+    /// ([`SNAPSHOT_KIND_CSR_OFFSETS_BASE`] or-ed with the width code).
     ///
     /// # Performance
     ///
     /// Reading this constant is `O(1)`.
-    const OFFSETS_KIND: u32;
+    const OFFSETS_KIND: u32 = SNAPSHOT_KIND_CSR_OFFSETS_BASE | Self::WIDTH_CODE;
 
-    /// Width-specific CSR targets section kind.
+    /// Width-specific CSR targets section kind
+    /// ([`SNAPSHOT_KIND_CSR_TARGETS_BASE`] or-ed with the width code).
     ///
     /// # Performance
     ///
     /// Reading this constant is `O(1)`.
-    const TARGETS_KIND: u32;
+    const TARGETS_KIND: u32 = SNAPSHOT_KIND_CSR_TARGETS_BASE | Self::WIDTH_CODE;
 
     /// Section version written for this width's CSR payloads.
     ///
     /// # Performance
     ///
     /// Reading this constant is `O(1)`.
-    const SECTION_VERSION: u32;
+    const SECTION_VERSION: u32 = SNAPSHOT_CSR_SECTION_VERSION;
 }
 
-/// Implements [`CsrSnapshotIndex`] for one portable snapshot width.
-macro_rules! impl_csr_snapshot_index {
-    ($index:ty, $offsets_kind:expr, $targets_kind:expr) => {
-        impl CsrSnapshotIndex for $index {
-            const OFFSETS_KIND: u32 = $offsets_kind;
-            const TARGETS_KIND: u32 = $targets_kind;
-            const SECTION_VERSION: u32 = SNAPSHOT_CSR_SECTION_VERSION;
-        }
-    };
-}
-
-impl_csr_snapshot_index!(
-    u16,
-    SNAPSHOT_KIND_CSR_OFFSETS_U16,
-    SNAPSHOT_KIND_CSR_TARGETS_U16
-);
-impl_csr_snapshot_index!(
-    u32,
-    SNAPSHOT_KIND_CSR_OFFSETS_U32,
-    SNAPSHOT_KIND_CSR_TARGETS_U32
-);
-impl_csr_snapshot_index!(
-    u64,
-    SNAPSHOT_KIND_CSR_OFFSETS_U64,
-    SNAPSHOT_KIND_CSR_TARGETS_U64
-);
+impl CsrSnapshotIndex for u16 {}
+impl CsrSnapshotIndex for u32 {}
+impl CsrSnapshotIndex for u64 {}
 
 /// Native borrowed CSR graph alias.
 ///

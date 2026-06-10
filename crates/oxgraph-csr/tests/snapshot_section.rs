@@ -2,13 +2,24 @@
 
 use oxgraph_algo::breadth_first_search;
 use oxgraph_csr::{
-    CsrEdgeId, CsrError, CsrNodeId, CsrSnapshotError, CsrSnapshotGraph,
-    SNAPSHOT_KIND_CSR_OFFSETS_U16, SNAPSHOT_KIND_CSR_OFFSETS_U32, SNAPSHOT_KIND_CSR_OFFSETS_U64,
-    SNAPSHOT_KIND_CSR_TARGETS_U16, SNAPSHOT_KIND_CSR_TARGETS_U32, SNAPSHOT_KIND_CSR_TARGETS_U64,
+    CsrEdgeId, CsrError, CsrNodeId, CsrSnapshotError, CsrSnapshotGraph, CsrSnapshotIndex,
 };
 use oxgraph_graph::{EdgeTargetGraph, GraphCounts, OutgoingGraph};
 use oxgraph_layout_util::crc32c_append;
 use oxgraph_snapshot::{Snapshot, SnapshotBuilder, SnapshotError};
+
+/// `u16` CSR offsets section kind derived from the base-plus-width scheme.
+const SNAPSHOT_KIND_CSR_OFFSETS_U16: u32 = <u16 as CsrSnapshotIndex>::OFFSETS_KIND;
+/// `u32` CSR offsets section kind derived from the base-plus-width scheme.
+const SNAPSHOT_KIND_CSR_OFFSETS_U32: u32 = <u32 as CsrSnapshotIndex>::OFFSETS_KIND;
+/// `u64` CSR offsets section kind derived from the base-plus-width scheme.
+const SNAPSHOT_KIND_CSR_OFFSETS_U64: u32 = <u64 as CsrSnapshotIndex>::OFFSETS_KIND;
+/// `u16` CSR targets section kind derived from the base-plus-width scheme.
+const SNAPSHOT_KIND_CSR_TARGETS_U16: u32 = <u16 as CsrSnapshotIndex>::TARGETS_KIND;
+/// `u32` CSR targets section kind derived from the base-plus-width scheme.
+const SNAPSHOT_KIND_CSR_TARGETS_U32: u32 = <u32 as CsrSnapshotIndex>::TARGETS_KIND;
+/// `u64` CSR targets section kind derived from the base-plus-width scheme.
+const SNAPSHOT_KIND_CSR_TARGETS_U64: u32 = <u64 as CsrSnapshotIndex>::TARGETS_KIND;
 
 /// Test fixture error covering snapshot, view, and CSR failure modes.
 #[derive(Debug)]

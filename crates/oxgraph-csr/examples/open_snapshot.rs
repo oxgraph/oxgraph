@@ -7,13 +7,15 @@
 //! Run with: `cargo run -p oxgraph-csr --example open_snapshot --features oxgraph-snapshot/alloc`
 
 use oxgraph_algo::breadth_first_search;
-use oxgraph_csr::{
-    CsrNodeId, CsrSnapshotError, CsrSnapshotGraph, SNAPSHOT_KIND_CSR_OFFSETS_U32,
-    SNAPSHOT_KIND_CSR_TARGETS_U32,
-};
+use oxgraph_csr::{CsrNodeId, CsrSnapshotError, CsrSnapshotGraph, CsrSnapshotIndex};
 use oxgraph_graph::GraphCounts;
 use oxgraph_layout_util::crc32c_append;
 use oxgraph_snapshot::{Snapshot, SnapshotBuilder, SnapshotError};
+
+/// `u32` CSR offsets section kind derived from the base-plus-width scheme.
+const SNAPSHOT_KIND_CSR_OFFSETS_U32: u32 = <u32 as CsrSnapshotIndex>::OFFSETS_KIND;
+/// `u32` CSR targets section kind derived from the base-plus-width scheme.
+const SNAPSHOT_KIND_CSR_TARGETS_U32: u32 = <u32 as CsrSnapshotIndex>::TARGETS_KIND;
 
 /// Local error type covering both snapshot and CSR adaptor failures.
 #[derive(Debug)]

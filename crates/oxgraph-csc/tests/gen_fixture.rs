@@ -2,18 +2,23 @@
 //! write_tiny_dual_fixture -- --ignored --nocapture`.
 //!
 //! The fixture holds the inbound (transposed) CSC offsets/targets sections under
-//! the Postgres inbound section kinds (`0x0201` / `0x0202`) that the Kani proof
+//! the Postgres inbound section kinds (`0x0205` / `0x0209`) that the Kani proof
 //! opens with `from_snapshot_with_kinds`. It is built directly from the CSR
 //! builder + transpose so this crate carries no storage-engine dependency.
 
-use oxgraph_csr::build::{GraphBuilder, export_csr_snapshot};
+use oxgraph_csr::{
+    CsrSnapshotIndex,
+    build::{GraphBuilder, export_csr_snapshot},
+};
 use oxgraph_layout_util::crc32c_append;
 use oxgraph_snapshot::Snapshot;
 
-/// Inbound offsets section kind (Postgres band) the proof opens with.
-const INBOUND_OFFSETS_KIND: u32 = 0x0201;
-/// Inbound targets section kind (Postgres band) the proof opens with.
-const INBOUND_TARGETS_KIND: u32 = 0x0202;
+/// Inbound offsets section kind (Postgres band) the proof opens with:
+/// `SNAPSHOT_KIND_PG_INBOUND_OFFSETS_BASE 0x0204 | u32 width code 0b01`.
+const INBOUND_OFFSETS_KIND: u32 = 0x0205;
+/// Inbound targets section kind (Postgres band) the proof opens with:
+/// `SNAPSHOT_KIND_PG_INBOUND_TARGETS_BASE 0x0208 | u32 width code 0b01`.
+const INBOUND_TARGETS_KIND: u32 = 0x0209;
 
 #[test]
 #[ignore = "run manually to refresh proofs/tiny_dual.oxgtopo"]
@@ -33,8 +38,8 @@ fn write_tiny_dual_fixture() -> Result<(), Box<dyn std::error::Error>> {
     let mut out = oxgraph_snapshot::SnapshotBuilder::new(crc32c_append);
     for section in csr.sections() {
         let dest_kind = match section.kind() {
-            oxgraph_csr::SNAPSHOT_KIND_CSR_OFFSETS_U32 => INBOUND_OFFSETS_KIND,
-            oxgraph_csr::SNAPSHOT_KIND_CSR_TARGETS_U32 => INBOUND_TARGETS_KIND,
+            kind if kind == <u32 as CsrSnapshotIndex>::OFFSETS_KIND => INBOUND_OFFSETS_KIND,
+            kind if kind == <u32 as CsrSnapshotIndex>::TARGETS_KIND => INBOUND_TARGETS_KIND,
             other => other,
         };
         let alignment = section.declared_alignment();

@@ -15,6 +15,30 @@ use zerocopy::byteorder::{LE, U16, U32, U64};
 use super::*;
 use crate::snapshot::PropertySnapshotHeader;
 
+/// `u32` property descriptors section kind derived from the base-plus-width scheme.
+const SNAPSHOT_KIND_PROPERTY_DESCRIPTORS_U32: u32 =
+    <u32 as PropertySnapshotMetaWord>::PROPERTY_DESCRIPTORS_KIND;
+/// `u32` property data section kind derived from the base-plus-width scheme.
+const SNAPSHOT_KIND_PROPERTY_DATA_U32: u32 = <u32 as PropertySnapshotMetaWord>::PROPERTY_DATA_KIND;
+/// `u16` identity modes section kind derived from the base-plus-width scheme.
+const SNAPSHOT_KIND_IDENTITY_MODES_U16: u32 =
+    <u16 as PropertySnapshotMetaWord>::IDENTITY_MODES_KIND;
+/// `u32` identity modes section kind derived from the base-plus-width scheme.
+const SNAPSHOT_KIND_IDENTITY_MODES_U32: u32 =
+    <u32 as PropertySnapshotMetaWord>::IDENTITY_MODES_KIND;
+/// `u64` identity modes section kind derived from the base-plus-width scheme.
+const SNAPSHOT_KIND_IDENTITY_MODES_U64: u32 =
+    <u64 as PropertySnapshotMetaWord>::IDENTITY_MODES_KIND;
+/// `u16` element identity map section kind derived from the base-plus-width scheme.
+const SNAPSHOT_KIND_ELEMENT_IDENTITY_MAP_U16: u32 =
+    <u16 as PropertySnapshotMetaWord>::ELEMENT_IDENTITY_MAP_KIND;
+/// `u32` relation identity map section kind derived from the base-plus-width scheme.
+const SNAPSHOT_KIND_RELATION_IDENTITY_MAP_U32: u32 =
+    <u32 as PropertySnapshotMetaWord>::RELATION_IDENTITY_MAP_KIND;
+/// `u64` incidence identity map section kind derived from the base-plus-width scheme.
+const SNAPSHOT_KIND_INCIDENCE_IDENTITY_MAP_U64: u32 =
+    <u64 as PropertySnapshotMetaWord>::INCIDENCE_IDENTITY_MAP_KIND;
+
 /// Test topology with dense relation IDs.
 #[derive(Clone, Copy)]
 struct Topology;

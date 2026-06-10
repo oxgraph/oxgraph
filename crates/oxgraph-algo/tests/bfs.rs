@@ -22,17 +22,10 @@ use oxgraph_algo::{
 #[cfg(feature = "std")]
 use oxgraph_algo::{breadth_first_search_generic_hash, reverse_breadth_first_search_generic_hash};
 use oxgraph_csr::{
-    CsrError, CsrNativeGraph, CsrNodeId, CsrSnapshotError, CsrSnapshotGraph,
-    SNAPSHOT_KIND_CSR_OFFSETS_U32, SNAPSHOT_KIND_CSR_TARGETS_U32,
+    CsrError, CsrNativeGraph, CsrNodeId, CsrSnapshotError, CsrSnapshotGraph, CsrSnapshotIndex,
 };
 use oxgraph_hyper_bcsr::{
-    BcsrError, BcsrSnapshotError, BcsrSnapshotHypergraph, BcsrVertexId,
-    SNAPSHOT_KIND_BCSR_HEAD_OFFSETS_U32, SNAPSHOT_KIND_BCSR_HEAD_PARTICIPANTS_U32,
-    SNAPSHOT_KIND_BCSR_TAIL_OFFSETS_U32, SNAPSHOT_KIND_BCSR_TAIL_PARTICIPANTS_U32,
-    SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_HYPEREDGES_U32,
-    SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_OFFSETS_U32,
-    SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_HYPEREDGES_U32,
-    SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_OFFSETS_U32,
+    BcsrError, BcsrSnapshotError, BcsrSnapshotHypergraph, BcsrSnapshotIndex, BcsrVertexId,
 };
 use oxgraph_layout_util::crc32c_append;
 use oxgraph_snapshot::{Snapshot, SnapshotBuilder, SnapshotError};
@@ -40,6 +33,33 @@ use oxgraph_topology::{
     ContainsElement, ElementId, ElementIndex, ElementPredecessors, ElementSuccessors, TopologyBase,
 };
 use proptest::prelude::*;
+
+/// `u32` CSR offsets section kind derived from the base-plus-width scheme.
+const SNAPSHOT_KIND_CSR_OFFSETS_U32: u32 = <u32 as CsrSnapshotIndex>::OFFSETS_KIND;
+/// `u32` CSR targets section kind derived from the base-plus-width scheme.
+const SNAPSHOT_KIND_CSR_TARGETS_U32: u32 = <u32 as CsrSnapshotIndex>::TARGETS_KIND;
+/// `u32` head offsets section kind derived from the base-plus-width scheme.
+const SNAPSHOT_KIND_BCSR_HEAD_OFFSETS_U32: u32 = <u32 as BcsrSnapshotIndex>::HEAD_OFFSETS_KIND;
+/// `u32` head participants section kind derived from the base-plus-width scheme.
+const SNAPSHOT_KIND_BCSR_HEAD_PARTICIPANTS_U32: u32 =
+    <u32 as BcsrSnapshotIndex>::HEAD_PARTICIPANTS_KIND;
+/// `u32` tail offsets section kind derived from the base-plus-width scheme.
+const SNAPSHOT_KIND_BCSR_TAIL_OFFSETS_U32: u32 = <u32 as BcsrSnapshotIndex>::TAIL_OFFSETS_KIND;
+/// `u32` tail participants section kind derived from the base-plus-width scheme.
+const SNAPSHOT_KIND_BCSR_TAIL_PARTICIPANTS_U32: u32 =
+    <u32 as BcsrSnapshotIndex>::TAIL_PARTICIPANTS_KIND;
+/// `u32` vertex outgoing offsets section kind derived from the base-plus-width scheme.
+const SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_OFFSETS_U32: u32 =
+    <u32 as BcsrSnapshotIndex>::VERTEX_OUTGOING_OFFSETS_KIND;
+/// `u32` vertex outgoing hyperedges section kind derived from the base-plus-width scheme.
+const SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_HYPEREDGES_U32: u32 =
+    <u32 as BcsrSnapshotIndex>::VERTEX_OUTGOING_HYPEREDGES_KIND;
+/// `u32` vertex incoming offsets section kind derived from the base-plus-width scheme.
+const SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_OFFSETS_U32: u32 =
+    <u32 as BcsrSnapshotIndex>::VERTEX_INCOMING_OFFSETS_KIND;
+/// `u32` vertex incoming hyperedges section kind derived from the base-plus-width scheme.
+const SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_HYPEREDGES_U32: u32 =
+    <u32 as BcsrSnapshotIndex>::VERTEX_INCOMING_HYPEREDGES_KIND;
 
 /// Error returned while opening snapshot-backed CSR fixtures.
 #[derive(Debug, Eq, PartialEq)]

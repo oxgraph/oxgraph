@@ -340,6 +340,14 @@ impl_layout_snapshot_word!(U64<LE>);
 ///
 /// [`SnapshotWidth::to_le_word`] and [`SnapshotWidth::from_le_word`] are `O(1)`.
 pub trait SnapshotWidth: sealed::SnapshotWidth + LayoutIndex {
+    /// Two-bit width discriminant carried in a section kind's low bits:
+    /// `0b00` = `u16`, `0b01` = `u32`, `0b10` = `u64` (`0b11` reserved).
+    ///
+    /// Layout crates declare 4-aligned `SNAPSHOT_KIND_*_BASE` constants and
+    /// derive each persisted section kind as `BASE | WIDTH_CODE`, so one base
+    /// constant covers every persisted width.
+    const WIDTH_CODE: u32;
+
     /// Little-endian storage word for this width.
     type LittleEndianWord: LayoutSnapshotWord<Index = Self>;
 
@@ -360,10 +368,12 @@ pub trait SnapshotWidth: sealed::SnapshotWidth + LayoutIndex {
 
 /// Implements [`SnapshotWidth`] for one width and its little-endian word.
 macro_rules! impl_snapshot_width {
-    ($index:ty, $word:ty) => {
+    ($index:ty, $word:ty, $width_code:expr) => {
         impl sealed::SnapshotWidth for $index {}
 
         impl SnapshotWidth for $index {
+            const WIDTH_CODE: u32 = $width_code;
+
             type LittleEndianWord = $word;
 
             fn to_le_word(self) -> Self::LittleEndianWord {
@@ -377,9 +387,9 @@ macro_rules! impl_snapshot_width {
     };
 }
 
-impl_snapshot_width!(u16, U16<LE>);
-impl_snapshot_width!(u32, U32<LE>);
-impl_snapshot_width!(u64, U64<LE>);
+impl_snapshot_width!(u16, U16<LE>, 0b00);
+impl_snapshot_width!(u32, U32<LE>, 0b01);
+impl_snapshot_width!(u64, U64<LE>, 0b10);
 
 // ---------------------------------------------------------------------------
 // Local-handle newtype + slice iterator

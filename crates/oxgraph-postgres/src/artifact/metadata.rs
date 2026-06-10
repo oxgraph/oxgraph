@@ -1,5 +1,6 @@
-//! Postgres-owned snapshot metadata section (`0x0203`).
+//! Postgres-owned snapshot metadata section ([`SNAPSHOT_KIND_PG_METADATA`]).
 
+use oxgraph_layout_util::SnapshotWidth;
 use oxgraph_snapshot::{PlanError, Snapshot, SnapshotBuilder, SnapshotError};
 use zerocopy::{
     FromBytes, Immutable, IntoBytes, KnownLayout,
@@ -9,20 +10,33 @@ use zerocopy::{
 /// Section kind for serialized catalog blobs owned by Postgres.
 pub const SNAPSHOT_KIND_PG_CATALOG: u32 = 0x0200;
 
-/// Postgres-owned inbound CSC offsets section (`0x0201`).
+/// 4-aligned base section kind for Postgres-owned inbound CSC offsets; the
+/// persisted kind is `BASE | WIDTH_CODE` for the offsets word width.
+pub const SNAPSHOT_KIND_PG_INBOUND_OFFSETS_BASE: u32 = 0x0204;
+
+/// 4-aligned base section kind for Postgres-owned inbound CSC targets.
+pub const SNAPSHOT_KIND_PG_INBOUND_TARGETS_BASE: u32 = 0x0208;
+
+/// Postgres-owned inbound CSC offsets section (`u32` words).
 ///
 /// The inbound (reverse) adjacency is persisted in the Postgres band rather
 /// than the CSR band so that forward and inbound views never collide on a
 /// section kind. The physical layout is CSR-on-transposed-edges; the storage-
 /// agnostic [`CscSnapshotGraph`](oxgraph_csc::CscSnapshotGraph) reads it through
-/// `from_snapshot_with_kinds` using these kinds.
-pub const SNAPSHOT_KIND_PG_INBOUND_OFFSETS_U32: u32 = 0x0201;
+/// `from_snapshot_with_kinds` using these kinds. The engine pins the `u32`
+/// width.
+pub const SNAPSHOT_KIND_PG_INBOUND_OFFSETS_U32: u32 =
+    SNAPSHOT_KIND_PG_INBOUND_OFFSETS_BASE | <u32 as SnapshotWidth>::WIDTH_CODE;
 
-/// Postgres-owned inbound CSC targets section (`0x0202`).
-pub const SNAPSHOT_KIND_PG_INBOUND_TARGETS_U32: u32 = 0x0202;
+/// Postgres-owned inbound CSC targets section (`u32` words).
+pub const SNAPSHOT_KIND_PG_INBOUND_TARGETS_U32: u32 =
+    SNAPSHOT_KIND_PG_INBOUND_TARGETS_BASE | <u32 as SnapshotWidth>::WIDTH_CODE;
 
 /// Section kind for Postgres engine metadata (`0x0200` reserved range).
-pub const SNAPSHOT_KIND_PG_METADATA: u32 = 0x0203;
+///
+/// Sits above every derived inbound CSC kind so the artifact's
+/// forward-then-inbound-then-metadata emission stays strictly ascending.
+pub const SNAPSHOT_KIND_PG_METADATA: u32 = 0x020C;
 
 /// Fixed-layout Postgres metadata stored in snapshot section payloads.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, FromBytes, Immutable, IntoBytes, KnownLayout)]
@@ -47,7 +61,9 @@ impl PostgresMetadata {
     /// Flag indicating the artifact was published read-only.
     pub const FLAG_READ_ONLY: u32 = 1;
 
-    /// Flag indicating inbound CSC sections (`0x0201` / `0x0202`) are present.
+    /// Flag indicating inbound CSC sections
+    /// ([`SNAPSHOT_KIND_PG_INBOUND_OFFSETS_U32`] /
+    /// [`SNAPSHOT_KIND_PG_INBOUND_TARGETS_U32`]) are present.
     pub const FLAG_HAS_REVERSE_INDEX: u32 = 2;
 
     /// Creates metadata for a freshly built artifact.

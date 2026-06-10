@@ -6,22 +6,12 @@ use oxgraph_layout_util::SnapshotWidth;
 pub use oxgraph_layout_util::{LayoutIndex, LayoutSnapshotWord, LayoutWord};
 
 use crate::snapshot::{
-    SNAPSHOT_KIND_BCSR_HEAD_OFFSETS_U16, SNAPSHOT_KIND_BCSR_HEAD_OFFSETS_U32,
-    SNAPSHOT_KIND_BCSR_HEAD_OFFSETS_U64, SNAPSHOT_KIND_BCSR_HEAD_PARTICIPANTS_U16,
-    SNAPSHOT_KIND_BCSR_HEAD_PARTICIPANTS_U32, SNAPSHOT_KIND_BCSR_HEAD_PARTICIPANTS_U64,
-    SNAPSHOT_KIND_BCSR_TAIL_OFFSETS_U16, SNAPSHOT_KIND_BCSR_TAIL_OFFSETS_U32,
-    SNAPSHOT_KIND_BCSR_TAIL_OFFSETS_U64, SNAPSHOT_KIND_BCSR_TAIL_PARTICIPANTS_U16,
-    SNAPSHOT_KIND_BCSR_TAIL_PARTICIPANTS_U32, SNAPSHOT_KIND_BCSR_TAIL_PARTICIPANTS_U64,
-    SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_HYPEREDGES_U16,
-    SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_HYPEREDGES_U32,
-    SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_HYPEREDGES_U64,
-    SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_OFFSETS_U16, SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_OFFSETS_U32,
-    SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_OFFSETS_U64,
-    SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_HYPEREDGES_U16,
-    SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_HYPEREDGES_U32,
-    SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_HYPEREDGES_U64,
-    SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_OFFSETS_U16, SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_OFFSETS_U32,
-    SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_OFFSETS_U64,
+    SNAPSHOT_KIND_BCSR_HEAD_OFFSETS_BASE, SNAPSHOT_KIND_BCSR_HEAD_PARTICIPANTS_BASE,
+    SNAPSHOT_KIND_BCSR_TAIL_OFFSETS_BASE, SNAPSHOT_KIND_BCSR_TAIL_PARTICIPANTS_BASE,
+    SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_HYPEREDGES_BASE,
+    SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_OFFSETS_BASE,
+    SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_HYPEREDGES_BASE,
+    SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_OFFSETS_BASE,
 };
 
 /// Section version written and expected for all BCSR layout payloads.
@@ -127,8 +117,9 @@ where
 /// Width-specific section-kind tags for persisted BCSR layout payloads.
 ///
 /// This is the thin BCSR-specific layer over the shared
-/// [`SnapshotWidth`](oxgraph_layout_util::SnapshotWidth) contract: it adds only
-/// the eight per-width section-kind constants and the section version. The
+/// [`SnapshotWidth`](oxgraph_layout_util::SnapshotWidth) contract: it derives
+/// the eight per-width section kinds from the crate's 4-aligned base constants
+/// and [`SnapshotWidth::WIDTH_CODE`], and adds the section version. The
 /// little-endian storage word and the native/LE conversions come from
 /// `SnapshotWidth`, so `Index::LittleEndianWord` and `Index::to_le_word` keep
 /// resolving through that trait.
@@ -141,82 +132,31 @@ where
 /// Reading the kind/version constants is `O(1)`.
 pub trait BcsrSnapshotIndex: SnapshotWidth {
     /// Head offsets section kind for this width.
-    const HEAD_OFFSETS_KIND: u32;
+    const HEAD_OFFSETS_KIND: u32 = SNAPSHOT_KIND_BCSR_HEAD_OFFSETS_BASE | Self::WIDTH_CODE;
     /// Head participants section kind for this width.
-    const HEAD_PARTICIPANTS_KIND: u32;
+    const HEAD_PARTICIPANTS_KIND: u32 =
+        SNAPSHOT_KIND_BCSR_HEAD_PARTICIPANTS_BASE | Self::WIDTH_CODE;
     /// Tail offsets section kind for this width.
-    const TAIL_OFFSETS_KIND: u32;
+    const TAIL_OFFSETS_KIND: u32 = SNAPSHOT_KIND_BCSR_TAIL_OFFSETS_BASE | Self::WIDTH_CODE;
     /// Tail participants section kind for this width.
-    const TAIL_PARTICIPANTS_KIND: u32;
+    const TAIL_PARTICIPANTS_KIND: u32 =
+        SNAPSHOT_KIND_BCSR_TAIL_PARTICIPANTS_BASE | Self::WIDTH_CODE;
     /// Vertex outgoing offsets section kind for this width.
-    const VERTEX_OUTGOING_OFFSETS_KIND: u32;
+    const VERTEX_OUTGOING_OFFSETS_KIND: u32 =
+        SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_OFFSETS_BASE | Self::WIDTH_CODE;
     /// Vertex outgoing hyperedges section kind for this width.
-    const VERTEX_OUTGOING_HYPEREDGES_KIND: u32;
+    const VERTEX_OUTGOING_HYPEREDGES_KIND: u32 =
+        SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_HYPEREDGES_BASE | Self::WIDTH_CODE;
     /// Vertex incoming offsets section kind for this width.
-    const VERTEX_INCOMING_OFFSETS_KIND: u32;
+    const VERTEX_INCOMING_OFFSETS_KIND: u32 =
+        SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_OFFSETS_BASE | Self::WIDTH_CODE;
     /// Vertex incoming hyperedges section kind for this width.
-    const VERTEX_INCOMING_HYPEREDGES_KIND: u32;
+    const VERTEX_INCOMING_HYPEREDGES_KIND: u32 =
+        SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_HYPEREDGES_BASE | Self::WIDTH_CODE;
     /// Section version written for this width's BCSR payloads.
-    const SECTION_VERSION: u32;
+    const SECTION_VERSION: u32 = SNAPSHOT_BCSR_SECTION_VERSION;
 }
 
-/// Implements [`BcsrSnapshotIndex`] for one portable snapshot width.
-macro_rules! impl_bcsr_snapshot_index {
-    (
-        $index:ty,
-        $head_offsets:expr,
-        $head_participants:expr,
-        $tail_offsets:expr,
-        $tail_participants:expr,
-        $vertex_outgoing_offsets:expr,
-        $vertex_outgoing_hyperedges:expr,
-        $vertex_incoming_offsets:expr,
-        $vertex_incoming_hyperedges:expr
-    ) => {
-        impl BcsrSnapshotIndex for $index {
-            const HEAD_OFFSETS_KIND: u32 = $head_offsets;
-            const HEAD_PARTICIPANTS_KIND: u32 = $head_participants;
-            const TAIL_OFFSETS_KIND: u32 = $tail_offsets;
-            const TAIL_PARTICIPANTS_KIND: u32 = $tail_participants;
-            const VERTEX_OUTGOING_OFFSETS_KIND: u32 = $vertex_outgoing_offsets;
-            const VERTEX_OUTGOING_HYPEREDGES_KIND: u32 = $vertex_outgoing_hyperedges;
-            const VERTEX_INCOMING_OFFSETS_KIND: u32 = $vertex_incoming_offsets;
-            const VERTEX_INCOMING_HYPEREDGES_KIND: u32 = $vertex_incoming_hyperedges;
-            const SECTION_VERSION: u32 = SNAPSHOT_BCSR_SECTION_VERSION;
-        }
-    };
-}
-
-impl_bcsr_snapshot_index!(
-    u16,
-    SNAPSHOT_KIND_BCSR_HEAD_OFFSETS_U16,
-    SNAPSHOT_KIND_BCSR_HEAD_PARTICIPANTS_U16,
-    SNAPSHOT_KIND_BCSR_TAIL_OFFSETS_U16,
-    SNAPSHOT_KIND_BCSR_TAIL_PARTICIPANTS_U16,
-    SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_OFFSETS_U16,
-    SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_HYPEREDGES_U16,
-    SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_OFFSETS_U16,
-    SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_HYPEREDGES_U16
-);
-impl_bcsr_snapshot_index!(
-    u32,
-    SNAPSHOT_KIND_BCSR_HEAD_OFFSETS_U32,
-    SNAPSHOT_KIND_BCSR_HEAD_PARTICIPANTS_U32,
-    SNAPSHOT_KIND_BCSR_TAIL_OFFSETS_U32,
-    SNAPSHOT_KIND_BCSR_TAIL_PARTICIPANTS_U32,
-    SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_OFFSETS_U32,
-    SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_HYPEREDGES_U32,
-    SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_OFFSETS_U32,
-    SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_HYPEREDGES_U32
-);
-impl_bcsr_snapshot_index!(
-    u64,
-    SNAPSHOT_KIND_BCSR_HEAD_OFFSETS_U64,
-    SNAPSHOT_KIND_BCSR_HEAD_PARTICIPANTS_U64,
-    SNAPSHOT_KIND_BCSR_TAIL_OFFSETS_U64,
-    SNAPSHOT_KIND_BCSR_TAIL_PARTICIPANTS_U64,
-    SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_OFFSETS_U64,
-    SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_HYPEREDGES_U64,
-    SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_OFFSETS_U64,
-    SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_HYPEREDGES_U64
-);
+impl BcsrSnapshotIndex for u16 {}
+impl BcsrSnapshotIndex for u32 {}
+impl BcsrSnapshotIndex for u64 {}
