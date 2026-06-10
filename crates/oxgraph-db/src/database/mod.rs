@@ -164,8 +164,9 @@ impl Db {
     ///
     /// # Performance
     ///
-    /// This method is `O(1)`: the writer layers a fresh empty write overlay over
-    /// the current snapshot.
+    /// This method is `O(parent change)`: the writer seeds from the parent's
+    /// published overlay by cloning its delta maps, so it scales with the
+    /// committed-but-unfolded change (not the base size).
     pub(crate) fn begin_write(&mut self) -> Result<Writer<'_>, DbError> {
         let lock = WriterLock::acquire(&self.root)?;
         let transaction_id = self
@@ -216,8 +217,10 @@ impl Db {
     ///
     /// # Performance
     ///
-    /// Begin is `O(1)`; commit is `O(change)`. A triggered auto-fold adds
-    /// `O(visible bytes)`.
+    /// Begin is `O(parent change)` — the writer seeds by cloning the parent
+    /// overlay's delta maps, so an unfolded overlay of `N` committed entries
+    /// costs `O(N)` to begin (folded away by a checkpoint). Commit is
+    /// `O(change)`. A triggered auto-fold adds `O(visible bytes)`.
     pub fn write<R>(
         &mut self,
         f: impl FnOnce(&mut Writer<'_>) -> Result<R, DbError>,
