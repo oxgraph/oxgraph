@@ -179,7 +179,7 @@ pub(crate) fn walk_graph_projection(
         .map(|seed| {
             graph
                 .local_element_id(*seed)
-                .ok_or(DbError::UnknownElement { id: *seed })
+                .ok_or_else(|| DbError::unknown(*seed))
         })
         .collect::<Result<Vec<ProjectionElementId>, DbError>>()?;
 

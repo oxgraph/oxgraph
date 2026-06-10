@@ -241,7 +241,7 @@ fn write_closure_commits_on_ok_rolls_back_on_err_and_reports_outcome() {
         .expect("count");
     let result = database.write(|writer| {
         writer.create_element()?;
-        Err::<(), DbError>(DbError::EmptyQuery)
+        Err::<(), DbError>(DbError::Query(crate::error::QueryError::Empty))
     });
     assert!(result.is_err());
     let after = database

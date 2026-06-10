@@ -182,14 +182,12 @@ impl Writer<'_> {
             bound.keys.insert(name.clone(), (id, *value_type));
         }
         for (name, key_name) in &schema.equality_indexes {
-            let (key_id, value_type) =
-                *bound
-                    .keys
-                    .get(key_name)
-                    .ok_or_else(|| DbError::UnknownName {
-                        kind: "property key",
-                        name: key_name.clone(),
-                    })?;
+            let (key_id, value_type) = *bound.keys.get(key_name).ok_or_else(|| {
+                DbError::Catalog(crate::error::CatalogError::UnknownName {
+                    kind: "property key",
+                    name: key_name.clone(),
+                })
+            })?;
             let id = match self.merged().catalog().index_id(name) {
                 Some(id) => id,
                 None => self.define_index(
@@ -239,10 +237,12 @@ impl Writer<'_> {
         if matches {
             Ok(existing)
         } else {
-            Err(DbError::SchemaConflict {
-                name: name.to_owned(),
-                reason: "property key family/value type differs from the existing catalog entry",
-            })
+            Err(DbError::Catalog(
+                crate::error::CatalogError::SchemaConflict {
+                    name: name.to_owned(),
+                    reason: "property key family/value type differs from the existing catalog entry",
+                },
+            ))
         }
     }
 
@@ -485,18 +485,22 @@ impl Writer<'_> {
             .catalog()
             .property_key(key)
             .cloned()
-            .ok_or(DbError::UnknownPropertyKey { id: key })?;
+            .ok_or_else(|| DbError::unknown(key))?;
         if definition.family != subject.family() {
-            return Err(DbError::WrongPropertyFamily {
-                expected: definition.family,
-                actual: subject.family(),
-            });
+            return Err(DbError::Query(
+                crate::error::QueryError::WrongPropertyFamily {
+                    expected: definition.family,
+                    actual: subject.family(),
+                },
+            ));
         }
         if definition.value_type != value.value_type() {
-            return Err(DbError::PropertyTypeMismatch {
-                expected: definition.value_type,
-                actual: value.value_type(),
-            });
+            return Err(DbError::Query(
+                crate::error::QueryError::PropertyTypeMismatch {
+                    expected: definition.value_type,
+                    actual: value.value_type(),
+                },
+            ));
         }
         self.delta
             .set_property(self.parent.base_records(), subject, key, value);
@@ -519,7 +523,7 @@ impl Writer<'_> {
     ) -> Result<(), DbError> {
         self.require_subject(subject)?;
         if self.merged().catalog().property_key(key).is_none() {
-            return Err(DbError::UnknownPropertyKey { id: key });
+            return Err(DbError::unknown(key));
         }
         self.delta
             .remove_property(self.parent.base_records(), subject, key);
@@ -541,7 +545,7 @@ impl Writer<'_> {
         let entry = view
             .catalog()
             .index(index)
-            .ok_or(DbError::UnknownIndex { id: index })?;
+            .ok_or_else(|| DbError::unknown(index))?;
         match &entry.definition {
             IndexDefinition::PropertyEquality { key } => Ok(*key),
             _other => Err(DbError::unsupported(
@@ -785,7 +789,7 @@ impl Writer<'_> {
             .parent
             .lsn()
             .checked_next()
-            .ok_or(DbError::CommitSeqOverflow)?;
+            .ok_or(DbError::Txn(crate::error::TxnError::CommitSeqOverflow))?;
         let (ops, blob) = self.delta.take_frame();
         let frame = wal::encode_commit(
             lsn.get(),
@@ -848,7 +852,7 @@ impl Writer<'_> {
         if self.merged().contains_element(id) {
             Ok(())
         } else {
-            Err(DbError::UnknownElement { id })
+            Err(DbError::unknown(id))
         }
     }
 
@@ -865,7 +869,7 @@ impl Writer<'_> {
         if self.merged().contains_relation(id) {
             Ok(())
         } else {
-            Err(DbError::UnknownRelation { id })
+            Err(DbError::unknown(id))
         }
     }
 
@@ -882,7 +886,7 @@ impl Writer<'_> {
         if self.merged().contains_incidence(id) {
             Ok(())
         } else {
-            Err(DbError::UnknownIncidence { id })
+            Err(DbError::unknown(id))
         }
     }
 
@@ -899,7 +903,7 @@ impl Writer<'_> {
         if self.delta.catalog().role(id).is_some() {
             Ok(())
         } else {
-            Err(DbError::UnknownRole { id })
+            Err(DbError::unknown(id))
         }
     }
 
@@ -916,7 +920,7 @@ impl Writer<'_> {
         if self.delta.catalog().label(id).is_some() {
             Ok(())
         } else {
-            Err(DbError::UnknownLabel { id })
+            Err(DbError::unknown(id))
         }
     }
 
@@ -933,7 +937,7 @@ impl Writer<'_> {
         if self.delta.catalog().relation_type(id).is_some() {
             Ok(())
         } else {
-            Err(DbError::UnknownRelationType { id })
+            Err(DbError::unknown(id))
         }
     }
 
@@ -1026,7 +1030,7 @@ impl Writer<'_> {
                 .projection(*projection)
                 .is_some()
                 .then_some(())
-                .ok_or(DbError::UnknownProjection { id: *projection }),
+                .ok_or_else(|| DbError::unknown(*projection)),
         }
     }
 
@@ -1043,7 +1047,7 @@ impl Writer<'_> {
         if self.delta.catalog().property_key(id).is_some() {
             Ok(())
         } else {
-            Err(DbError::UnknownPropertyKey { id })
+            Err(DbError::unknown(id))
         }
     }
 }

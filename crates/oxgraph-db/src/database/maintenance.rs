@@ -118,7 +118,9 @@ impl Db {
     /// This method is `O(base bytes)`.
     pub fn validate(&self) -> Result<(), DbError> {
         wal::read_superblock(&self.root)?;
-        Base::open(&self.root.join(base_file(self.base_generation)), false).map(|_base| ())
+        Base::open(&self.root.join(base_file(self.base_generation)), false)
+            .map(|_base| ())
+            .map_err(DbError::from)
     }
 
     /// Validates an OXGDB database at `path`.

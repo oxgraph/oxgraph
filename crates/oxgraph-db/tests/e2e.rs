@@ -91,9 +91,12 @@ fn greenfield_database_supports_topology_properties_queries_and_recovery() -> Re
     );
 
     let graph = read.graph_projection(fixture.graph_projection)?;
-    let alice_local = graph
-        .local_element_id(fixture.alice)
-        .ok_or(DbError::UnknownElement { id: fixture.alice })?;
+    let alice_local = graph.local_element_id(fixture.alice).ok_or_else(|| {
+        DbError::Catalog(oxgraph_db::CatalogError::UnknownId {
+            family: oxgraph_db::IdFamily::Element,
+            id: fixture.alice.get(),
+        })
+    })?;
     let graph_neighbors = graph
         .element_successors(alice_local)
         .map(|local| graph.canonical_element_id(local))
@@ -111,11 +114,12 @@ fn greenfield_database_supports_topology_properties_queries_and_recovery() -> Re
         .collect::<Vec<_>>();
     assert_eq!(targets, vec![fixture.bob, fixture.carol]);
     let outgoing = hyper
-        .outgoing_hyperedges(
-            hyper
-                .local_element_id(fixture.alice)
-                .ok_or(DbError::UnknownElement { id: fixture.alice })?,
-        )
+        .outgoing_hyperedges(hyper.local_element_id(fixture.alice).ok_or_else(|| {
+            DbError::Catalog(oxgraph_db::CatalogError::UnknownId {
+                family: oxgraph_db::IdFamily::Element,
+                id: fixture.alice.get(),
+            })
+        })?)
         .count();
     assert_eq!(outgoing, 1);
 
@@ -132,7 +136,7 @@ fn rollback_and_empty_commits_do_not_reuse_committed_transaction_ids() -> Result
     let mut database = Db::create(&path)?;
     let _ = database.write(|rolled_back| {
         rolled_back.register_role("source")?;
-        Err::<(), DbError>(DbError::EmptyQuery)
+        Err::<(), DbError>(DbError::Query(oxgraph_db::QueryError::Empty))
     });
 
     let ((), outcome) = database.write(|_empty| Ok(()))?;
@@ -171,7 +175,7 @@ fn rollback_only_transaction_id_burns_are_session_local() -> Result<(), TestErro
     let durable_transaction_id = database.stats().last_transaction_id;
     let _ = database.write(|rolled_back| {
         rolled_back.create_element()?;
-        Err::<(), DbError>(DbError::EmptyQuery)
+        Err::<(), DbError>(DbError::Query(oxgraph_db::QueryError::Empty))
     });
     assert!(database.stats().last_transaction_id > durable_transaction_id);
 
@@ -204,7 +208,7 @@ fn index_lookup_uses_typed_composite_and_projection_semantics() -> Result<(), Te
             fixture.person_identity_index,
             Match::Composite(&wrong_arity),
         ),
-        Err(DbError::UnsupportedQuery { .. })
+        Err(DbError::Query(oxgraph_db::QueryError::Unsupported { .. }))
     ));
     let wrong_type = [
         PropertyValue::Text("Alice".to_owned()),
@@ -212,10 +216,12 @@ fn index_lookup_uses_typed_composite_and_projection_semantics() -> Result<(), Te
     ];
     assert!(matches!(
         read.lookup(fixture.person_identity_index, Match::Composite(&wrong_type),),
-        Err(DbError::PropertyTypeMismatch {
-            expected: PropertyType::Integer,
-            actual: PropertyType::Text,
-        })
+        Err(DbError::Query(
+            oxgraph_db::QueryError::PropertyTypeMismatch {
+                expected: PropertyType::Integer,
+                actual: PropertyType::Text,
+            }
+        ))
     ));
 
     assert_eq!(
@@ -243,7 +249,7 @@ fn index_lookup_uses_typed_composite_and_projection_semantics() -> Result<(), Te
             fixture.graph_projection_index,
             Match::Equal(&PropertyValue::Integer(1)),
         ),
-        Err(DbError::UnsupportedQuery { .. })
+        Err(DbError::Query(oxgraph_db::QueryError::Unsupported { .. }))
     ));
 
     clean(&path)?;
@@ -261,10 +267,12 @@ fn property_lookup_values_are_schema_checked() -> Result<(), TestError> {
 
     assert!(matches!(
         read.lookup_property_equal(fixture.age_key, &PropertyValue::Text("42".to_owned())),
-        Err(DbError::PropertyTypeMismatch {
-            expected: PropertyType::Integer,
-            actual: PropertyType::Text,
-        })
+        Err(DbError::Query(
+            oxgraph_db::QueryError::PropertyTypeMismatch {
+                expected: PropertyType::Integer,
+                actual: PropertyType::Text,
+            }
+        ))
     ));
     assert!(matches!(
         read.lookup_property_range(
@@ -272,10 +280,12 @@ fn property_lookup_values_are_schema_checked() -> Result<(), TestError> {
             &PropertyValue::Integer(0),
             &PropertyValue::Text("99".to_owned()),
         ),
-        Err(DbError::PropertyTypeMismatch {
-            expected: PropertyType::Integer,
-            actual: PropertyType::Text,
-        })
+        Err(DbError::Query(
+            oxgraph_db::QueryError::PropertyTypeMismatch {
+                expected: PropertyType::Integer,
+                actual: PropertyType::Text,
+            }
+        ))
     ));
     assert!(matches!(
         read.lookup(
@@ -285,10 +295,12 @@ fn property_lookup_values_are_schema_checked() -> Result<(), TestError> {
                 max: &PropertyValue::Text("99".to_owned()),
             },
         ),
-        Err(DbError::PropertyTypeMismatch {
-            expected: PropertyType::Integer,
-            actual: PropertyType::Text,
-        })
+        Err(DbError::Query(
+            oxgraph_db::QueryError::PropertyTypeMismatch {
+                expected: PropertyType::Integer,
+                actual: PropertyType::Text,
+            }
+        ))
     ));
     assert!(
         read.lookup_property_range(
@@ -312,7 +324,7 @@ fn graph_traversal_api_walks_directions_and_depth() -> Result<(), TestError> {
     assert_eq!(graph.relation_count(), 3);
     assert!(matches!(
         read.graph_projection_by_name("missing"),
-        Err(DbError::UnsupportedQuery { .. })
+        Err(DbError::Query(oxgraph_db::QueryError::Unsupported { .. }))
     ));
     assert_traversal(
         &read,
@@ -458,7 +470,7 @@ fn longest_path_rejects_cycles_and_ignores_unknown_elements() -> Result<(), Test
             fixture.graph_projection,
             &[fixture.alice, fixture.bob, fixture.carol],
         ),
-        Err(DbError::Traversal { .. })
+        Err(DbError::Query(oxgraph_db::QueryError::Traversal { .. }))
     ));
 
     // `dave` participates in no Calls relation, so he is absent from the
@@ -599,7 +611,10 @@ fn graph_traversal_api_rejects_invalid_inputs() -> Result<(), TestError> {
             &[fixture.dave],
             Walk::default(),
         ),
-        Err(DbError::UnknownElement { id }) if id == fixture.dave
+        Err(DbError::Catalog(oxgraph_db::CatalogError::UnknownId {
+            family: oxgraph_db::IdFamily::Element,
+            id,
+        })) if id == fixture.dave.get()
     ));
     assert!(matches!(
         read.walk(
@@ -607,11 +622,16 @@ fn graph_traversal_api_rejects_invalid_inputs() -> Result<(), TestError> {
             &[fixture.alice],
             Walk::default(),
         ),
-        Err(DbError::UnknownProjection { .. })
+        Err(DbError::Catalog(oxgraph_db::CatalogError::UnknownId {
+            family: oxgraph_db::IdFamily::Projection,
+            ..
+        }))
     ));
     assert!(matches!(
         read.walk(fixture.hyper_projection, &[fixture.alice], Walk::default(),),
-        Err(DbError::InvalidProjection { .. })
+        Err(DbError::Query(
+            oxgraph_db::QueryError::InvalidProjection { .. }
+        ))
     ));
 
     clean(&path)?;
@@ -699,7 +719,7 @@ fn neighbors_resolves_role_aware_adjacency() -> Result<(), TestError> {
     let calls = read
         .catalog()
         .relation_type_id("Calls")
-        .ok_or(DbError::EmptyQuery)?;
+        .ok_or(DbError::Query(oxgraph_db::QueryError::Empty))?;
 
     // Outgoing from bob follows bob -> carol.
     assert_eq!(
@@ -734,7 +754,7 @@ fn endpoints_returns_binary_relation_endpoints() -> Result<(), TestError> {
     let calls = read
         .catalog()
         .relation_type_id("Calls")
-        .ok_or(DbError::EmptyQuery)?;
+        .ok_or(DbError::Query(oxgraph_db::QueryError::Empty))?;
 
     // Find the alice -> bob `Calls` relation and confirm its endpoints read back
     // from incidence storage in source, target order.
@@ -747,7 +767,7 @@ fn endpoints_returns_binary_relation_endpoints() -> Result<(), TestError> {
                     && read.endpoints(*id) == Some((fixture.alice, fixture.bob))
             })
         })
-        .ok_or(DbError::EmptyQuery)?;
+        .ok_or(DbError::Query(oxgraph_db::QueryError::Empty))?;
     assert_eq!(
         read.endpoints(alice_bob),
         Some((fixture.alice, fixture.bob))
@@ -814,35 +834,37 @@ fn oxql_graph_walk_rejects_invalid_queries() -> Result<(), TestError> {
             "GRAPH calls WALK FROM {} DEPTH 1 DIRECTION sideways",
             fixture.alice.get()
         ),),
-        Err(DbError::UnsupportedQuery { .. })
+        Err(DbError::Query(oxgraph_db::QueryError::Unsupported { .. }))
     ));
     assert!(matches!(
         database.prepare(&format!(
             "GRAPH calls WALK FROM {} DEPTH nope",
             fixture.alice.get()
         ),),
-        Err(DbError::UnsupportedQuery { .. })
+        Err(DbError::Query(oxgraph_db::QueryError::Unsupported { .. }))
     ));
     assert!(matches!(
         database.prepare(&format!(
             "GRAPH calls WALK FROM {} DEPTH 1 LIMIT nope",
             fixture.alice.get()
         ),),
-        Err(DbError::UnsupportedQuery { .. })
+        Err(DbError::Query(oxgraph_db::QueryError::Unsupported { .. }))
     ));
     assert!(matches!(
         database.prepare(&format!(
             "GRAPH missing WALK FROM {} DEPTH 1",
             fixture.alice.get()
         ),),
-        Err(DbError::UnsupportedQuery { .. })
+        Err(DbError::Query(oxgraph_db::QueryError::Unsupported { .. }))
     ));
     assert!(matches!(
         database.prepare(&format!(
             "GRAPH calls_hyper WALK FROM {} DEPTH 1",
             fixture.alice.get()
         ),),
-        Err(DbError::InvalidProjection { .. })
+        Err(DbError::Query(
+            oxgraph_db::QueryError::InvalidProjection { .. }
+        ))
     ));
 
     clean(&path)?;
@@ -870,7 +892,12 @@ fn corrupt_base_bytes_fail_open() -> Result<(), TestError> {
     std::fs::write(&base_path, &bytes)?;
 
     assert!(
-        matches!(Db::open(&path), Err(DbError::InvalidStore { .. })),
+        matches!(
+            Db::open(&path),
+            Err(DbError::Storage(
+                oxgraph_db::StorageError::InvalidStore { .. }
+            ))
+        ),
         "corrupt base must fail open with InvalidStore",
     );
     clean(&path)?;
@@ -934,7 +961,12 @@ fn interior_log_corruption_is_loud() -> Result<(), TestError> {
     std::fs::write(&log_path, &bytes)?;
 
     assert!(
-        matches!(Db::open(&path), Err(DbError::LogCorrupt { .. })),
+        matches!(
+            Db::open(&path),
+            Err(DbError::Storage(
+                oxgraph_db::StorageError::LogCorrupt { .. }
+            ))
+        ),
         "interior log corruption must be a loud LogCorrupt",
     );
     clean(&path)?;
@@ -953,7 +985,10 @@ fn concurrent_writers_are_rejected_until_release() -> Result<(), TestError> {
     // handle's write is rejected with `WriterLockHeld`.
     first.write(|_writer| {
         let blocked = second.write(|_writer| Ok(()));
-        assert!(matches!(blocked, Err(DbError::WriterLockHeld)));
+        assert!(matches!(
+            blocked,
+            Err(DbError::Txn(oxgraph_db::TxnError::WriterLockHeld))
+        ));
         Ok(())
     })?;
 
@@ -1374,11 +1409,11 @@ fn assert_compound_where(
     );
     assert!(matches!(
         database.prepare("MATCH ELEMENTS WHERE name ="),
-        Err(DbError::UnsupportedQuery { .. })
+        Err(DbError::Query(oxgraph_db::QueryError::Unsupported { .. }))
     ));
     assert!(matches!(
         database.prepare("MATCH ELEMENTS WHERE ( name = 'Alice'"),
-        Err(DbError::UnsupportedQuery { .. })
+        Err(DbError::Query(oxgraph_db::QueryError::Unsupported { .. }))
     ));
     Ok(())
 }
@@ -1401,24 +1436,30 @@ fn assert_query_counts(database: &Db, fixture: &FixtureIds) -> Result<(), DbErro
     );
     assert!(matches!(
         database.prepare("MATCH ELEMENTS WHERE age = '42'"),
-        Err(DbError::PropertyTypeMismatch {
-            expected: PropertyType::Integer,
-            actual: PropertyType::Text,
-        })
+        Err(DbError::Query(
+            oxgraph_db::QueryError::PropertyTypeMismatch {
+                expected: PropertyType::Integer,
+                actual: PropertyType::Text,
+            }
+        ))
     ));
     assert!(matches!(
         database.prepare("MATCH ELEMENTS WHERE relation_weight = 1",),
-        Err(DbError::WrongPropertyFamily {
-            expected: PropertyFamily::Relation,
-            actual: PropertyFamily::Element,
-        })
+        Err(DbError::Query(
+            oxgraph_db::QueryError::WrongPropertyFamily {
+                expected: PropertyFamily::Relation,
+                actual: PropertyFamily::Element,
+            }
+        ))
     ));
     assert!(matches!(
         database.prepare("MATCH ELEMENTS WHERE incidence_note = 'source'",),
-        Err(DbError::WrongPropertyFamily {
-            expected: PropertyFamily::Incidence,
-            actual: PropertyFamily::Element,
-        })
+        Err(DbError::Query(
+            oxgraph_db::QueryError::WrongPropertyFamily {
+                expected: PropertyFamily::Incidence,
+                actual: PropertyFamily::Element,
+            }
+        ))
     ));
 
     assert_compound_where(database, &read, fixture)?;

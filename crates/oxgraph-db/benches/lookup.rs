@@ -124,7 +124,8 @@ fn create_fixture(path: &Path, element_count: usize) -> Result<Fixture, DbError>
         let mut elements = Vec::with_capacity(element_count);
         for index in 0..element_count {
             let element = writer.create_element()?;
-            let rank = i64::try_from(index).map_err(|_error| DbError::IdOverflow)?;
+            let rank = i64::try_from(index)
+                .map_err(|_error| DbError::Query(oxgraph_db::QueryError::ValueOutOfRange))?;
             writer.set(
                 PropertySubject::Element(element),
                 Key::<Int>::from_id(rank_key),

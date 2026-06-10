@@ -259,15 +259,23 @@ impl GraphProjectionBuilder {
         let mut builder = GraphBuilder::<u32, u32>::new();
         let mut nodes = Vec::with_capacity(node_count);
         for _element in &self.elements {
-            nodes.push(builder.add_node().map_err(|_error| DbError::IdOverflow)?);
+            nodes.push(
+                builder
+                    .add_node()
+                    .map_err(|_error| DbError::id_overflow(crate::error::IdFamily::Element))?,
+            );
         }
         for (source, target) in self.endpoints.iter().copied() {
             builder
                 .add_edge(nodes[local_index(source)], nodes[local_index(target)])
-                .map_err(|_error| DbError::IdOverflow)?;
+                .map_err(|_error| DbError::id_overflow(crate::error::IdFamily::Relation))?;
         }
-        let forward = builder.freeze().map_err(|_error| DbError::IdOverflow)?;
-        let reverse = forward.transpose().map_err(|_error| DbError::IdOverflow)?;
+        let forward = builder
+            .freeze()
+            .map_err(|_error| DbError::id_overflow(crate::error::IdFamily::Relation))?;
+        let reverse = forward
+            .transpose()
+            .map_err(|_error| DbError::id_overflow(crate::error::IdFamily::Relation))?;
 
         // Forward freeze: `targets`/`edge_ids` are grouped by source node, so
         // outgoing successors and outgoing edge IDs read straight off its CSR
@@ -340,8 +348,10 @@ fn grouped<T>(
 ) -> Result<Vec<Vec<T>>, DbError> {
     let mut rows = Vec::with_capacity(node_count);
     for node in 0..node_count {
-        let start = usize::try_from(offsets[node]).map_err(|_error| DbError::IdOverflow)?;
-        let end = usize::try_from(offsets[node + 1]).map_err(|_error| DbError::IdOverflow)?;
+        let start = usize::try_from(offsets[node])
+            .map_err(|_error| DbError::id_overflow(crate::error::IdFamily::Relation))?;
+        let end = usize::try_from(offsets[node + 1])
+            .map_err(|_error| DbError::id_overflow(crate::error::IdFamily::Relation))?;
         let slice = flat
             .get(start..end)
             .ok_or_else(|| DbError::invalid_projection("csr offset range out of bounds"))?;
@@ -1186,7 +1196,11 @@ fn build_directed_vertex_arrays(
     let mut builder = HypergraphBuilder::<u32, u32, u32>::new();
     let mut vertices = Vec::with_capacity(element_count);
     for _element in 0..element_count {
-        vertices.push(builder.add_vertex().map_err(|_error| DbError::IdOverflow)?);
+        vertices.push(
+            builder
+                .add_vertex()
+                .map_err(|_error| DbError::id_overflow(crate::error::IdFamily::Element))?,
+        );
     }
     for (sources, targets) in source_vertices.iter().zip(target_vertices) {
         let source_vertices = unique_vertices(&vertices, sources);
@@ -1197,7 +1211,9 @@ fn build_directed_vertex_arrays(
                 DbError::invalid_projection("hyperedge participants are not directed-unique")
             })?;
     }
-    let frozen = builder.freeze().map_err(|_error| DbError::IdOverflow)?;
+    let frozen = builder
+        .freeze()
+        .map_err(|_error| DbError::id_overflow(crate::error::IdFamily::Incidence))?;
 
     let mut outgoing = Vec::with_capacity(element_count);
     let mut incoming = Vec::with_capacity(element_count);
@@ -1270,21 +1286,21 @@ type DirectedVertexArrays = (
 fn projection_element_id(index: usize) -> Result<ProjectionElementId, DbError> {
     u32::try_from(index)
         .map(ProjectionElementId)
-        .map_err(|_error| DbError::IdOverflow)
+        .map_err(|_error| DbError::id_overflow(crate::error::IdFamily::Element))
 }
 
 /// Converts a local relation count into an ID.
 fn projection_relation_id(index: usize) -> Result<ProjectionRelationId, DbError> {
     u32::try_from(index)
         .map(ProjectionRelationId)
-        .map_err(|_error| DbError::IdOverflow)
+        .map_err(|_error| DbError::id_overflow(crate::error::IdFamily::Element))
 }
 
 /// Converts a local incidence count into an ID.
 fn projection_incidence_id(index: usize) -> Result<ProjectionIncidenceId, DbError> {
     u32::try_from(index)
         .map(ProjectionIncidenceId)
-        .map_err(|_error| DbError::IdOverflow)
+        .map_err(|_error| DbError::id_overflow(crate::error::IdFamily::Element))
 }
 
 /// Returns a local element index.

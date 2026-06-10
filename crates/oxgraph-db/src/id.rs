@@ -4,6 +4,8 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
+use crate::error::IdFamily;
+
 /// Declares one canonical `u64` identifier newtype.
 macro_rules! id_newtype {
     ($name:ident, $doc:literal) => {
@@ -61,6 +63,18 @@ macro_rules! id_newtype {
     };
 }
 
+/// Wires one canonical id newtype to its [`IdFamily`] discriminant, so error
+/// constructors can take any family id generically.
+macro_rules! id_family {
+    ($name:ident, $family:ident) => {
+        impl From<$name> for (IdFamily, u64) {
+            fn from(id: $name) -> Self {
+                (IdFamily::$family, id.get())
+            }
+        }
+    };
+}
+
 id_newtype!(ElementId, "Stable canonical element identifier.");
 id_newtype!(RelationId, "Stable canonical relation identifier.");
 id_newtype!(IncidenceId, "Stable canonical incidence identifier.");
@@ -70,6 +84,16 @@ id_newtype!(RelationTypeId, "Stable catalog relation-type identifier.");
 id_newtype!(PropertyKeyId, "Stable catalog property-key identifier.");
 id_newtype!(ProjectionId, "Stable catalog projection identifier.");
 id_newtype!(IndexId, "Stable catalog index identifier.");
+id_family!(ElementId, Element);
+id_family!(RelationId, Relation);
+id_family!(IncidenceId, Incidence);
+id_family!(RoleId, Role);
+id_family!(LabelId, Label);
+id_family!(RelationTypeId, RelationType);
+id_family!(PropertyKeyId, PropertyKey);
+id_family!(ProjectionId, Projection);
+id_family!(IndexId, Index);
+
 id_newtype!(CommitSeq, "Monotonic committed transaction sequence.");
 id_newtype!(TransactionId, "Monotonic writer transaction identifier.");
 id_newtype!(

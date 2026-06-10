@@ -55,12 +55,13 @@ impl WriterLock {
     /// `root`, creating the persistent `store.lock` file when absent.
     ///
     /// The lock is taken with [`File::try_lock`] (non-blocking), so a second
-    /// writer fails fast with [`DbError::WriterLockHeld`] rather than blocking.
+    /// writer fails fast with [`DbError::Txn(crate::error::TxnError::WriterLockHeld)`] rather than
+    /// blocking.
     ///
     /// # Errors
     ///
-    /// Returns [`DbError::WriterLockHeld`] when another writer already holds the
-    /// lock, or [`DbError::Io`] when the lock file cannot be created or locked.
+    /// Returns [`DbError::Txn(crate::error::TxnError::WriterLockHeld)`] when another writer already
+    /// holds the lock, or [`DbError::Io`] when the lock file cannot be created or locked.
     ///
     /// # Performance
     ///
@@ -78,7 +79,9 @@ impl WriterLock {
             .map_err(|error| DbError::io("open writer lock", error))?;
         match file.try_lock() {
             Ok(()) => Ok(Self { file }),
-            Err(TryLockError::WouldBlock) => Err(DbError::WriterLockHeld),
+            Err(TryLockError::WouldBlock) => {
+                Err(DbError::Txn(crate::error::TxnError::WriterLockHeld))
+            }
             Err(TryLockError::Error(error)) => Err(DbError::io("acquire writer lock", error)),
         }
     }

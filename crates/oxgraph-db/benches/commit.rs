@@ -59,7 +59,8 @@ fn create_database(path: &Path, element_count: usize) -> Result<Db, DbError> {
             writer.set(
                 PropertySubject::Element(element),
                 Key::<Int>::from_id(rank_key),
-                i64::try_from(index).map_err(|_error| DbError::IdOverflow)?,
+                i64::try_from(index)
+                    .map_err(|_error| DbError::Query(oxgraph_db::QueryError::ValueOutOfRange))?,
             )?;
         }
         Ok(())
@@ -111,7 +112,9 @@ fn bench_begin_write_rollback(c: &mut Criterion) {
         let mut database = database_or_panic("rollback", size);
         group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, _size| {
             b.iter(|| {
-                let _ = database.write(|_writer| Err::<(), DbError>(DbError::EmptyQuery));
+                let _ = database.write(|_writer| {
+                    Err::<(), DbError>(DbError::Query(oxgraph_db::QueryError::Empty))
+                });
             });
         });
     }
@@ -134,7 +137,8 @@ fn create_unfolded_database(path: &Path, element_count: usize) -> Result<Db, DbE
             writer.set(
                 PropertySubject::Element(element),
                 Key::<Int>::from_id(rank_key),
-                i64::try_from(index).map_err(|_error| DbError::IdOverflow)?,
+                i64::try_from(index)
+                    .map_err(|_error| DbError::Query(oxgraph_db::QueryError::ValueOutOfRange))?,
             )?;
         }
         Ok(())

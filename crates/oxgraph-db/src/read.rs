@@ -65,8 +65,9 @@ impl Properties {
     ///
     /// This method is `O(log property count)`.
     pub fn require<T: ValueType, V: Readable<T>>(&self, key: Key<T>) -> Result<V, DbError> {
-        self.get(key)
-            .ok_or_else(|| DbError::MissingProperty { key: key.id() })
+        self.get(key).ok_or_else(|| {
+            DbError::Query(crate::error::QueryError::MissingProperty { key: key.id() })
+        })
     }
 
     /// Returns the raw value for an untyped key.

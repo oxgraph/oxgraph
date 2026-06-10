@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    DbError, IndexId, LabelId, ProjectionId, PropertyKeyId, RelationTypeId, RoleId,
+    IndexId, LabelId, ProjectionId, PropertyKeyId, RelationTypeId, RoleId, error::CatalogError,
     value::PropertyType,
 };
 
@@ -448,14 +448,14 @@ impl Catalog {
     }
 
     /// Registers a structural role.
-    pub(crate) fn insert_role(&mut self, id: RoleId, name: String) -> Result<(), DbError> {
+    pub(crate) fn insert_role(&mut self, id: RoleId, name: String) -> Result<(), CatalogError> {
         insert_named(&mut self.role_names, &name, id)?;
         self.roles.insert(id, RoleDefinition { id, name });
         Ok(())
     }
 
     /// Registers a label.
-    pub(crate) fn insert_label(&mut self, id: LabelId, name: String) -> Result<(), DbError> {
+    pub(crate) fn insert_label(&mut self, id: LabelId, name: String) -> Result<(), CatalogError> {
         insert_named(&mut self.label_names, &name, id)?;
         self.labels.insert(id, LabelDefinition { id, name });
         Ok(())
@@ -466,7 +466,7 @@ impl Catalog {
         &mut self,
         id: RelationTypeId,
         name: String,
-    ) -> Result<(), DbError> {
+    ) -> Result<(), CatalogError> {
         insert_named(&mut self.relation_type_names, &name, id)?;
         self.relation_types
             .insert(id, RelationTypeDefinition { id, name });
@@ -477,7 +477,7 @@ impl Catalog {
     pub(crate) fn insert_property_key(
         &mut self,
         definition: PropertyKeyDefinition,
-    ) -> Result<(), DbError> {
+    ) -> Result<(), CatalogError> {
         insert_named(
             &mut self.property_key_names,
             &definition.name,
@@ -492,7 +492,7 @@ impl Catalog {
         &mut self,
         id: ProjectionId,
         definition: ProjectionDefinition,
-    ) -> Result<(), DbError> {
+    ) -> Result<(), CatalogError> {
         insert_named(&mut self.projection_names, definition.name(), id)?;
         self.projections
             .insert(id, ProjectionEntry { id, definition });
@@ -505,7 +505,7 @@ impl Catalog {
         id: IndexId,
         name: String,
         definition: IndexDefinition,
-    ) -> Result<(), DbError> {
+    ) -> Result<(), CatalogError> {
         insert_named(&mut self.index_names, &name, id)?;
         self.indexes.insert(
             id,
@@ -524,9 +524,9 @@ fn insert_named<Id: Copy>(
     names: &mut BTreeMap<String, Id>,
     name: &str,
     id: Id,
-) -> Result<(), DbError> {
+) -> Result<(), CatalogError> {
     if names.contains_key(name) {
-        return Err(DbError::DuplicateCatalogName);
+        return Err(CatalogError::DuplicateName);
     }
     names.insert(name.to_owned(), id);
     Ok(())

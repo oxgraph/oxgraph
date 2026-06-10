@@ -252,7 +252,7 @@ proptest! {
         let read = database.reader();
         let equal_type_error = matches!(
             read.lookup_property_equal(key, &PropertyValue::Text("wrong".to_owned())),
-            Err(DbError::PropertyTypeMismatch { .. }),
+            Err(DbError::Query(oxgraph_db::QueryError::PropertyTypeMismatch { .. })),
         );
         prop_assert!(equal_type_error);
         let range_type_error = matches!(
@@ -261,7 +261,7 @@ proptest! {
                 &PropertyValue::Text("0".to_owned()),
                 &PropertyValue::Text("9".to_owned()),
             ),
-            Err(DbError::PropertyTypeMismatch { .. }),
+            Err(DbError::Query(oxgraph_db::QueryError::PropertyTypeMismatch { .. })),
         );
         prop_assert!(range_type_error);
         let index_type_error = matches!(
@@ -269,7 +269,7 @@ proptest! {
                 index,
                 Match::Equal(&PropertyValue::Text("wrong".to_owned())),
             ),
-            Err(DbError::PropertyTypeMismatch { .. }),
+            Err(DbError::Query(oxgraph_db::QueryError::PropertyTypeMismatch { .. })),
         );
         prop_assert!(index_type_error);
         prop_io(clean(&path))?;
@@ -419,8 +419,14 @@ proptest! {
                 element,
                 RoleId::new(missing_role),
             );
-            unknown_relation = matches!(result, Err(DbError::UnknownRelation { .. }));
-            Err::<(), DbError>(DbError::EmptyQuery)
+            unknown_relation = matches!(
+                result,
+                Err(DbError::Catalog(oxgraph_db::CatalogError::UnknownId {
+                    family: oxgraph_db::IdFamily::Relation,
+                    ..
+                }))
+            );
+            Err::<(), DbError>(DbError::Query(oxgraph_db::QueryError::Empty))
         });
         prop_assert!(unknown_relation, "expected unknown relation");
         prop_io(clean(&path))?;
@@ -438,7 +444,7 @@ proptest! {
         }
         let _ = database.write(|writer| {
             writer.create_element()?;
-            Err::<(), DbError>(DbError::EmptyQuery)
+            Err::<(), DbError>(DbError::Query(oxgraph_db::QueryError::Empty))
         });
 
         let reopened = prop_db(Db::open(&path))?;
@@ -457,13 +463,13 @@ proptest! {
         let database = prop_db(Db::create(&path))?;
         let result = database.prepare(&query);
         match query.trim() {
-            "" => prop_assert!(matches!(result, Err(DbError::EmptyQuery))),
+            "" => prop_assert!(matches!(result, Err(DbError::Query(oxgraph_db::QueryError::Empty)))),
             "MATCH ELEMENTS" | "MATCH RELATIONS" | "MATCH INCIDENCES" | "CATALOG" => {
                 let prepared = prop_db(result)?;
                 prop_assert!(!prepared.explain().is_empty());
             }
             _query => prop_assert!(
-                matches!(result, Err(DbError::UnsupportedQuery { .. })),
+                matches!(result, Err(DbError::Query(oxgraph_db::QueryError::Unsupported { .. }))),
                 "expected unsupported query"
             ),
         }

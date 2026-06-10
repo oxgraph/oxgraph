@@ -192,8 +192,8 @@ pub trait Assignable<T: ValueType> {
     ///
     /// # Errors
     ///
-    /// Returns [`DbError::ValueOutOfRange`] when an unsigned value exceeds
-    /// `i64::MAX`.
+    /// Returns [`DbError::Query(crate::error::QueryError::ValueOutOfRange)`] when an unsigned value
+    /// exceeds `i64::MAX`.
     ///
     /// # Performance
     ///
