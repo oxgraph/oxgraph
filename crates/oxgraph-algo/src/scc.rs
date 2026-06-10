@@ -8,7 +8,7 @@
 
 use alloc::{vec, vec::Vec};
 
-use oxgraph_topology::{ElementIndex, ElementSuccessors, TopologyBase};
+use oxgraph_topology::{DenseElementIndex, ElementSuccessors, TopologyBase};
 
 /// Sentinel index marking an element that Tarjan has not yet discovered.
 const UNVISITED: usize = usize::MAX;
@@ -62,7 +62,7 @@ fn member_successors<G>(
     node: <G as TopologyBase>::ElementId,
 ) -> Vec<<G as TopologyBase>::ElementId>
 where
-    G: ElementIndex + ElementSuccessors,
+    G: DenseElementIndex + ElementSuccessors,
 {
     ctx.graph
         .element_successors(node)
@@ -84,7 +84,7 @@ fn discover<G>(
     scratch: &mut TarjanScratch<<G as TopologyBase>::ElementId>,
     work: &mut Vec<Frame<<G as TopologyBase>::ElementId>>,
 ) where
-    G: ElementIndex + ElementSuccessors,
+    G: DenseElementIndex + ElementSuccessors,
 {
     let index = ctx.graph.element_index(node);
     scratch.order_index[index] = scratch.counter;
@@ -112,7 +112,7 @@ fn advance<G>(
     scratch: &mut TarjanScratch<<G as TopologyBase>::ElementId>,
     work: &mut Vec<Frame<<G as TopologyBase>::ElementId>>,
 ) where
-    G: ElementIndex + ElementSuccessors,
+    G: DenseElementIndex + ElementSuccessors,
 {
     let target = ctx.graph.element_index(successor);
     if scratch.order_index[target] == UNVISITED {
@@ -135,7 +135,7 @@ fn pop_component<G>(
     root_index: usize,
     scratch: &mut TarjanScratch<<G as TopologyBase>::ElementId>,
 ) where
-    G: ElementIndex + ElementSuccessors,
+    G: DenseElementIndex + ElementSuccessors,
 {
     let mut component = Vec::new();
     while let Some(popped) = scratch.stack.pop() {
@@ -161,7 +161,7 @@ fn finish<G>(
     scratch: &mut TarjanScratch<<G as TopologyBase>::ElementId>,
     work: &mut Vec<Frame<<G as TopologyBase>::ElementId>>,
 ) where
-    G: ElementIndex + ElementSuccessors,
+    G: DenseElementIndex + ElementSuccessors,
 {
     let node_index = ctx.graph.element_index(node);
     if scratch.lowlink[node_index] == scratch.order_index[node_index] {
@@ -187,7 +187,7 @@ fn visit<G>(
     start: <G as TopologyBase>::ElementId,
     scratch: &mut TarjanScratch<<G as TopologyBase>::ElementId>,
 ) where
-    G: ElementIndex + ElementSuccessors,
+    G: DenseElementIndex + ElementSuccessors,
 {
     let mut work: Vec<Frame<G::ElementId>> = Vec::new();
     discover(ctx, start, scratch, &mut work);
@@ -220,7 +220,7 @@ pub fn strongly_connected_components<G>(
     elements: &[<G as TopologyBase>::ElementId],
 ) -> Vec<Vec<<G as TopologyBase>::ElementId>>
 where
-    G: ElementIndex + ElementSuccessors,
+    G: DenseElementIndex + ElementSuccessors,
 {
     let bound = graph.element_bound();
     let mut member = vec![false; bound];

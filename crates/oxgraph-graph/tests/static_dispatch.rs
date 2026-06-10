@@ -2,11 +2,12 @@
 
 use oxgraph_graph::{
     ContainsEdge, ContainsElement, ContainsEndpoint, ContainsIncidence, ContainsNode,
-    ContainsRelation, DirectedGraph, EdgeEndpointGraph, EdgeIndex, EdgeSourceGraph,
-    EdgeTargetGraph, ElementIndex, ElementPredecessors, ElementSuccessors, EndpointIndex,
-    ForwardGraph, GraphCounts, IncidenceBase, IncidenceIndex, IncomingEdgeCount, IncomingGraph,
-    IncomingNeighborsGraph, NodeId as GraphNodeId, NodeIndex, OutgoingEdgeCount, OutgoingGraph,
-    OutgoingNeighborsGraph, RelationIndex, ReverseGraph, TopologyBase, TopologyCounts,
+    ContainsRelation, DenseEdgeIndex, DenseElementIndex, DenseEndpointIndex, DenseIncidenceIndex,
+    DenseNodeIndex, DenseRelationIndex, DirectedGraph, EdgeEndpointGraph, EdgeSourceGraph,
+    EdgeTargetGraph, ElementPredecessors, ElementSuccessors, ForwardGraph, GraphCounts,
+    IncidenceBase, IncomingEdgeCount, IncomingGraph, IncomingNeighborsGraph, NodeId as GraphNodeId,
+    OutgoingEdgeCount, OutgoingGraph, OutgoingNeighborsGraph, ReverseGraph, TopologyBase,
+    TopologyCounts,
 };
 use proptest::prelude::*;
 
@@ -63,9 +64,7 @@ impl TopologyCounts for FixtureGraph {
     }
 }
 
-impl GraphCounts for FixtureGraph {}
-
-impl ElementIndex for FixtureGraph {
+impl DenseElementIndex for FixtureGraph {
     fn element_bound(&self) -> usize {
         self.node_count
     }
@@ -81,7 +80,7 @@ impl ContainsElement for FixtureGraph {
     }
 }
 
-impl RelationIndex for FixtureGraph {
+impl DenseRelationIndex for FixtureGraph {
     fn relation_bound(&self) -> usize {
         self.edges.len()
     }
@@ -179,7 +178,7 @@ impl IncidenceBase for EndpointFixture {
     type Role = ();
 }
 
-impl IncidenceIndex for EndpointFixture {
+impl DenseIncidenceIndex for EndpointFixture {
     fn incidence_bound(&self) -> usize {
         8
     }

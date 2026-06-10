@@ -35,7 +35,8 @@ use alloc::{collections::VecDeque, vec, vec::Vec};
 use core::{iter::FusedIterator, marker::PhantomData};
 
 use oxgraph_topology::{
-    ContainsElement, ElementId, ElementIndex, ElementPredecessors, ElementSuccessors, TopologyBase,
+    ContainsElement, DenseElementIndex, ElementId, ElementPredecessors, ElementSuccessors,
+    TopologyBase,
 };
 
 use crate::bfs::BfsError;
@@ -317,7 +318,7 @@ pub(super) struct ValidatedStart<'graph, G> {
 #[cfg(feature = "alloc")]
 impl<'graph, G> ValidatedStart<'graph, G>
 where
-    G: ContainsElement + ElementIndex,
+    G: ContainsElement + DenseElementIndex,
 {
     /// Validates that `start` is contained in `graph` and maps inside the
     /// dense element bound.
@@ -411,7 +412,7 @@ pub(super) struct ValidatedScratch<'graph, G> {
 
 impl<'graph, G> ValidatedScratch<'graph, G>
 where
-    G: ContainsElement + ElementIndex,
+    G: ContainsElement + DenseElementIndex,
 {
     /// Validates that the caller-provided scratch slices fit
     /// `graph.element_bound()` and that `start` lives inside the bound.
@@ -492,9 +493,9 @@ where
 #[must_use = "iterators are lazy and do nothing unless consumed"]
 pub(super) struct SeededByteFlagFrontier<'scratch, G>
 where
-    G: ElementIndex,
+    G: DenseElementIndex,
 {
-    /// Dense visited flags indexed by `ElementIndex::element_index`.
+    /// Dense visited flags indexed by `DenseElementIndex::element_index`.
     visited: &'scratch mut [u8],
     /// Queue storage for discovered elements.
     queue: &'scratch mut [ElementId<G>],
@@ -506,7 +507,7 @@ where
 
 impl<'scratch, G> SeededByteFlagFrontier<'scratch, G>
 where
-    G: ContainsElement + ElementIndex,
+    G: ContainsElement + DenseElementIndex,
 {
     /// Clears `visited[..bound]`, marks the validated start index, seats
     /// `start` at `queue[0]`, and primes head/tail cursors.
@@ -537,11 +538,11 @@ where
     }
 }
 
-impl<G> Sealed for SeededByteFlagFrontier<'_, G> where G: ElementIndex {}
+impl<G> Sealed for SeededByteFlagFrontier<'_, G> where G: DenseElementIndex {}
 
 impl<G> BfsStep<G> for SeededByteFlagFrontier<'_, G>
 where
-    G: ContainsElement + ElementIndex,
+    G: ContainsElement + DenseElementIndex,
 {
     fn pop(&mut self) -> Option<ElementId<G>> {
         if self.head == self.tail {
@@ -584,9 +585,9 @@ where
 #[must_use = "iterators are lazy and do nothing unless consumed"]
 pub(super) struct SeededEpochFrontier<'borrow, G>
 where
-    G: ElementIndex,
+    G: DenseElementIndex,
 {
-    /// Dense visited epoch marks indexed by `ElementIndex::element_index`.
+    /// Dense visited epoch marks indexed by `DenseElementIndex::element_index`.
     marks: &'borrow mut [u32],
     /// Queue storage for discovered elements.
     queue: &'borrow mut [ElementId<G>],
@@ -600,7 +601,7 @@ where
 
 impl<'borrow, G> SeededEpochFrontier<'borrow, G>
 where
-    G: ContainsElement + ElementIndex,
+    G: ContainsElement + DenseElementIndex,
 {
     /// Marks the validated start index with `epoch`, seats `start` at
     /// `queue[0]`, and primes head/tail cursors.
@@ -630,11 +631,11 @@ where
     }
 }
 
-impl<G> Sealed for SeededEpochFrontier<'_, G> where G: ElementIndex {}
+impl<G> Sealed for SeededEpochFrontier<'_, G> where G: DenseElementIndex {}
 
 impl<G> BfsStep<G> for SeededEpochFrontier<'_, G>
 where
-    G: ContainsElement + ElementIndex,
+    G: ContainsElement + DenseElementIndex,
 {
     fn pop(&mut self) -> Option<ElementId<G>> {
         if self.head == self.tail {
@@ -675,9 +676,9 @@ where
 #[must_use = "iterators are lazy and do nothing unless consumed"]
 pub(super) struct SeededWorkspaceFrontier<'workspace, G>
 where
-    G: ElementIndex,
+    G: DenseElementIndex,
 {
-    /// Dense visited epoch marks indexed by `ElementIndex::element_index`.
+    /// Dense visited epoch marks indexed by `DenseElementIndex::element_index`.
     marks: &'workspace mut [u32],
     /// Queue storage for discovered elements.
     queue: &'workspace mut Vec<ElementId<G>>,
@@ -690,7 +691,7 @@ where
 #[cfg(feature = "alloc")]
 impl<'workspace, G> SeededWorkspaceFrontier<'workspace, G>
 where
-    G: ContainsElement + ElementIndex,
+    G: ContainsElement + DenseElementIndex,
 {
     /// Clears the workspace queue, marks the validated start index with
     /// `epoch`, pushes `start`, and primes the head cursor.
@@ -721,12 +722,12 @@ where
 }
 
 #[cfg(feature = "alloc")]
-impl<G> Sealed for SeededWorkspaceFrontier<'_, G> where G: ElementIndex {}
+impl<G> Sealed for SeededWorkspaceFrontier<'_, G> where G: DenseElementIndex {}
 
 #[cfg(feature = "alloc")]
 impl<G> BfsStep<G> for SeededWorkspaceFrontier<'_, G>
 where
-    G: ContainsElement + ElementIndex,
+    G: ContainsElement + DenseElementIndex,
 {
     fn pop(&mut self) -> Option<ElementId<G>> {
         let element = self.queue.get(self.head).copied()?;
@@ -761,9 +762,9 @@ where
 #[must_use = "iterators are lazy and do nothing unless consumed"]
 pub(super) struct SeededOwnedFrontier<G>
 where
-    G: ElementIndex,
+    G: DenseElementIndex,
 {
-    /// Dense visited flags indexed by `ElementIndex::element_index`.
+    /// Dense visited flags indexed by `DenseElementIndex::element_index`.
     visited: Vec<u8>,
     /// Elements discovered in yield order.
     queue: Vec<ElementId<G>>,
@@ -774,7 +775,7 @@ where
 #[cfg(feature = "alloc")]
 impl<G> SeededOwnedFrontier<G>
 where
-    G: ContainsElement + ElementIndex,
+    G: ContainsElement + DenseElementIndex,
 {
     /// Allocates `vec![0; bound]` for visited, primes `vec![start]` for the
     /// queue, and marks the validated start index.
@@ -799,12 +800,12 @@ where
 }
 
 #[cfg(feature = "alloc")]
-impl<G> Sealed for SeededOwnedFrontier<G> where G: ElementIndex {}
+impl<G> Sealed for SeededOwnedFrontier<G> where G: DenseElementIndex {}
 
 #[cfg(feature = "alloc")]
 impl<G> BfsStep<G> for SeededOwnedFrontier<G>
 where
-    G: ContainsElement + ElementIndex,
+    G: ContainsElement + DenseElementIndex,
 {
     fn pop(&mut self) -> Option<ElementId<G>> {
         let element = self.queue.get(self.head).copied()?;

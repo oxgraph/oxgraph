@@ -29,15 +29,9 @@ algo-alloc = ["algo", "oxgraph-algo?/alloc"]
 algo-std = ["algo-alloc", "oxgraph-algo?/std"]
 property-arrow = ["topology", "dep:oxgraph-property"]
 graph-build = ["graph", "csr", "layout", "snapshot-alloc", "oxgraph-csr/build"]
-graph-snapshot = ["graph-build"]
-graph-property-arrow = ["graph-snapshot", "property-arrow", "oxgraph-csr/build-property-arrow"]
+graph-property-arrow = ["graph-build", "property-arrow", "oxgraph-csr/build-property-arrow"]
 hyper-build = ["hyper", "hyper-bcsr", "layout", "snapshot-alloc", "oxgraph-hyper-bcsr/build"]
-hyper-snapshot = ["hyper-build"]
-hyper-property-arrow = [
-  "hyper-snapshot",
-  "property-arrow",
-  "oxgraph-hyper-bcsr/build-property-arrow",
-]
+hyper-property-arrow = ["hyper-build", "property-arrow", "oxgraph-hyper-bcsr/build-property-arrow"]
 # `postgres` enables the `csc` feature (not just the dep) so the borrowed
 # inbound CSC view is reachable at the single canonical path `oxgraph::csc`.
 postgres = ["dep:oxgraph-postgres", "csc"]

@@ -9,7 +9,7 @@
 use alloc::{collections::BTreeMap, vec, vec::Vec};
 use core::cmp::Ordering;
 
-use oxgraph_topology::{ElementIndex, ElementSuccessors, TopologyBase};
+use oxgraph_topology::{DenseElementIndex, ElementSuccessors, TopologyBase};
 
 /// Returns the input under `cursor`'s representative root using path halving.
 ///
@@ -61,7 +61,7 @@ pub fn connected_components<G>(
     elements: &[<G as TopologyBase>::ElementId],
 ) -> Vec<Vec<<G as TopologyBase>::ElementId>>
 where
-    G: ElementIndex + ElementSuccessors,
+    G: DenseElementIndex + ElementSuccessors,
 {
     let bound = graph.element_bound();
     let mut member = vec![false; bound];

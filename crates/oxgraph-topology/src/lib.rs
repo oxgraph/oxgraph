@@ -405,7 +405,7 @@ pub trait IncidenceCounts: IncidenceBase {
 ///
 /// Methods should be `O(1)` unless an implementation documents a weaker
 /// contract.
-pub trait ElementIndex: TopologyBase {
+pub trait DenseElementIndex: TopologyBase {
     /// Returns the exclusive upper bound for element indexes in this view.
     ///
     /// # Performance
@@ -440,7 +440,7 @@ pub trait ElementIndex: TopologyBase {
 ///
 /// Methods should be `O(1)` unless an implementation documents a weaker
 /// contract.
-pub trait RelationIndex: TopologyBase {
+pub trait DenseRelationIndex: TopologyBase {
     /// Returns the exclusive upper bound for relation indexes in this view.
     ///
     /// # Performance
@@ -475,7 +475,7 @@ pub trait RelationIndex: TopologyBase {
 ///
 /// Methods should be `O(1)` unless an implementation documents a weaker
 /// contract.
-pub trait IncidenceIndex: IncidenceBase {
+pub trait DenseIncidenceIndex: IncidenceBase {
     /// Returns the exclusive upper bound for incidence indexes in this view.
     ///
     /// # Performance
@@ -495,7 +495,7 @@ pub trait IncidenceIndex: IncidenceBase {
 ///
 /// This capability answers whether an element ID is valid and visible in this
 /// view at the time of the call. It is intentionally separate from
-/// [`ElementIndex`]: an index bound is an allocation bound, while containment is
+/// [`DenseElementIndex`]: an index bound is an allocation bound, while containment is
 /// an ID-validity predicate. Mutable, filtered, tombstoned, or overlay views may
 /// have indexes below the bound that are not visible elements.
 ///

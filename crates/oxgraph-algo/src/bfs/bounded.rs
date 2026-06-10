@@ -16,7 +16,8 @@
 use core::ops::ControlFlow;
 
 use oxgraph_topology::{
-    ContainsElement, ElementId, ElementIndex, ElementPredecessors, ElementSuccessors, TopologyBase,
+    ContainsElement, DenseElementIndex, ElementId, ElementPredecessors, ElementSuccessors,
+    TopologyBase,
 };
 
 use crate::bfs::{BfsError, epoch::BfsEpochScratch};
@@ -75,7 +76,7 @@ where
 /// Mutable wave state for one bounded traversal over caller-provided scratch.
 struct BoundedRun<'run, G, V>
 where
-    G: ContainsElement + ElementIndex,
+    G: ContainsElement + DenseElementIndex,
     V: BfsVisitor<G>,
 {
     /// Dense visited-epoch marks indexed by `element_index`.
@@ -104,7 +105,7 @@ where
 
 impl<G, V> BoundedRun<'_, G, V>
 where
-    G: ContainsElement + ElementIndex,
+    G: ContainsElement + DenseElementIndex,
     V: BfsVisitor<G>,
 {
     /// Pops the next frontier element with its depth, advancing the wave
@@ -172,7 +173,7 @@ fn start_run<'run, G, V>(
     visitor: &'run mut V,
 ) -> Result<Option<BoundedRun<'run, G, V>>, BfsError>
 where
-    G: ContainsElement + ElementIndex,
+    G: ContainsElement + DenseElementIndex,
     V: BfsVisitor<G>,
 {
     let element_bound = graph.element_bound();
@@ -257,7 +258,7 @@ pub fn breadth_first_search_bounded<G, V>(
     visitor: &mut V,
 ) -> Result<(), BfsError>
 where
-    G: ContainsElement + ElementSuccessors + ElementIndex,
+    G: ContainsElement + ElementSuccessors + DenseElementIndex,
     V: BfsVisitor<G>,
 {
     let Some(mut run) = start_run(graph, scratch, seeds, bounds, visitor)? else {
@@ -298,7 +299,7 @@ pub fn reverse_breadth_first_search_bounded<G, V>(
     visitor: &mut V,
 ) -> Result<(), BfsError>
 where
-    G: ContainsElement + ElementPredecessors + ElementIndex,
+    G: ContainsElement + ElementPredecessors + DenseElementIndex,
     V: BfsVisitor<G>,
 {
     let Some(mut run) = start_run(graph, scratch, seeds, bounds, visitor)? else {
@@ -340,7 +341,7 @@ pub fn breadth_first_search_bounded_both<G, V>(
     visitor: &mut V,
 ) -> Result<(), BfsError>
 where
-    G: ContainsElement + ElementSuccessors + ElementPredecessors + ElementIndex,
+    G: ContainsElement + ElementSuccessors + ElementPredecessors + DenseElementIndex,
     V: BfsVisitor<G>,
 {
     let Some(mut run) = start_run(graph, scratch, seeds, bounds, visitor)? else {

@@ -14,7 +14,7 @@
 
 use alloc::{vec, vec::Vec};
 
-use oxgraph_topology::{ElementIndex, ElementSuccessors, TopologyBase};
+use oxgraph_topology::{DenseElementIndex, ElementSuccessors, TopologyBase};
 
 use crate::topological_sort;
 
@@ -72,7 +72,7 @@ pub fn longest_path_dag<G>(
     elements: &[<G as TopologyBase>::ElementId],
 ) -> Result<Vec<<G as TopologyBase>::ElementId>, LongestPathError>
 where
-    G: ElementIndex + ElementSuccessors,
+    G: DenseElementIndex + ElementSuccessors,
 {
     let order = topological_sort(graph, elements).map_err(|_| LongestPathError::Cycle)?;
     if order.is_empty() {

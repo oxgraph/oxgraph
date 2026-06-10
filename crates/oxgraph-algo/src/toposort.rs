@@ -8,7 +8,7 @@
 
 use alloc::{collections::VecDeque, vec, vec::Vec};
 
-use oxgraph_topology::{ElementIndex, ElementSuccessors, TopologyBase};
+use oxgraph_topology::{DenseElementIndex, ElementSuccessors, TopologyBase};
 
 /// Error returned when the requested elements cannot be totally ordered.
 ///
@@ -57,7 +57,7 @@ pub fn topological_sort<G>(
     elements: &[<G as TopologyBase>::ElementId],
 ) -> Result<Vec<<G as TopologyBase>::ElementId>, ToposortError>
 where
-    G: ElementIndex + ElementSuccessors,
+    G: DenseElementIndex + ElementSuccessors,
 {
     let bound = graph.element_bound();
     let mut member = vec![false; bound];

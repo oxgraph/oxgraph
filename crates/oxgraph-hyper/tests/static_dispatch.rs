@@ -2,13 +2,13 @@
 
 use oxgraph_hyper::{
     ContainsElement, ContainsHyperedge, ContainsIncidence, ContainsParticipant, ContainsRelation,
-    ContainsVertex, DirectedHyperedgeParticipants, DirectedVertexPredecessors,
-    DirectedVertexSuccessors, ElementIncidenceCount, ElementIncidences, ElementIndex,
-    ElementPredecessors, ElementSuccessors, HyperedgeIndex, HyperedgeParticipantCount,
-    HyperedgeParticipants, Hypergraph, HypergraphCounts, IncidenceBase, IncidenceElement,
-    IncidenceIndex, IncidenceRelation, IncidentHyperedgeCount, IncidentHyperedges,
-    ParticipantIndex, RelationIncidenceCount, RelationIncidences, RelationIndex, TopologyBase,
-    TopologyCounts, VertexIndex,
+    ContainsVertex, DenseElementIndex, DenseHyperedgeIndex, DenseIncidenceIndex,
+    DenseParticipantIndex, DenseRelationIndex, DenseVertexIndex, DirectedHyperedgeParticipants,
+    DirectedVertexPredecessors, DirectedVertexSuccessors, ElementIncidenceCount, ElementIncidences,
+    ElementPredecessors, ElementSuccessors, HyperedgeParticipantCount, HyperedgeParticipants,
+    Hypergraph, HypergraphCounts, IncidenceBase, IncidenceElement, IncidenceRelation,
+    IncidentHyperedgeCount, IncidentHyperedges, RelationIncidenceCount, RelationIncidences,
+    TopologyBase, TopologyCounts,
 };
 use proptest::prelude::*;
 
@@ -81,9 +81,7 @@ impl TopologyCounts for FixtureHypergraph {
     }
 }
 
-impl HypergraphCounts for FixtureHypergraph {}
-
-impl ElementIndex for FixtureHypergraph {
+impl DenseElementIndex for FixtureHypergraph {
     fn element_bound(&self) -> usize {
         self.vertex_count
     }
@@ -99,7 +97,7 @@ impl ContainsElement for FixtureHypergraph {
     }
 }
 
-impl RelationIndex for FixtureHypergraph {
+impl DenseRelationIndex for FixtureHypergraph {
     fn relation_bound(&self) -> usize {
         self.hyperedge_offsets.len() - 1
     }
@@ -115,7 +113,7 @@ impl ContainsRelation for FixtureHypergraph {
     }
 }
 
-impl IncidenceIndex for FixtureHypergraph {
+impl DenseIncidenceIndex for FixtureHypergraph {
     fn incidence_bound(&self) -> usize {
         self.participants.len()
     }

@@ -25,10 +25,10 @@
 //!
 //! | Feature | Forward API | Reverse API | Topology requirement | Performance |
 //! | --- | --- | --- | --- | --- |
-//! | none | [`breadth_first_search_with_scratch`] | [`reverse_breadth_first_search_with_scratch`] | dense [`ElementIndex`](oxgraph_topology::ElementIndex) + direction trait | `O(b)` setup, `O(n + m)` traversal, no allocation |
-//! | none | [`breadth_first_search_with_epoch_scratch`] | [`reverse_breadth_first_search_with_epoch_scratch`] | dense [`ElementIndex`](oxgraph_topology::ElementIndex) + direction trait | amortized `O(1)` setup, `O(n + m)` traversal, no allocation |
-//! | `alloc` | [`breadth_first_search`] | [`reverse_breadth_first_search`] | dense [`ElementIndex`](oxgraph_topology::ElementIndex) + direction trait | `O(b)` setup, `O(n + m)` traversal, owned storage |
-//! | `alloc` | [`breadth_first_search_with_workspace`] | [`reverse_breadth_first_search_with_workspace`] | dense [`ElementIndex`](oxgraph_topology::ElementIndex) + direction trait | amortized `O(1)` setup, `O(n + m)` traversal, reusable owned storage |
+//! | none | [`breadth_first_search_with_scratch`] | [`reverse_breadth_first_search_with_scratch`] | dense [`DenseElementIndex`](oxgraph_topology::DenseElementIndex) + direction trait | `O(b)` setup, `O(n + m)` traversal, no allocation |
+//! | none | [`breadth_first_search_with_epoch_scratch`] | [`reverse_breadth_first_search_with_epoch_scratch`] | dense [`DenseElementIndex`](oxgraph_topology::DenseElementIndex) + direction trait | amortized `O(1)` setup, `O(n + m)` traversal, no allocation |
+//! | `alloc` | [`breadth_first_search`] | [`reverse_breadth_first_search`] | dense [`DenseElementIndex`](oxgraph_topology::DenseElementIndex) + direction trait | `O(b)` setup, `O(n + m)` traversal, owned storage |
+//! | `alloc` | [`breadth_first_search_with_workspace`] | [`reverse_breadth_first_search_with_workspace`] | dense [`DenseElementIndex`](oxgraph_topology::DenseElementIndex) + direction trait | amortized `O(1)` setup, `O(n + m)` traversal, reusable owned storage |
 //! | `alloc` | [`breadth_first_search_generic`] | [`reverse_breadth_first_search_generic`] | arbitrary element IDs | `O((n + m) log n)` traversal with `BTreeSet` membership |
 //! | `std` | [`breadth_first_search_generic_hash`] | [`reverse_breadth_first_search_generic_hash`] | arbitrary element IDs | expected `O(n + m)` traversal with `HashSet` membership |
 //!

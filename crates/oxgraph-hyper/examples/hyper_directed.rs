@@ -75,8 +75,6 @@ impl TopologyCounts for TinyHypergraph {
     }
 }
 
-impl HypergraphCounts for TinyHypergraph {}
-
 impl RelationIncidences for TinyHypergraph {
     type Incidences<'view>
         = ParticipantIds

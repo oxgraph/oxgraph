@@ -1476,7 +1476,7 @@ impl SnapshotBuilder {
     /// Appends a section from a native-width index slice, lowering it to its
     /// explicit little-endian storage words first.
     ///
-    /// Convenience wrapper that calls `oxgraph_layout_util::slice_to_le` and
+    /// Convenience wrapper that calls `oxgraph_layout_util::build::slice_to_le` and
     /// then [`add_section_little_endian`](Self::add_section_little_endian), so
     /// exporters can pass native `&[u32]`-style slices without converting by
     /// hand. Requires the `alloc` feature (it allocates the converted words).
@@ -1499,7 +1499,7 @@ impl SnapshotBuilder {
     where
         W: SnapshotWidth,
     {
-        let words = oxgraph_layout_util::slice_to_le(values);
+        let words = oxgraph_layout_util::build::slice_to_le(values);
         self.add_section_little_endian(kind, version, &words)
     }
 

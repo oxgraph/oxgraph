@@ -30,7 +30,8 @@ use oxgraph_hyper_bcsr::{
 use oxgraph_layout_util::crc32c_append;
 use oxgraph_snapshot::{Snapshot, SnapshotBuilder, SnapshotError};
 use oxgraph_topology::{
-    ContainsElement, ElementId, ElementIndex, ElementPredecessors, ElementSuccessors, TopologyBase,
+    ContainsElement, DenseElementIndex, ElementId, ElementPredecessors, ElementSuccessors,
+    TopologyBase,
 };
 use proptest::prelude::*;
 
@@ -121,7 +122,7 @@ impl TopologyBase for FixtureGraph {
     type RelationId = Edge;
 }
 
-impl ElementIndex for FixtureGraph {
+impl DenseElementIndex for FixtureGraph {
     fn element_bound(&self) -> usize {
         self.outgoing_neighbors.len()
     }
@@ -185,7 +186,7 @@ fn fixture() -> FixtureGraph {
 /// Runs forward scratch-backed BFS and collects the order for assertions.
 fn scratch_order<G>(graph: &G, start: ElementId<G>) -> Result<Vec<ElementId<G>>, BfsError>
 where
-    G: ContainsElement + ElementSuccessors + ElementIndex,
+    G: ContainsElement + ElementSuccessors + DenseElementIndex,
 {
     let bound = graph.element_bound();
     let mut visited = vec![0; bound];
@@ -196,7 +197,7 @@ where
 /// Runs reverse scratch-backed BFS and collects the order for assertions.
 fn reverse_scratch_order<G>(graph: &G, start: ElementId<G>) -> Result<Vec<ElementId<G>>, BfsError>
 where
-    G: ContainsElement + ElementPredecessors + ElementIndex,
+    G: ContainsElement + ElementPredecessors + DenseElementIndex,
 {
     let bound = graph.element_bound();
     let mut visited = vec![0; bound];
@@ -210,7 +211,7 @@ where
 /// Runs forward epoch-scratch-backed BFS and collects the order.
 fn epoch_order<G>(graph: &G, start: ElementId<G>) -> Result<Vec<ElementId<G>>, BfsError>
 where
-    G: ContainsElement + ElementSuccessors + ElementIndex,
+    G: ContainsElement + ElementSuccessors + DenseElementIndex,
 {
     let bound = graph.element_bound();
     let mut marks = vec![0; bound];
@@ -222,7 +223,7 @@ where
 /// Runs reverse epoch-scratch-backed BFS and collects the order.
 fn reverse_epoch_order<G>(graph: &G, start: ElementId<G>) -> Result<Vec<ElementId<G>>, BfsError>
 where
-    G: ContainsElement + ElementPredecessors + ElementIndex,
+    G: ContainsElement + ElementPredecessors + DenseElementIndex,
 {
     let bound = graph.element_bound();
     let mut marks = vec![0; bound];
@@ -235,7 +236,7 @@ where
 #[cfg(feature = "alloc")]
 fn workspace_order<G>(graph: &G, start: ElementId<G>) -> Result<Vec<ElementId<G>>, BfsError>
 where
-    G: ContainsElement + ElementSuccessors + ElementIndex,
+    G: ContainsElement + ElementSuccessors + DenseElementIndex,
 {
     let mut workspace = BfsWorkspace::new();
     Ok(breadth_first_search_with_workspace(graph, start, &mut workspace)?.collect())
@@ -245,7 +246,7 @@ where
 #[cfg(feature = "alloc")]
 fn reverse_workspace_order<G>(graph: &G, start: ElementId<G>) -> Result<Vec<ElementId<G>>, BfsError>
 where
-    G: ContainsElement + ElementPredecessors + ElementIndex,
+    G: ContainsElement + ElementPredecessors + DenseElementIndex,
 {
     let mut workspace = BfsWorkspace::new();
     Ok(reverse_breadth_first_search_with_workspace(graph, start, &mut workspace)?.collect())
@@ -501,7 +502,7 @@ impl TopologyBase for OutOfBoundFixture {
     type RelationId = Edge;
 }
 
-impl ElementIndex for OutOfBoundFixture {
+impl DenseElementIndex for OutOfBoundFixture {
     fn element_bound(&self) -> usize {
         2
     }
@@ -1231,7 +1232,7 @@ fn build_csr_arrays(degrees: &[u32], target_seed: &[u32]) -> (Vec<u32>, Vec<u32>
 /// detect them.
 fn reference_bfs_distances<G>(graph: &G, source: ElementId<G>) -> Vec<usize>
 where
-    G: TopologyBase + ElementIndex + ElementSuccessors,
+    G: TopologyBase + DenseElementIndex + ElementSuccessors,
     ElementId<G>: Copy,
 {
     let mut distances = vec![usize::MAX; graph.element_bound()];
@@ -1255,7 +1256,7 @@ where
 /// same forward expansion as the algorithms under test.
 fn reference_reachable_set<G>(graph: &G, source: ElementId<G>) -> std::collections::BTreeSet<usize>
 where
-    G: TopologyBase + ElementIndex + ElementSuccessors,
+    G: TopologyBase + DenseElementIndex + ElementSuccessors,
     ElementId<G>: Copy,
 {
     let mut reached = std::collections::BTreeSet::new();

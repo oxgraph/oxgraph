@@ -24,12 +24,12 @@ extern crate kani;
 
 pub use oxgraph_topology::{
     CanonicalElementIdentity, CanonicalIncidenceIdentity, CanonicalRelationIdentity,
-    ContainsElement, ContainsIncidence, ContainsRelation, ElementIncidenceCount, ElementIncidences,
-    ElementIndex, ElementPredecessors, ElementSuccessors, ElementWeight, IncidenceBase,
-    IncidenceCounts, IncidenceElement, IncidenceIndex, IncidenceRelation, IncidenceRole,
-    IncidenceWeight, LocalElementIdentity, LocalIncidenceIdentity, LocalRelationIdentity,
-    RelationIncidenceCount, RelationIncidences, RelationIndex, RelationWeight, TopologyBase,
-    TopologyCounts, TopologyId,
+    ContainsElement, ContainsIncidence, ContainsRelation, DenseElementIndex, DenseIncidenceIndex,
+    DenseRelationIndex, ElementIncidenceCount, ElementIncidences, ElementPredecessors,
+    ElementSuccessors, ElementWeight, IncidenceBase, IncidenceCounts, IncidenceElement,
+    IncidenceRelation, IncidenceRole, IncidenceWeight, LocalElementIdentity,
+    LocalIncidenceIdentity, LocalRelationIdentity, RelationIncidenceCount, RelationIncidences,
+    RelationWeight, TopologyBase, TopologyCounts, TopologyId,
 };
 
 /// Graph-facing alias for a topology element ID (binary graph node).
@@ -72,11 +72,13 @@ pub trait GraphCounts: TopologyCounts {
     }
 }
 
+impl<T> GraphCounts for T where T: TopologyCounts {}
+
 /// Dense node-index capability for graph views.
 ///
-/// Graph-facing name for [`ElementIndex`]. Lets graph algorithms allocate
+/// Graph-facing name for [`DenseElementIndex`]. Lets graph algorithms allocate
 /// per-node scratch storage such as visited sets or distance arrays.
-pub trait NodeIndex: ElementIndex {
+pub trait DenseNodeIndex: DenseElementIndex {
     /// Returns the exclusive upper bound for node indexes in this graph view.
     fn node_bound(&self) -> usize {
         self.element_bound()
@@ -88,12 +90,12 @@ pub trait NodeIndex: ElementIndex {
     }
 }
 
-impl<T> NodeIndex for T where T: ElementIndex {}
+impl<T> DenseNodeIndex for T where T: DenseElementIndex {}
 
 /// Dense edge-index capability for graph views.
 ///
-/// Graph-facing name for [`RelationIndex`].
-pub trait EdgeIndex: RelationIndex {
+/// Graph-facing name for [`DenseRelationIndex`].
+pub trait DenseEdgeIndex: DenseRelationIndex {
     /// Returns the exclusive upper bound for edge indexes in this graph view.
     fn edge_bound(&self) -> usize {
         self.relation_bound()
@@ -105,12 +107,12 @@ pub trait EdgeIndex: RelationIndex {
     }
 }
 
-impl<T> EdgeIndex for T where T: RelationIndex {}
+impl<T> DenseEdgeIndex for T where T: DenseRelationIndex {}
 
 /// Dense endpoint-index capability for graph views with incidences.
 ///
-/// Graph-facing name for [`IncidenceIndex`].
-pub trait EndpointIndex: IncidenceIndex {
+/// Graph-facing name for [`DenseIncidenceIndex`].
+pub trait DenseEndpointIndex: DenseIncidenceIndex {
     /// Returns the exclusive upper bound for endpoint indexes in this graph view.
     fn endpoint_bound(&self) -> usize {
         self.incidence_bound()
@@ -122,7 +124,7 @@ pub trait EndpointIndex: IncidenceIndex {
     }
 }
 
-impl<T> EndpointIndex for T where T: IncidenceIndex {}
+impl<T> DenseEndpointIndex for T where T: DenseIncidenceIndex {}
 
 /// Node-ID containment capability for graph views.
 ///

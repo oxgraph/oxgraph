@@ -2,11 +2,11 @@
 
 use oxgraph_topology::{
     CanonicalElementIdentity, CanonicalIncidenceIdentity, CanonicalRelationIdentity,
-    ContainsElement, ContainsIncidence, ContainsRelation, ElementIncidenceCount, ElementIndex,
-    ElementWeight, IncidenceBase, IncidenceCounts, IncidenceElement, IncidenceIndex,
-    IncidenceRelation, IncidenceRole, IncidenceView, IncidenceWeight, LocalElementIdentity,
-    LocalIncidenceIdentity, LocalRelationIdentity, RelationIncidenceCount, RelationIncidences,
-    RelationIndex, RelationWeight, TopologyBase, TopologyCounts,
+    ContainsElement, ContainsIncidence, ContainsRelation, DenseElementIndex, DenseIncidenceIndex,
+    DenseRelationIndex, ElementIncidenceCount, ElementWeight, IncidenceBase, IncidenceCounts,
+    IncidenceElement, IncidenceRelation, IncidenceRole, IncidenceView, IncidenceWeight,
+    LocalElementIdentity, LocalIncidenceIdentity, LocalRelationIdentity, RelationIncidenceCount,
+    RelationIncidences, RelationWeight, TopologyBase, TopologyCounts,
 };
 use proptest::prelude::*;
 
@@ -81,7 +81,7 @@ impl IncidenceCounts for FixtureTopology {
     }
 }
 
-impl ElementIndex for FixtureTopology {
+impl DenseElementIndex for FixtureTopology {
     fn element_bound(&self) -> usize {
         self.element_count
     }
@@ -97,7 +97,7 @@ impl ContainsElement for FixtureTopology {
     }
 }
 
-impl RelationIndex for FixtureTopology {
+impl DenseRelationIndex for FixtureTopology {
     fn relation_bound(&self) -> usize {
         self.relation_offsets.len() - 1
     }
@@ -113,7 +113,7 @@ impl ContainsRelation for FixtureTopology {
     }
 }
 
-impl IncidenceIndex for FixtureTopology {
+impl DenseIncidenceIndex for FixtureTopology {
     fn incidence_bound(&self) -> usize {
         self.incidences.len()
     }

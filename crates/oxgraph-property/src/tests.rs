@@ -9,7 +9,7 @@ use arrow_array::{
 use arrow_schema::{DataType, Field};
 use oxgraph_layout_util::crc32c_append;
 use oxgraph_snapshot::{Snapshot, SnapshotBuilder};
-use oxgraph_topology::{RelationIndex, RelationWeight, TopologyBase};
+use oxgraph_topology::{DenseRelationIndex, RelationWeight, TopologyBase};
 use zerocopy::byteorder::{LE, U16, U32, U64};
 
 use super::*;
@@ -48,7 +48,7 @@ impl TopologyBase for Topology {
     type RelationId = u32;
 }
 
-impl RelationIndex for Topology {
+impl DenseRelationIndex for Topology {
     fn relation_bound(&self) -> usize {
         2
     }
