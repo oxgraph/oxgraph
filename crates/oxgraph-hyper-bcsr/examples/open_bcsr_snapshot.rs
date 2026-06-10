@@ -17,6 +17,7 @@ use oxgraph_hyper_bcsr::{
     SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_HYPEREDGES_U32,
     SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_OFFSETS_U32,
 };
+use oxgraph_layout_util::crc32c_append;
 use oxgraph_snapshot::{Snapshot, SnapshotBuilder, SnapshotError};
 
 /// Local error type covering both snapshot and bipartite-CSR adaptor failures.
@@ -67,7 +68,7 @@ fn main() -> Result<(), DemoError> {
     let vertex_incoming_offsets: [u32; 4] = [0, 0, 1, 3];
     let vertex_incoming_hyperedges: [u32; 3] = [0, 0, 1];
 
-    let mut builder = SnapshotBuilder::new();
+    let mut builder = SnapshotBuilder::new(crc32c_append);
     let entries: [(u32, &[u32]); 8] = [
         (SNAPSHOT_KIND_BCSR_HEAD_OFFSETS_U32, &head_offsets),
         (SNAPSHOT_KIND_BCSR_HEAD_PARTICIPANTS_U32, &head_participants),

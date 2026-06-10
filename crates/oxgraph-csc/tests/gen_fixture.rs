@@ -7,6 +7,7 @@
 //! builder + transpose so this crate carries no storage-engine dependency.
 
 use oxgraph_csr::build::{GraphBuilder, export_csr_snapshot};
+use oxgraph_layout_util::crc32c_append;
 use oxgraph_snapshot::Snapshot;
 
 /// Inbound offsets section kind (Postgres band) the proof opens with.
@@ -29,7 +30,7 @@ fn write_tiny_dual_fixture() -> Result<(), Box<dyn std::error::Error>> {
     // sections into the Postgres inbound kinds the proof reads.
     let csr_bytes = export_csr_snapshot(&inbound)?;
     let csr = Snapshot::open(&csr_bytes)?;
-    let mut out = oxgraph_snapshot::SnapshotBuilder::new();
+    let mut out = oxgraph_snapshot::SnapshotBuilder::new(crc32c_append);
     for section in csr.sections() {
         let dest_kind = match section.kind() {
             oxgraph_csr::SNAPSHOT_KIND_CSR_OFFSETS_U32 => INBOUND_OFFSETS_KIND,

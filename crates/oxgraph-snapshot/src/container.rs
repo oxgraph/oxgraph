@@ -35,12 +35,15 @@ pub const FORMAT_MAGIC: [u8; 8] = *b"OXGTOPO\0";
 ///
 /// A snapshot whose `format_major` field does not equal this constant is
 /// rejected at open time. Major bumps are permitted to break compatibility
-/// in arbitrary ways.
+/// in arbitrary ways. v2 made per-section CRC-32C checksums and the header
+/// table checksum mandatory and mandated strictly-ascending section kinds;
+/// v1 bytes are rejected with
+/// [`SnapshotError::FormatMajorMismatch`](crate::SnapshotError::FormatMajorMismatch).
 ///
 /// # Performance
 ///
 /// `perf: unspecified`; this is a compile-time constant.
-pub const FORMAT_MAJOR: u32 = 1;
+pub const FORMAT_MAJOR: u32 = 2;
 
 /// Format minor version written by this library's builder.
 ///
@@ -56,13 +59,49 @@ pub const FORMAT_MINOR: u32 = 0;
 /// Highest format minor version this library can read.
 ///
 /// Snapshots with `format_minor > MAX_SUPPORTED_MINOR` are rejected at open
-/// time. v1 is intentionally strict; raising this value is a deliberate
+/// time. v2.0 is intentionally strict; raising this value is a deliberate
 /// per-minor decision once the new minor is proven safely readable here.
 ///
 /// # Performance
 ///
 /// `perf: unspecified`; this is a compile-time constant.
 pub const MAX_SUPPORTED_MINOR: u32 = 0;
+
+/// Continuation-style CRC-32C (Castagnoli, polynomial `0x1EDC_6F41`) fold.
+///
+/// `checksum(seed, bytes)` continues a checksum: seeding with `0` starts a
+/// fresh fold, folding further byte runs continues it, and the final fold is
+/// the stored value. Implementations MUST satisfy the continuation law
+/// `f(f(0, a), b) == f(0, ab)` and the standard check vector: folding
+/// [`CRC32C_CHECK_INPUT`] from seed `0` yields [`CRC32C_CHECK_VALUE`]
+/// (which implies `f(0, b"") == 0`, the stored value for an empty section).
+///
+/// The container is `no_std` and deliberately does not bundle a CRC
+/// implementation: writers and checked readers inject one. The pure-software
+/// [`oxgraph_layout_util::crc32c_append`] satisfies this contract, as does
+/// the hardware-accelerated `crc32c` crate's `crc32c_append`.
+///
+/// # Performance
+///
+/// Implementations are expected to be `O(bytes.len())` per fold.
+pub type Checksum32 = fn(u32, &[u8]) -> u32;
+
+/// Standard CRC-32C check-vector input (the ASCII digits `123456789`).
+///
+/// Any [`Checksum32`] implementation must map this input (seed `0`) to
+/// [`CRC32C_CHECK_VALUE`]; tests use the pair to pin the algorithm.
+///
+/// # Performance
+///
+/// `perf: unspecified`; this is a compile-time constant.
+pub const CRC32C_CHECK_INPUT: &[u8] = b"123456789";
+
+/// Standard CRC-32C check-vector result: `crc32c(0, b"123456789")`.
+///
+/// # Performance
+///
+/// `perf: unspecified`; this is a compile-time constant.
+pub const CRC32C_CHECK_VALUE: u32 = 0xE306_9283;
 
 /// Size of the snapshot header in bytes.
 ///
@@ -85,11 +124,9 @@ pub const SECTION_ENTRY_SIZE: usize = 32;
 /// `perf: unspecified`; this is a compile-time constant.
 pub const MAX_ALIGNMENT_LOG2: u8 = 12;
 
-/// Maximum permitted section count for v1 snapshots.
+/// Maximum permitted section count for v2 snapshots.
 ///
-/// Bounds the duplicate-kind detection in `O(s^2)` validation and keeps
-/// kani proofs tractable. Future minors may raise this if validation moves
-/// to a sorted-by-kind side index.
+/// Bounds the `O(s)` table-validation walk and keeps kani proofs tractable.
 ///
 /// # Performance
 ///
@@ -223,12 +260,15 @@ struct RawHeader {
     format_major: U32<LE>,
     /// Format minor version.
     format_minor: U32<LE>,
-    /// Header size in bytes; v1.0 mandates `HEADER_SIZE`.
+    /// Header size in bytes; v2.0 mandates `HEADER_SIZE`.
     header_size: U32<LE>,
     /// Number of section table entries.
     section_count: U32<LE>,
+    /// CRC-32C over the section-table bytes (`section_count` entries of
+    /// [`SECTION_ENTRY_SIZE`] bytes immediately after this header).
+    table_crc32c: U32<LE>,
     /// Reserved; must be zero.
-    reserved: [u8; 8],
+    reserved: [u8; 4],
 }
 
 /// Parses the fixed header from the start of `bytes`.
@@ -296,7 +336,7 @@ fn validate_magic_versions_reserved(header: &RawHeader) -> Result<(), SnapshotEr
         });
     }
 
-    if header.reserved != [0; 8] {
+    if header.reserved != [0; 4] {
         return Err(SnapshotError::NonZeroHeaderReserved);
     }
 
@@ -314,17 +354,19 @@ struct RawSectionEntry {
     offset: U64<LE>,
     /// Byte length of the section payload.
     length: U64<LE>,
-    /// Opaque section kind; the container assigns no semantics.
+    /// Opaque section kind; the container assigns no semantics. v2 mandates
+    /// strictly-ascending kind order across the table.
     kind: U32<LE>,
     /// Opaque section version; consumers interpret per kind.
     version: U32<LE>,
-    /// Reserved bytes for a future per-section CRC32C; must be zero in v1.
-    reserved_checksum: [u8; 4],
-    /// `log2` of the producer's chosen payload alignment; v1 cap is 12.
+    /// CRC-32C over this section's payload bytes; mandatory in v2
+    /// (`crc32c(b"") == 0` covers empty sections).
+    crc32c: U32<LE>,
+    /// `log2` of the producer's chosen payload alignment; v2 cap is 12.
     alignment_log2: u8,
-    /// Reserved flag bits; must be zero in v1.
+    /// Reserved flag bits; must be zero in v2.
     flags: u8,
-    /// Trailing reserved bytes; must be zero in v1.
+    /// Trailing reserved bytes; must be zero in v2.
     reserved: [u8; 2],
 }
 
@@ -346,6 +388,8 @@ pub struct Section<'view> {
     kind: u32,
     /// Section version, as recorded in the section entry.
     version: u32,
+    /// CRC-32C the entry records for the payload bytes.
+    crc32c: u32,
     /// `log2` of the declared payload alignment.
     alignment_log2: u8,
 }
@@ -364,6 +408,7 @@ impl<'view> Section<'view> {
             payload: &bytes[offset..offset + length],
             kind: entry.kind.get(),
             version: entry.version.get(),
+            crc32c: entry.crc32c.get(),
             alignment_log2: entry.alignment_log2,
         }
     }
@@ -411,6 +456,42 @@ impl<'view> Section<'view> {
     #[must_use]
     pub const fn bytes(&self) -> &'view [u8] {
         self.payload
+    }
+
+    /// Returns the CRC-32C the section entry records for this payload.
+    ///
+    /// This is the stored value, not a recomputation; use
+    /// [`Section::verify`] to check it against the actual payload bytes.
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(1)`.
+    #[must_use]
+    pub const fn expected_crc32c(&self) -> u32 {
+        self.crc32c
+    }
+
+    /// Verifies the payload bytes against the entry's recorded CRC-32C.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SectionViewError::ChecksumMismatch`] when the recomputed
+    /// checksum differs from [`Section::expected_crc32c`].
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(payload.len())` (one checksum fold).
+    pub fn verify(&self, checksum: Checksum32) -> Result<(), SectionViewError> {
+        let actual = checksum(0, self.payload);
+        if actual == self.crc32c {
+            Ok(())
+        } else {
+            Err(SectionViewError::ChecksumMismatch {
+                kind: self.kind,
+                expected: self.crc32c,
+                actual,
+            })
+        }
     }
 
     /// Borrows the payload as a typed slice of `T`.
@@ -468,10 +549,10 @@ impl<'view> Section<'view> {
 /// section-bearing handle from one whose section table has not been
 /// validated.
 ///
-/// - [`SectionTable`](Self::SectionTable) parses the section table and per-entry self-consistency
-///   (alignment bound, reserved bytes zero, flags zero).
-/// - [`Layout`](Self::Layout) is the default; it adds payload bounds, monotonic-offset enforcement,
-///   and duplicate-kind detection.
+/// - [`SectionTable`](Self::SectionTable) parses the section table, per-entry self-consistency
+///   (alignment bound, reserved bytes zero, flags zero), payload bounds, and the v2
+///   strictly-ascending kind order.
+/// - [`Layout`](Self::Layout) is the default; it adds non-overlapping monotonic-offset enforcement.
 ///
 /// Topology-level validation (CSR offset monotonicity, hypergraph role
 /// consistency, etc.) is the consumer's responsibility — the container
@@ -489,35 +570,20 @@ pub enum ValidationLevel {
     Layout,
 }
 
-/// Returns the first `kind` value that appears more than once in `items`.
-///
-/// Shared by the reader's duplicate-kind walk and [`SnapshotPlan::new`] so the
-/// two paths cannot drift. `kind_of` projects each item to its kind tag.
-///
-/// # Performance
-///
-/// This function is `O(items.len()^2)`.
-fn first_duplicate_kind<T>(items: &[T], kind_of: impl Fn(&T) -> u32) -> Option<u32> {
-    for (index, item) in items.iter().enumerate() {
-        let kind = kind_of(item);
-        if items[..index].iter().any(|prior| kind_of(prior) == kind) {
-            return Some(kind);
-        }
-    }
-    None
-}
-
-/// Walks the section table once and checks all v1 invariants.
+/// Walks the section table once and checks all v2 invariants.
 ///
 /// `bytes` is the entire snapshot byte slice; `entries` is the parsed
 /// section table; `level` controls how deep the walk goes. Header-level
 /// invariants are presumed already validated by the caller.
 ///
-/// Per-entry self-consistency **and** payload bounds (`offset + length` does
-/// not overflow and stays within the snapshot) are enforced at every level, so
-/// every [`Section`] a [`Snapshot`] hands out is bounds-safe regardless of the
-/// requested [`ValidationLevel`]. [`ValidationLevel::Layout`] additionally
-/// enforces non-overlapping monotonic ordering and unique kinds.
+/// Per-entry self-consistency, payload bounds (`offset + length` does not
+/// overflow and stays within the snapshot), **and** the v2 strictly-ascending
+/// kind order are enforced at every level, so every [`Section`] a
+/// [`Snapshot`] hands out is bounds-safe and [`Snapshot::section`]'s binary
+/// search is sound regardless of the requested [`ValidationLevel`]. The
+/// ascending order also makes the table duplicate-free by construction,
+/// replacing v1's `O(s^2)` duplicate-kind walk. [`ValidationLevel::Layout`]
+/// additionally enforces non-overlapping monotonic offset ordering.
 ///
 /// # Errors
 ///
@@ -525,8 +591,7 @@ fn first_duplicate_kind<T>(items: &[T], kind_of: impl Fn(&T) -> u32) -> Option<u
 ///
 /// # Performance
 ///
-/// This function is `O(s)` for the always-run self-consistency and bounds walk
-/// and `O(s^2)` for the duplicate-kind walk at [`ValidationLevel::Layout`].
+/// This function is `O(s)` at every validation level.
 fn validate_section_table(
     bytes: &[u8],
     entries: &[RawSectionEntry],
@@ -534,14 +599,20 @@ fn validate_section_table(
 ) -> Result<(), SnapshotError> {
     let snapshot_len = bytes.len() as u64;
 
-    // Always-run: per-entry self-consistency plus payload-bounds safety. The
-    // bounds check guarantees `Section::from_entry`'s `bytes[offset..end]`
-    // slice is in range, so accessors are panic-free at SectionTable level too.
+    // Always-run: per-entry self-consistency, payload-bounds safety, and the
+    // strictly-ascending kind mandate. The bounds check guarantees
+    // `Section::from_entry`'s `bytes[offset..end]` slice is in range, so
+    // accessors are panic-free at SectionTable level too; the ascending check
+    // keeps `Snapshot::section`'s binary search sound at every level.
+    let mut prev_kind: Option<u32> = None;
     for entry in entries {
         let kind = entry.kind.get();
-        if entry.reserved_checksum != [0; 4] {
-            return Err(SnapshotError::NonZeroEntryChecksum { kind });
+        if let Some(prev) = prev_kind
+            && kind <= prev
+        {
+            return Err(SnapshotError::NonAscendingKind { kind, prev });
         }
+        prev_kind = Some(kind);
         if entry.flags != 0 {
             return Err(SnapshotError::UnsupportedFlags {
                 kind,
@@ -592,12 +663,20 @@ fn validate_section_table(
         prev_end = end;
     }
 
-    // Layout-only: duplicate-kind detection, shared with the writer.
-    if let Some(kind) = first_duplicate_kind(entries, |entry| entry.kind.get()) {
-        return Err(SnapshotError::DuplicateKind { kind });
-    }
-
     Ok(())
+}
+
+/// Computes the CRC-32C over the section-table bytes following the header.
+///
+/// The covered range is exactly `section_count * SECTION_ENTRY_SIZE` bytes
+/// starting at [`HEADER_SIZE`] — the value stored in the header's
+/// `table_crc32c` field. The caller guarantees `table_bytes` is that range.
+///
+/// # Performance
+///
+/// This function is `O(table_bytes.len())` (one checksum fold).
+fn table_checksum(table_bytes: &[u8], checksum: Checksum32) -> u32 {
+    checksum(0, table_bytes)
 }
 
 /// Header-only handle to a snapshot's bytes.
@@ -681,10 +760,11 @@ impl<'view> HeaderOnlySnapshot<'view> {
 
 /// Validated, borrowed handle to a snapshot's bytes and section table.
 ///
-/// A `Snapshot` is constructed via [`Snapshot::open`] (default
-/// [`ValidationLevel::Layout`]) or [`Snapshot::open_with`]. The handle
-/// itself is `Copy` and trivially cheap to pass; cloning it does not
-/// re-validate.
+/// A `Snapshot` is constructed via [`Snapshot::open`] (structural, default
+/// [`ValidationLevel::Layout`]), [`Snapshot::open_with`], or
+/// [`Snapshot::open_checked`] (structural plus table-checksum
+/// verification). The handle itself is `Copy` and trivially cheap to pass;
+/// cloning it does not re-validate.
 ///
 /// For header-only inspection without parsing the section table, use
 /// [`HeaderOnlySnapshot`] instead — `Snapshot` always carries a validated
@@ -692,9 +772,10 @@ impl<'view> HeaderOnlySnapshot<'view> {
 ///
 /// # Performance
 ///
-/// Open is `O(s^2)` for `s` sections at [`ValidationLevel::Layout`] due to
-/// duplicate-kind detection, otherwise `O(s)`. Subsequent reads are `O(1)`
-/// to `O(s)` per call. No allocation occurs.
+/// Open is `O(s)` for `s` sections (header + table walk; payload bytes are
+/// never scanned). Subsequent reads are `O(1)` to `O(log s)` per call;
+/// checksum verification ([`Snapshot::verify_all`], [`Section::verify`]) is
+/// `O(covered bytes)`. No allocation occurs.
 #[derive(Clone, Copy, Debug)]
 pub struct Snapshot<'view> {
     /// Borrowed snapshot bytes.
@@ -703,12 +784,23 @@ pub struct Snapshot<'view> {
     format_major: u32,
     /// Format minor version recorded in the header.
     format_minor: u32,
+    /// Section-table CRC-32C recorded in the header.
+    table_crc32c: u32,
     /// Borrowed, validated section table entries.
     entries: &'view [RawSectionEntry],
 }
 
 impl<'view> Snapshot<'view> {
-    /// Opens `bytes` as a validated snapshot at [`ValidationLevel::Layout`].
+    /// Opens `bytes` as a structurally validated snapshot at
+    /// [`ValidationLevel::Layout`].
+    ///
+    /// This is a structural open: the header, section table shape, kind
+    /// order, and payload bounds are validated, but **no payload bytes are
+    /// verified** and the header's `table_crc32c` is not checked — the
+    /// container is `no_std` and carries no checksum implementation, so a
+    /// checksum-bearing open must go through [`Snapshot::open_checked`].
+    /// Payload integrity is checked on demand via [`Snapshot::verify_all`]
+    /// or [`Section::verify`].
     ///
     /// # Errors
     ///
@@ -717,18 +809,46 @@ impl<'view> Snapshot<'view> {
     ///
     /// # Performance
     ///
-    /// `O(s^2)` for `s` section entries.
+    /// `O(s)` for `s` section entries (header + table walk only).
     pub fn open(bytes: &'view [u8]) -> Result<Self, SnapshotError> {
         Self::open_with(bytes, ValidationLevel::Layout)
+    }
+
+    /// Opens `bytes` structurally and verifies the header's `table_crc32c`
+    /// against the section-table bytes.
+    ///
+    /// Section payloads are still **not** verified; use
+    /// [`Snapshot::verify_all`] for that.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SnapshotError::TableChecksumMismatch`] when the recomputed
+    /// table checksum differs from the header's, or any structural
+    /// [`SnapshotError`] from [`Snapshot::open`].
+    ///
+    /// # Performance
+    ///
+    /// `O(s)` for `s` section entries (table walk plus one checksum fold
+    /// over the table bytes).
+    pub fn open_checked(bytes: &'view [u8], checksum: Checksum32) -> Result<Self, SnapshotError> {
+        let snapshot = Self::open(bytes)?;
+        let actual = table_checksum(snapshot.entries.as_bytes(), checksum);
+        if actual != snapshot.table_crc32c {
+            return Err(SnapshotError::TableChecksumMismatch {
+                expected: snapshot.table_crc32c,
+                actual,
+            });
+        }
+        Ok(snapshot)
     }
 
     /// Opens `bytes` as a snapshot validated at the requested level.
     ///
     /// `level` selects between [`ValidationLevel::SectionTable`] (per-entry
-    /// self-consistency only) and [`ValidationLevel::Layout`] (full
-    /// payload-bounds and duplicate-kind walk). Header-only validation is
-    /// deliberately not selectable here; callers wanting it should use
-    /// [`HeaderOnlySnapshot::open`].
+    /// self-consistency, bounds, and kind order) and
+    /// [`ValidationLevel::Layout`] (adds non-overlapping monotonic offset
+    /// enforcement). Header-only validation is deliberately not selectable
+    /// here; callers wanting it should use [`HeaderOnlySnapshot::open`].
     ///
     /// # Errors
     ///
@@ -737,8 +857,7 @@ impl<'view> Snapshot<'view> {
     ///
     /// # Performance
     ///
-    /// `O(s)` at [`ValidationLevel::SectionTable`], `O(s^2)` at
-    /// [`ValidationLevel::Layout`].
+    /// `O(s)` at either level.
     pub fn open_with(bytes: &'view [u8], level: ValidationLevel) -> Result<Self, SnapshotError> {
         let (header, after_header) = parse_header(bytes)?;
         validate_magic_versions_reserved(header)?;
@@ -782,8 +901,34 @@ impl<'view> Snapshot<'view> {
             bytes,
             format_major,
             format_minor,
+            table_crc32c: header.table_crc32c.get(),
             entries,
         })
+    }
+
+    /// Verifies every section payload against its entry's recorded CRC-32C.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SnapshotError::SectionChecksumMismatch`] naming the first
+    /// section whose payload bytes do not hash to the recorded value.
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(total payload bytes)` (one checksum fold per
+    /// section).
+    pub fn verify_all(&self, checksum: Checksum32) -> Result<(), SnapshotError> {
+        for section in self.sections() {
+            let actual = checksum(0, section.bytes());
+            if actual != section.expected_crc32c() {
+                return Err(SnapshotError::SectionChecksumMismatch {
+                    kind: section.kind(),
+                    expected: section.expected_crc32c(),
+                    actual,
+                });
+            }
+        }
+        Ok(())
     }
 
     /// Returns the format major version recorded in the snapshot header.
@@ -833,17 +978,14 @@ impl<'view> Snapshot<'view> {
     ///
     /// # Performance
     ///
-    /// This method is `O(s)` for `s` section entries.
+    /// This method is `O(log s)` for `s` section entries: the v2
+    /// strictly-ascending kind mandate makes the table binary-searchable.
     #[must_use]
     pub fn section(&self, kind: u32) -> Option<Section<'view>> {
-        let bytes = self.bytes;
-        self.entries.iter().find_map(|entry| {
-            if entry.kind.get() == kind {
-                Some(Section::from_entry(bytes, entry))
-            } else {
-                None
-            }
-        })
+        self.entries
+            .binary_search_by(|entry| entry.kind.get().cmp(&kind))
+            .ok()
+            .map(|index| Section::from_entry(self.bytes, &self.entries[index]))
     }
 
     /// Binds a width-typed section by kind and version in one step.
@@ -864,7 +1006,8 @@ impl<'view> Snapshot<'view> {
     ///
     /// # Performance
     ///
-    /// This method is `O(s)` for `s` section entries plus the typed-view checks.
+    /// This method is `O(log s)` for `s` section entries plus the typed-view
+    /// checks.
     pub fn typed_section<W>(
         &self,
         kind: u32,
@@ -929,7 +1072,8 @@ impl ExactSizeIterator for SectionIter<'_> {
 ///
 /// Every field is opaque to the encoder. `kind` and `version` are passed
 /// through unchanged; `alignment_log2` controls payload alignment relative
-/// to the snapshot's start; `payload` is the section's raw bytes.
+/// to the snapshot's start; `payload` is the section's raw bytes. Sections
+/// must be supplied in strictly-ascending `kind` order (the v2 mandate).
 ///
 /// # Performance
 ///
@@ -949,15 +1093,16 @@ pub struct PendingSection<'a> {
 
 /// Validated plan that can compute its encoded length and write itself.
 ///
-/// `SnapshotPlan` performs all duplicate-kind, alignment, and count checks
-/// at construction. After construction, [`encoded_len`](Self::encoded_len)
+/// `SnapshotPlan` performs all kind-order, alignment, and count checks at
+/// construction. After construction, [`encoded_len`](Self::encoded_len)
 /// and [`write_into`](Self::write_into) are guaranteed to succeed for any
 /// caller-supplied buffer that is at least `encoded_len()` bytes long.
 ///
 /// # Performance
 ///
-/// Construction is `O(s^2)` for `s` sections (duplicate-kind check).
-/// `encoded_len` and `write_into` are `O(s + total payload bytes)`.
+/// Construction is `O(s)` for `s` sections. `encoded_len` is `O(s)`;
+/// `write_into` is `O(s + total payload bytes)` (payload copies plus one
+/// checksum fold per section).
 #[derive(Clone, Copy, Debug)]
 pub struct SnapshotPlan<'a> {
     /// Borrowed pending section descriptors, in declaration order.
@@ -970,11 +1115,11 @@ impl<'a> SnapshotPlan<'a> {
     /// # Errors
     ///
     /// Returns [`PlanError`] when alignment is too large, too many sections
-    /// are supplied, or duplicate kinds are present.
+    /// are supplied, or the kinds are not in strictly-ascending order.
     ///
     /// # Performance
     ///
-    /// This function is `O(s^2)` for `s` sections.
+    /// This function is `O(s)` for `s` sections.
     pub fn new(sections: &'a [PendingSection<'a>]) -> Result<Self, PlanError> {
         if sections.len() > MAX_SECTION_COUNT as usize {
             return Err(PlanError::TooManySections {
@@ -982,15 +1127,22 @@ impl<'a> SnapshotPlan<'a> {
             });
         }
 
+        let mut prev_kind: Option<u32> = None;
         for section in sections {
             if section.alignment_log2 > MAX_ALIGNMENT_LOG2 {
                 return Err(PlanError::AlignmentTooLarge {
                     alignment_log2: section.alignment_log2,
                 });
             }
-        }
-        if let Some(kind) = first_duplicate_kind(sections, |section| section.kind) {
-            return Err(PlanError::DuplicateKind { kind });
+            if let Some(prev) = prev_kind
+                && section.kind <= prev
+            {
+                return Err(PlanError::NonAscendingKind {
+                    kind: section.kind,
+                    prev,
+                });
+            }
+            prev_kind = Some(section.kind);
         }
 
         Ok(Self { sections })
@@ -1040,9 +1192,11 @@ impl<'a> SnapshotPlan<'a> {
     /// Writes the encoded snapshot into `out` and returns the number of
     /// bytes written.
     ///
-    /// Padding bytes between the section table and each section payload
-    /// are zero-filled deterministically; the resulting bytes are stable
-    /// for any logical input.
+    /// Each section entry records `checksum(0, payload)`; the header records
+    /// the table checksum over the entry bytes. Padding bytes between the
+    /// section table and each section payload are zero-filled
+    /// deterministically; the resulting bytes are stable for any logical
+    /// input and checksum function.
     ///
     /// # Errors
     ///
@@ -1052,8 +1206,9 @@ impl<'a> SnapshotPlan<'a> {
     ///
     /// # Performance
     ///
-    /// This function is `O(s + total payload bytes)`.
-    pub fn write_into(&self, out: &mut [u8]) -> Result<usize, PlanError> {
+    /// This function is `O(s + total payload bytes)` (payload copies plus
+    /// one checksum fold per section and one over the table).
+    pub fn write_into(&self, out: &mut [u8], checksum: Checksum32) -> Result<usize, PlanError> {
         let needed = self.encoded_len()?;
         if out.len() < needed {
             return Err(PlanError::BufferTooSmall {
@@ -1073,24 +1228,15 @@ impl<'a> SnapshotPlan<'a> {
                 });
             }
         };
-        let header = RawHeader {
-            magic: FORMAT_MAGIC,
-            format_major: U32::new(FORMAT_MAJOR),
-            format_minor: U32::new(FORMAT_MINOR),
-            header_size: U32::new(HEADER_SIZE_U32),
-            section_count: U32::new(section_count_u32),
-            reserved: [0; 8],
-        };
-        prefix[..HEADER_SIZE].copy_from_slice(header.as_bytes());
 
         let table_start = HEADER_SIZE;
+        let table_len = self
+            .sections
+            .len()
+            .checked_mul(SECTION_ENTRY_SIZE)
+            .ok_or(PlanError::PayloadOverflow)?;
         let payload_start = table_start
-            .checked_add(
-                self.sections
-                    .len()
-                    .checked_mul(SECTION_ENTRY_SIZE)
-                    .ok_or(PlanError::PayloadOverflow)?,
-            )
+            .checked_add(table_len)
             .ok_or(PlanError::PayloadOverflow)?;
         let mut cursor = payload_start;
 
@@ -1108,7 +1254,7 @@ impl<'a> SnapshotPlan<'a> {
                 length: U64::new(length_u64),
                 kind: U32::new(section.kind),
                 version: U32::new(section.version),
-                reserved_checksum: [0; 4],
+                crc32c: U32::new(checksum(0, section.payload)),
                 alignment_log2: section.alignment_log2,
                 flags: 0,
                 reserved: [0; 2],
@@ -1126,6 +1272,20 @@ impl<'a> SnapshotPlan<'a> {
             prefix[cursor..payload_end].copy_from_slice(section.payload);
             cursor = payload_end;
         }
+
+        // The header is written last so its `table_crc32c` covers the final
+        // entry bytes.
+        let table_crc = table_checksum(&prefix[table_start..payload_start], checksum);
+        let header = RawHeader {
+            magic: FORMAT_MAGIC,
+            format_major: U32::new(FORMAT_MAJOR),
+            format_minor: U32::new(FORMAT_MINOR),
+            header_size: U32::new(HEADER_SIZE_U32),
+            section_count: U32::new(section_count_u32),
+            table_crc32c: U32::new(table_crc),
+            reserved: [0; 4],
+        };
+        prefix[..HEADER_SIZE].copy_from_slice(header.as_bytes());
 
         Ok(needed)
     }
@@ -1163,45 +1323,56 @@ struct OwnedSection {
 
 /// Owning snapshot builder that produces a `Vec<u8>` on finish.
 ///
-/// The builder rejects duplicate kinds, alignment overflows, and section
+/// The builder rejects non-ascending kinds, alignment overflows, and section
 /// count overflows at `add_section*` time, so the only failure that can
 /// reach [`SnapshotBuilder::finish`] is [`PlanError::PayloadOverflow`] —
 /// when the cumulative encoded length would overflow `u64` or `usize`.
 ///
 /// # Performance
 ///
-/// `add_section*` methods are `O(s)` for the in-progress section count.
-/// [`finish`](Self::finish) is `O(s + total payload bytes)`.
+/// `add_section*` methods are `O(payload bytes copied)`.
+/// [`finish`](Self::finish) is `O(s + total payload bytes)` for `s` sections.
 #[cfg(feature = "alloc")]
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 #[must_use]
 pub struct SnapshotBuilder {
     /// Owned, in-order sections.
     sections: Vec<OwnedSection>,
+    /// Checksum fold recorded into every section entry and the header.
+    checksum: Checksum32,
 }
 
 #[cfg(feature = "alloc")]
 impl SnapshotBuilder {
-    /// Constructs an empty builder.
+    /// Constructs an empty builder that folds checksums with `checksum`.
+    ///
+    /// v2 checksums are mandatory: every section entry records
+    /// `checksum(0, payload)` and the header records the table checksum.
     ///
     /// # Performance
     ///
     /// This function is `O(1)`.
-    pub fn new() -> Self {
-        Self::default()
+    pub fn new(checksum: Checksum32) -> Self {
+        Self {
+            sections: Vec::new(),
+            checksum,
+        }
     }
 
     /// Appends a section with the given metadata and owned payload.
+    ///
+    /// Sections must be appended in strictly-ascending `kind` order (the v2
+    /// mandate, which also rules out duplicates).
     ///
     /// # Errors
     ///
     /// Returns [`PlanError`] when `alignment_log2` is too large, when the
     /// builder already holds the maximum permitted section count, or when
-    /// `kind` collides with an earlier section.
+    /// `kind` is not strictly greater than the previous section's kind.
     ///
     /// # Performance
     ///
-    /// This method is `O(s)` for the in-progress section count.
+    /// This method is `O(1)` plus the payload move.
     pub fn add_section(
         &mut self,
         kind: u32,
@@ -1217,10 +1388,13 @@ impl SnapshotBuilder {
                 count: self.sections.len() + 1,
             });
         }
-        for prior in &self.sections {
-            if prior.kind == kind {
-                return Err(PlanError::DuplicateKind { kind });
-            }
+        if let Some(prior) = self.sections.last()
+            && kind <= prior.kind
+        {
+            return Err(PlanError::NonAscendingKind {
+                kind,
+                prev: prior.kind,
+            });
         }
         self.sections.push(OwnedSection {
             kind,
@@ -1343,7 +1517,7 @@ impl SnapshotBuilder {
     ///
     /// The builder enforces per-insert invariants
     /// ([`PlanError::AlignmentTooLarge`], [`PlanError::TooManySections`],
-    /// [`PlanError::DuplicateKind`]) on `add_section*`, so this method
+    /// [`PlanError::NonAscendingKind`]) on `add_section*`, so this method
     /// only fails when the cumulative payload arithmetic overflows
     /// (`u64`/`usize`), surfaced as [`PlanError::PayloadOverflow`].
     ///
@@ -1371,7 +1545,7 @@ impl SnapshotBuilder {
         let plan = SnapshotPlan::new(&pending)?;
         let needed = plan.encoded_len()?;
         let mut out = vec![0u8; needed];
-        plan.write_into(&mut out)?;
+        plan.write_into(&mut out, self.checksum)?;
         Ok(out)
     }
 }
@@ -1406,11 +1580,18 @@ pub struct SnapshotWriter {
     entries: Vec<RawSectionEntry>,
     /// Reserved table capacity in entries.
     max_sections: usize,
+    /// Checksum fold recorded into every section entry and the header.
+    checksum: Checksum32,
 }
 
 #[cfg(feature = "alloc")]
 impl SnapshotWriter {
-    /// Constructs a writer whose table region reserves `max_sections` entries.
+    /// Constructs a writer whose table region reserves `max_sections` entries
+    /// and which folds checksums with `checksum`.
+    ///
+    /// v2 checksums are mandatory: every section's payload CRC is tracked
+    /// incrementally as bytes are written and recorded at
+    /// [`SectionSink::end`]; [`Self::finish`] records the table checksum.
     ///
     /// # Errors
     ///
@@ -1421,8 +1602,8 @@ impl SnapshotWriter {
     ///
     /// This function is `O(reserved table bytes)` (one zero-filled
     /// allocation).
-    pub fn new(max_sections: usize) -> Result<Self, PlanError> {
-        Self::with_payload_capacity(max_sections, 0)
+    pub fn new(max_sections: usize, checksum: Checksum32) -> Result<Self, PlanError> {
+        Self::with_payload_capacity(max_sections, 0, checksum)
     }
 
     /// Constructs a writer reserving `max_sections` table entries and
@@ -1440,6 +1621,7 @@ impl SnapshotWriter {
     pub fn with_payload_capacity(
         max_sections: usize,
         payload_capacity: usize,
+        checksum: Checksum32,
     ) -> Result<Self, PlanError> {
         if max_sections > MAX_SECTION_COUNT as usize {
             return Err(PlanError::TooManySections {
@@ -1458,6 +1640,7 @@ impl SnapshotWriter {
             buf,
             entries: Vec::with_capacity(max_sections),
             max_sections,
+            checksum,
         })
     }
 
@@ -1472,13 +1655,13 @@ impl SnapshotWriter {
     ///
     /// Returns [`PlanError::AlignmentTooLarge`] when `alignment_log2` exceeds
     /// the format cap, [`PlanError::TooManySections`] when the reservation is
-    /// exhausted, or [`PlanError::DuplicateKind`] when `kind` collides with an
-    /// earlier section.
+    /// exhausted, or [`PlanError::NonAscendingKind`] when `kind` is not
+    /// strictly greater than the previous section's kind (the v2 mandate,
+    /// which also rules out duplicates).
     ///
     /// # Performance
     ///
-    /// This method is `O(s)` for the in-progress section count (duplicate-kind
-    /// scan) plus `O(padding)` zero fill.
+    /// This method is `O(1)` plus `O(padding)` zero fill.
     pub fn begin_section(
         &mut self,
         kind: u32,
@@ -1493,9 +1676,10 @@ impl SnapshotWriter {
                 count: self.entries.len() + 1,
             });
         }
-        for prior in &self.entries {
-            if prior.kind.get() == kind {
-                return Err(PlanError::DuplicateKind { kind });
+        if let Some(prior) = self.entries.last() {
+            let prev = prior.kind.get();
+            if kind <= prev {
+                return Err(PlanError::NonAscendingKind { kind, prev });
             }
         }
         let aligned = align_up_checked(self.buf.len(), alignment_log2)?;
@@ -1504,6 +1688,7 @@ impl SnapshotWriter {
             start: aligned,
             kind,
             version,
+            crc: 0,
             alignment_log2,
             writer: self,
         })
@@ -1558,6 +1743,9 @@ impl SnapshotWriter {
     /// Patches the header and the reserved table with the recorded entries and
     /// returns the encoded snapshot bytes.
     ///
+    /// The table checksum is computed after the entries are patched, so the
+    /// header's `table_crc32c` covers the final entry bytes.
+    ///
     /// # Errors
     ///
     /// Returns [`PlanError::PayloadOverflow`] when the total encoded length is
@@ -1565,7 +1753,8 @@ impl SnapshotWriter {
     ///
     /// # Performance
     ///
-    /// This method is `O(s)` for `s` sections; payload bytes are not copied.
+    /// This method is `O(s)` for `s` sections plus one checksum fold over the
+    /// table bytes; payload bytes are not copied.
     pub fn finish(mut self) -> Result<Vec<u8>, PlanError> {
         u64::try_from(self.buf.len()).map_err(|_error| PlanError::PayloadOverflow)?;
         let section_count_u32 = match u32::try_from(self.entries.len()) {
@@ -1576,20 +1765,23 @@ impl SnapshotWriter {
                 });
             }
         };
+        for (index, entry) in self.entries.iter().enumerate() {
+            let entry_offset = HEADER_SIZE + index * SECTION_ENTRY_SIZE;
+            self.buf[entry_offset..entry_offset + SECTION_ENTRY_SIZE]
+                .copy_from_slice(entry.as_bytes());
+        }
+        let table_end = HEADER_SIZE + self.entries.len() * SECTION_ENTRY_SIZE;
+        let table_crc = table_checksum(&self.buf[HEADER_SIZE..table_end], self.checksum);
         let header = RawHeader {
             magic: FORMAT_MAGIC,
             format_major: U32::new(FORMAT_MAJOR),
             format_minor: U32::new(FORMAT_MINOR),
             header_size: U32::new(HEADER_SIZE_U32),
             section_count: U32::new(section_count_u32),
-            reserved: [0; 8],
+            table_crc32c: U32::new(table_crc),
+            reserved: [0; 4],
         };
         self.buf[..HEADER_SIZE].copy_from_slice(header.as_bytes());
-        for (index, entry) in self.entries.iter().enumerate() {
-            let entry_offset = HEADER_SIZE + index * SECTION_ENTRY_SIZE;
-            self.buf[entry_offset..entry_offset + SECTION_ENTRY_SIZE]
-                .copy_from_slice(entry.as_bytes());
-        }
         Ok(self.buf)
     }
 }
@@ -1615,18 +1807,23 @@ pub struct SectionSink<'writer> {
     kind: u32,
     /// Section version recorded at [`Self::end`].
     version: u32,
+    /// Incrementally folded payload CRC-32C, recorded at [`Self::end`].
+    crc: u32,
     /// Declared payload alignment recorded at [`Self::end`].
     alignment_log2: u8,
 }
 
 #[cfg(feature = "alloc")]
 impl SectionSink<'_> {
-    /// Appends raw payload bytes to this section.
+    /// Appends raw payload bytes to this section, folding them into the
+    /// section's incremental payload checksum.
     ///
     /// # Performance
     ///
-    /// This method is `O(bytes.len())`.
+    /// This method is `O(bytes.len())` (one `Vec` append plus one checksum
+    /// fold).
     pub fn write(&mut self, bytes: &[u8]) {
+        self.crc = (self.writer.checksum)(self.crc, bytes);
         self.writer.buf.extend_from_slice(bytes);
     }
 
@@ -1661,11 +1858,64 @@ impl SectionSink<'_> {
             length: U64::new(length),
             kind: U32::new(self.kind),
             version: U32::new(self.version),
-            reserved_checksum: [0; 4],
+            crc32c: U32::new(self.crc),
             alignment_log2: self.alignment_log2,
             flags: 0,
             reserved: [0; 2],
         });
         Ok(())
     }
+}
+
+/// Recomputes and patches one section's entry CRC-32C (and the header's
+/// `table_crc32c`, which covers that entry) in already-encoded snapshot
+/// bytes.
+///
+/// This is the escape hatch for producers that must patch a section's
+/// payload *after* encoding — e.g. a trailer whose payload is derived from
+/// the encoded bytes themselves. After mutating the payload in place, call
+/// this to restore the v2 checksum invariants for that section and the
+/// table. All other entries are left untouched.
+///
+/// # Errors
+///
+/// Returns any structural [`SnapshotError`] from [`Snapshot::open`], or
+/// [`SnapshotError::SectionMissing`] when no section has `kind`.
+///
+/// # Performance
+///
+/// This function is `O(s + section payload bytes)`: one structural open,
+/// one fold over the section's payload, and one fold over the table bytes.
+pub fn patch_section_crc(
+    bytes: &mut [u8],
+    kind: u32,
+    checksum: Checksum32,
+) -> Result<(), SnapshotError> {
+    let (entry_offset, payload_crc, section_count) = {
+        let snapshot = Snapshot::open(bytes)?;
+        let index = snapshot
+            .entries
+            .binary_search_by(|entry| entry.kind.get().cmp(&kind))
+            .map_err(|_index| SnapshotError::SectionMissing { kind })?;
+        let section = Section::from_entry(snapshot.bytes, &snapshot.entries[index]);
+        (
+            HEADER_SIZE + index * SECTION_ENTRY_SIZE,
+            checksum(0, section.bytes()),
+            snapshot.entries.len(),
+        )
+    };
+
+    // Patch the entry's crc32c word.
+    let crc_field_offset = entry_offset + core::mem::offset_of!(RawSectionEntry, crc32c);
+    bytes[crc_field_offset..crc_field_offset + 4]
+        .copy_from_slice(U32::<LE>::new(payload_crc).as_bytes());
+
+    // The entry changed, so recompute the table checksum and patch the
+    // header's table_crc32c word.
+    let table_end = HEADER_SIZE + section_count * SECTION_ENTRY_SIZE;
+    let table_crc = table_checksum(&bytes[HEADER_SIZE..table_end], checksum);
+    let header_crc_offset = core::mem::offset_of!(RawHeader, table_crc32c);
+    bytes[header_crc_offset..header_crc_offset + 4]
+        .copy_from_slice(U32::<LE>::new(table_crc).as_bytes());
+    Ok(())
 }

@@ -36,6 +36,7 @@ use oxgraph_hyper_bcsr::{
     SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_HYPEREDGES_U32,
     SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_OFFSETS_U32,
 };
+use oxgraph_layout_util::crc32c_append;
 use oxgraph_snapshot::{Snapshot, SnapshotBuilder};
 use oxgraph_topology::ElementIndex;
 
@@ -438,7 +439,7 @@ fn words_to_bytes(words: &[u32]) -> Vec<u8> {
 fn bcsr_snapshot_bytes(node_count: u32, offsets: &[u32], targets: &[u32]) -> Vec<u8> {
     let sections = csr_to_bcsr_sections(node_count, offsets, targets);
 
-    let mut builder = SnapshotBuilder::new();
+    let mut builder = SnapshotBuilder::new(crc32c_append);
     let add = |builder: &mut SnapshotBuilder, kind: u32, words: &[u32]| {
         if let Err(error) = builder.add_section(kind, 0, 2, words_to_bytes(words)) {
             panic!("BCSR section {kind:#06x}: {error:?}");

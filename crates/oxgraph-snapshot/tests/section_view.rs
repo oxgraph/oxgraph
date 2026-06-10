@@ -3,6 +3,7 @@
 //! Verifies that the view checks the actual borrowed pointer's alignment
 //! rather than trusting the section entry's declared `alignment_log2`.
 
+use oxgraph_layout_util::crc32c_append;
 use oxgraph_snapshot::{
     PendingSection, Section, SectionViewError, Snapshot, SnapshotBuilder, SnapshotError,
     SnapshotPlan,
@@ -11,7 +12,7 @@ use zerocopy::byteorder::{LE, U32};
 
 #[test]
 fn try_as_slice_succeeds_when_aligned() -> Result<(), SnapshotError> {
-    let mut builder = SnapshotBuilder::new();
+    let mut builder = SnapshotBuilder::new(crc32c_append);
     let payload: [u32; 4] = [1, 2, 3, 4];
     if let Err(error) = builder.add_section_typed(1, 0, &payload) {
         panic!("typed section: {error:?}");
@@ -57,7 +58,7 @@ fn try_as_slice_rejects_misaligned_pointer() -> Result<(), SnapshotError> {
         Err(error) => panic!("encoded_len failed: {error:?}"),
     };
     let mut buffer = vec![0u8; needed + 1];
-    let written = match plan.write_into(&mut buffer[1..]) {
+    let written = match plan.write_into(&mut buffer[1..], crc32c_append) {
         Ok(value) => value,
         Err(error) => panic!("write_into failed: {error:?}"),
     };
@@ -81,7 +82,7 @@ fn try_as_slice_rejects_misaligned_pointer() -> Result<(), SnapshotError> {
 #[test]
 fn try_as_slice_rejects_misaligned_length() -> Result<(), SnapshotError> {
     let payload = b"abcde";
-    let mut builder = SnapshotBuilder::new();
+    let mut builder = SnapshotBuilder::new(crc32c_append);
     if let Err(error) = builder.add_section(1, 0, 0, payload.to_vec()) {
         panic!("byte section: {error:?}");
     }

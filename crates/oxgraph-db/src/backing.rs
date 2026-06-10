@@ -23,9 +23,12 @@
 //! extract the typed slices and is never stored — it is not [`yoke::Yokeable`].
 //! No raw-pointer reinterpretation is used, so `unsafe_code = forbid` holds.
 //!
-//! Before any borrow, [`Base::open`] verifies the [`wire::SECTION_BASE_TRAILER`]
-//! CRC over the covered prefix. That full scan touches every covered byte, so a
-//! truncated or corrupted base surfaces as a clean [`StorageError`] at open.
+//! Before any borrow, [`Base::open`] verifies the container's `table_crc32c`
+//! (via [`oxgraph_snapshot::Snapshot::open_checked`]) and the
+//! [`wire::SECTION_BASE_TRAILER`] CRC over the payload region
+//! ([`freeze::base_payload_region`]). Together those scans cover every base
+//! byte, so a truncated or corrupted base surfaces as a clean
+//! [`StorageError`] at open.
 //!
 //! # Performance
 //!
@@ -507,13 +510,14 @@ impl Base {
     }
 }
 
-/// Verifies the [`wire::SECTION_BASE_TRAILER`] CRC over the covered prefix.
+/// Verifies the container table checksum and the
+/// [`wire::SECTION_BASE_TRAILER`] CRC over the payload region.
 ///
-/// Opens `bytes` structurally, reads the trailer record, recomputes the CRC over
-/// every byte preceding the trailer payload (the same range
-/// [`crate::freeze::freeze_view`] checksums), and compares. The trailer payload is
-/// located by the address delta between the trailer section's borrowed payload
-/// and the buffer base (no pointer reinterpretation).
+/// Opens `bytes` with [`Snapshot::open_checked`] (rejecting any header or
+/// section-table corruption via the v2 `table_crc32c`), reads the trailer
+/// record, recomputes the CRC over the payload region — the same
+/// [`freeze::base_payload_region`] range [`crate::freeze::freeze_view`]
+/// checksums — and compares.
 ///
 /// # Errors
 ///
@@ -525,18 +529,17 @@ impl Base {
 ///
 /// This function is `O(base bytes)` for the single CRC scan.
 fn verify_base_crc(bytes: &[u8]) -> Result<(), StorageError> {
-    let snapshot =
-        Snapshot::open(bytes).map_err(|error| StorageError::invalid_store(error.to_string()))?;
+    let snapshot = Snapshot::open_checked(bytes, crc::checksum_append)
+        .map_err(|error| StorageError::invalid_store(error.to_string()))?;
     let trailer_section = snapshot
         .section(wire::SECTION_BASE_TRAILER)
         .ok_or_else(|| StorageError::invalid_store("base is missing its content trailer"))?;
-    let payload = trailer_section.bytes();
-    let trailer = wire::BaseTrailer::ref_from_prefix(payload)
+    let trailer = wire::BaseTrailer::ref_from_prefix(trailer_section.bytes())
         .map(|(record, _rest)| record)
         .map_err(|_error| StorageError::invalid_store("base trailer payload is truncated"))?;
-    let payload_offset = payload.as_ptr().addr() - bytes.as_ptr().addr();
+    let covered_range = freeze::base_payload_region(bytes)?;
     let covered = bytes
-        .get(..payload_offset)
+        .get(covered_range)
         .ok_or_else(|| StorageError::invalid_store("base trailer offset out of bounds"))?;
     let recomputed = crc::checksum(covered);
     if recomputed == trailer.crc32c.get() {
@@ -828,19 +831,13 @@ mod tests {
         use zerocopy::IntoBytes;
 
         let mut bytes = small_base_bytes();
-        // Locate the header section and the trailer payload via the snapshot.
-        let (header_offset, trailer_payload_offset) = {
+        // Locate the header section payload via the snapshot.
+        let header_offset = {
             let snapshot = Snapshot::open(&bytes).expect("reopen frozen base");
             let header = snapshot
                 .section(wire::SECTION_DB_HEADER)
                 .expect("header section");
-            let trailer = snapshot
-                .section(wire::SECTION_BASE_TRAILER)
-                .expect("trailer section");
-            (
-                header.bytes().as_ptr().addr() - bytes.as_ptr().addr(),
-                trailer.bytes().as_ptr().addr() - bytes.as_ptr().addr(),
-            )
+            header.bytes().as_ptr().addr() - bytes.as_ptr().addr()
         };
         // `format_version` is the first `U32<LE>` field of `DbHeaderRecord`; bump
         // it past the supported version.
@@ -848,9 +845,11 @@ mod tests {
         let version_field = size_of::<zerocopy::byteorder::U32<LE>>();
         bytes[header_offset..header_offset + version_field]
             .copy_from_slice(zerocopy::byteorder::U32::<LE>::new(bogus).as_bytes());
-        // Re-stamp the trailer CRC over the patched prefix so the version check
-        // (not the CRC) is what rejects the base.
-        let crc = crate::crc::checksum(&bytes[..trailer_payload_offset]);
+        // Re-stamp the trailer CRC over the patched payload region so the
+        // version check (not the CRC) is what rejects the base.
+        let covered = freeze::base_payload_region(&bytes).expect("payload region resolves");
+        let trailer_payload_offset = covered.end;
+        let crc = crate::crc::checksum(&bytes[covered]);
         bytes[trailer_payload_offset..trailer_payload_offset + version_field]
             .copy_from_slice(zerocopy::byteorder::U32::<LE>::new(crc).as_bytes());
 

@@ -7,6 +7,7 @@ use arrow_array::{
     types::{Float32Type, Int32Type},
 };
 use arrow_schema::{DataType, Field};
+use oxgraph_layout_util::crc32c_append;
 use oxgraph_snapshot::{Snapshot, SnapshotBuilder};
 use oxgraph_topology::{RelationIndex, RelationWeight, TopologyBase};
 use zerocopy::byteorder::{LE, U16, U32, U64};
@@ -260,7 +261,7 @@ fn property_snapshot_sections_validate() -> Result<(), Box<dyn Error>> {
         Some(Arc::new(Float32Array::from(vec![1.0_f32]))),
     )?;
     let encoded = encode_property_snapshot::<u32, u32, u32>(&[dense, sparse])?;
-    let mut builder = SnapshotBuilder::new();
+    let mut builder = SnapshotBuilder::new(crc32c_append);
     builder.add_section(
         SNAPSHOT_KIND_PROPERTY_DESCRIPTORS_U32,
         SNAPSHOT_PROPERTY_VERSION,
@@ -546,7 +547,7 @@ fn identity_snapshot_sections_validate() -> Result<(), Box<dyn Error>> {
         IdentityModeRecord::<u32>::explicit_map(IdFamily::Relation, 2)?,
     ];
     let maps = [U32::<LE>::new(10), U32::<LE>::new(12)];
-    let mut builder = SnapshotBuilder::new();
+    let mut builder = SnapshotBuilder::new(crc32c_append);
     builder.add_section_typed(
         SNAPSHOT_KIND_IDENTITY_MODES_U32,
         SNAPSHOT_PROPERTY_VERSION,
@@ -572,7 +573,7 @@ fn identity_snapshot_sections_validate_u16_u32_and_u64() -> Result<(), Box<dyn E
         2,
     )?];
     let maps_u16 = [U16::<LE>::new(1), U16::<LE>::new(3)];
-    let mut builder = SnapshotBuilder::new();
+    let mut builder = SnapshotBuilder::new(crc32c_append);
     builder.add_section_typed(
         SNAPSHOT_KIND_IDENTITY_MODES_U16,
         SNAPSHOT_PROPERTY_VERSION,
@@ -595,7 +596,7 @@ fn identity_snapshot_sections_validate_u16_u32_and_u64() -> Result<(), Box<dyn E
         2,
     )?];
     let maps_u64 = [U64::<LE>::new(10), U64::<LE>::new(12)];
-    let mut builder = SnapshotBuilder::new();
+    let mut builder = SnapshotBuilder::new(crc32c_append);
     builder.add_section_typed(
         SNAPSHOT_KIND_IDENTITY_MODES_U64,
         SNAPSHOT_PROPERTY_VERSION,

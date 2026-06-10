@@ -12,6 +12,7 @@ use oxgraph_csr::{
     SNAPSHOT_KIND_CSR_TARGETS_U32,
 };
 use oxgraph_graph::GraphCounts;
+use oxgraph_layout_util::crc32c_append;
 use oxgraph_snapshot::{Snapshot, SnapshotBuilder, SnapshotError};
 
 /// Local error type covering both snapshot and CSR adaptor failures.
@@ -53,7 +54,7 @@ fn main() -> Result<(), DemoError> {
     let offsets_bytes: Vec<u8> = offsets.iter().flat_map(|word| word.to_le_bytes()).collect();
     let targets_bytes: Vec<u8> = targets.iter().flat_map(|word| word.to_le_bytes()).collect();
 
-    let mut builder = SnapshotBuilder::new();
+    let mut builder = SnapshotBuilder::new(crc32c_append);
     if let Err(error) = builder.add_section(SNAPSHOT_KIND_CSR_OFFSETS_U32, 0, 2, offsets_bytes) {
         panic!("offsets section: {error:?}");
     }

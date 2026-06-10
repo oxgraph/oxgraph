@@ -23,6 +23,7 @@ alloc = []
 zerocopy = { workspace = true }
 
 [dev-dependencies]
+crc32c = { workspace = true }
 proptest = { workspace = true }
 
 [lints]

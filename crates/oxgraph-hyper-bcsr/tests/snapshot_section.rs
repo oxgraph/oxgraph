@@ -11,6 +11,7 @@ use oxgraph_hyper_bcsr::{
     SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_HYPEREDGES_U32,
     SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_OFFSETS_U32, SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_OFFSETS_U64,
 };
+use oxgraph_layout_util::crc32c_append;
 use oxgraph_snapshot::{Snapshot, SnapshotBuilder, SnapshotError};
 
 /// Test fixture error covering snapshot, view, and bipartite-CSR failure modes.
@@ -84,7 +85,7 @@ impl Fixture {
 
 /// Builds a snapshot from a [`Fixture`] using the eight bipartite-CSR section kinds.
 fn build_snapshot(fixture: &Fixture) -> Vec<u8> {
-    let mut builder = SnapshotBuilder::new();
+    let mut builder = SnapshotBuilder::new(crc32c_append);
     let entries: [(u32, &[u32]); 8] = [
         (SNAPSHOT_KIND_BCSR_HEAD_OFFSETS_U32, &fixture.head_offsets),
         (
@@ -175,53 +176,57 @@ fn opens_mixed_u32_vertices_relations_u64_incidences() -> Result<(), FixtureErro
         .map(u64::from)
         .collect();
 
-    let mut builder = SnapshotBuilder::new();
-    let offset_entries: [(u32, &[u64]); 4] = [
-        (SNAPSHOT_KIND_BCSR_HEAD_OFFSETS_U64, &head_offsets),
-        (SNAPSHOT_KIND_BCSR_TAIL_OFFSETS_U64, &tail_offsets),
+    let mut builder = SnapshotBuilder::new(crc32c_append);
+    // The v2 container mandates ascending kinds, so the u64 offset sections
+    // and u32 value sections are interleaved in kind order.
+    let entries: [(u32, Vec<u8>, u8); 8] = [
         (
-            SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_OFFSETS_U64,
-            &vertex_outgoing_offsets,
-        ),
-        (
-            SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_OFFSETS_U64,
-            &vertex_incoming_offsets,
-        ),
-    ];
-    for (kind, words) in offset_entries {
-        if let Err(error) = builder.add_section(
-            kind,
-            oxgraph_hyper_bcsr::SNAPSHOT_BCSR_SECTION_VERSION,
+            SNAPSHOT_KIND_BCSR_HEAD_OFFSETS_U64,
+            words64_to_bytes(&head_offsets),
             3,
-            words64_to_bytes(words),
-        ) {
-            panic!("section 0x{kind:04x}: {error:?}");
-        }
-    }
-    let value_entries: [(u32, &[u32]); 4] = [
+        ),
         (
             SNAPSHOT_KIND_BCSR_HEAD_PARTICIPANTS_U32,
-            &fixture.head_participants,
+            words_to_bytes(&fixture.head_participants),
+            2,
+        ),
+        (
+            SNAPSHOT_KIND_BCSR_TAIL_OFFSETS_U64,
+            words64_to_bytes(&tail_offsets),
+            3,
         ),
         (
             SNAPSHOT_KIND_BCSR_TAIL_PARTICIPANTS_U32,
-            &fixture.tail_participants,
+            words_to_bytes(&fixture.tail_participants),
+            2,
+        ),
+        (
+            SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_OFFSETS_U64,
+            words64_to_bytes(&vertex_outgoing_offsets),
+            3,
         ),
         (
             SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_HYPEREDGES_U32,
-            &fixture.vertex_outgoing_hyperedges,
+            words_to_bytes(&fixture.vertex_outgoing_hyperedges),
+            2,
+        ),
+        (
+            SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_OFFSETS_U64,
+            words64_to_bytes(&vertex_incoming_offsets),
+            3,
         ),
         (
             SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_HYPEREDGES_U32,
-            &fixture.vertex_incoming_hyperedges,
+            words_to_bytes(&fixture.vertex_incoming_hyperedges),
+            2,
         ),
     ];
-    for (kind, words) in value_entries {
+    for (kind, bytes, alignment_log2) in entries {
         if let Err(error) = builder.add_section(
             kind,
             oxgraph_hyper_bcsr::SNAPSHOT_BCSR_SECTION_VERSION,
-            2,
-            words_to_bytes(words),
+            alignment_log2,
+            bytes,
         ) {
             panic!("section 0x{kind:04x}: {error:?}");
         }
@@ -246,7 +251,7 @@ fn opens_mixed_u32_vertices_relations_u64_incidences() -> Result<(), FixtureErro
 #[test]
 fn rejects_missing_head_offsets_section() -> Result<(), FixtureError> {
     let fixture = Fixture::canonical();
-    let mut builder = SnapshotBuilder::new();
+    let mut builder = SnapshotBuilder::new(crc32c_append);
     let entries: [(u32, &[u32]); 7] = [
         (
             SNAPSHOT_KIND_BCSR_HEAD_PARTICIPANTS_U32,
@@ -315,7 +320,7 @@ fn rejects_wrong_offset_width() -> Result<(), FixtureError> {
 #[test]
 fn rejects_wrong_participant_width() -> Result<(), FixtureError> {
     let fixture = Fixture::canonical();
-    let mut builder = SnapshotBuilder::new();
+    let mut builder = SnapshotBuilder::new(crc32c_append);
     let entries: [(u32, &[u32]); 8] = [
         (SNAPSHOT_KIND_BCSR_HEAD_OFFSETS_U32, &fixture.head_offsets),
         (

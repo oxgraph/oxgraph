@@ -3,6 +3,7 @@
 //! bytes identical to [`SnapshotBuilder`] (own-then-copy), and an
 //! under-filled reservation must still open and resolve every section.
 
+use oxgraph_layout_util::crc32c_append;
 use oxgraph_snapshot::{Snapshot, SnapshotBuilder, SnapshotWriter};
 use proptest::prelude::*;
 
@@ -38,7 +39,7 @@ proptest! {
     /// Exact-reservation writer output is byte-identical to the builder's.
     #[test]
     fn writer_matches_builder_bytes(sections in sections_strategy()) {
-        let mut builder = SnapshotBuilder::new();
+        let mut builder = SnapshotBuilder::new(crc32c_append);
         for (index, section) in sections.iter().enumerate() {
             builder
                 .add_section(
@@ -51,7 +52,7 @@ proptest! {
         }
         let built = builder.finish().expect("builder encodes");
 
-        let mut writer = SnapshotWriter::new(sections.len()).expect("reservation fits");
+        let mut writer = SnapshotWriter::new(sections.len(), crc32c_append).expect("reservation fits");
         for (index, section) in sections.iter().enumerate() {
             let mut sink = writer
                 .begin_section(u32::try_from(index).expect("section index fits u32"), section.version, section.alignment_log2)
@@ -69,7 +70,7 @@ proptest! {
     #[test]
     fn underfilled_reservation_opens(sections in sections_strategy(), slack in 1usize..8) {
         let mut writer =
-            SnapshotWriter::new(sections.len() + slack).expect("reservation fits");
+            SnapshotWriter::new(sections.len() + slack, crc32c_append).expect("reservation fits");
         for (index, section) in sections.iter().enumerate() {
             let mut sink = writer
                 .begin_section(u32::try_from(index).expect("section index fits u32"), section.version, section.alignment_log2)

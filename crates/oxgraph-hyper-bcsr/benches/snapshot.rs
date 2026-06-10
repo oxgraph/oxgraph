@@ -22,6 +22,7 @@ use oxgraph_hyper_bcsr::{
     SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_HYPEREDGES_U32,
     SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_OFFSETS_U32,
 };
+use oxgraph_layout_util::crc32c_append;
 use oxgraph_snapshot::{Snapshot, SnapshotBuilder};
 
 /// Fixed head and tail size used by the synthetic regular hypergraph.
@@ -130,7 +131,7 @@ fn fill_vertex_major(vertex_count: u32, words: &mut SectionWords) {
 
 /// Encodes a [`SectionWords`] into a snapshot byte buffer.
 fn encode_snapshot(words: &SectionWords) -> Vec<u8> {
-    let mut builder = SnapshotBuilder::new();
+    let mut builder = SnapshotBuilder::new(crc32c_append);
     let entries: [(u32, &[u32]); 8] = [
         (SNAPSHOT_KIND_BCSR_HEAD_OFFSETS_U32, &words.head_offsets),
         (

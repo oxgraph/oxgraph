@@ -1,6 +1,7 @@
 //! No-`alloc` smoke test: build, write, and re-open a snapshot in a stack
 //! buffer using [`SnapshotPlan`].
 
+use oxgraph_layout_util::crc32c_append;
 use oxgraph_snapshot::{
     FORMAT_MAJOR, FORMAT_MINOR, HeaderOnlySnapshot, PendingSection, PlanError, Snapshot,
     SnapshotError, SnapshotPlan,
@@ -36,13 +37,14 @@ fn round_trips_two_sections_in_stack_buffer() -> Result<(), SnapshotError> {
     assert!(needed <= 256);
 
     let mut buffer = [0u8; 256];
-    let written = match plan.write_into(&mut buffer) {
+    let written = match plan.write_into(&mut buffer, crc32c_append) {
         Ok(value) => value,
         Err(error) => panic!("write_into failed: {error:?}"),
     };
     assert_eq!(written, needed);
 
-    let snapshot = Snapshot::open(&buffer[..needed])?;
+    let snapshot = Snapshot::open_checked(&buffer[..needed], crc32c_append)?;
+    snapshot.verify_all(crc32c_append)?;
     assert_eq!(snapshot.section_count(), 2);
     assert_eq!(snapshot.section(7).map(|s| s.bytes()), Some(&payload_a[..]));
     assert_eq!(snapshot.section(9).map(|s| s.bytes()), Some(&payload_b[..]));
@@ -65,14 +67,14 @@ fn rejects_buffer_too_small() {
         Err(error) => panic!("plan validation failed: {error:?}"),
     };
     let mut tiny = [0u8; 16];
-    match plan.write_into(&mut tiny) {
+    match plan.write_into(&mut tiny, crc32c_append) {
         Err(PlanError::BufferTooSmall { .. }) => {}
         other => panic!("expected BufferTooSmall, got {other:?}"),
     }
 }
 
 #[test]
-fn rejects_duplicate_kind_at_plan_construction() {
+fn rejects_duplicate_kind_as_non_ascending_at_plan_construction() {
     let payload = [0u8; 1];
     let sections = [
         PendingSection {
@@ -89,8 +91,31 @@ fn rejects_duplicate_kind_at_plan_construction() {
         },
     ];
     match SnapshotPlan::new(&sections) {
-        Err(PlanError::DuplicateKind { kind: 5 }) => {}
-        other => panic!("expected DuplicateKind {{ kind: 5 }}, got {other:?}"),
+        Err(PlanError::NonAscendingKind { kind: 5, prev: 5 }) => {}
+        other => panic!("expected NonAscendingKind {{ kind: 5, prev: 5 }}, got {other:?}"),
+    }
+}
+
+#[test]
+fn rejects_descending_kind_at_plan_construction() {
+    let payload = [0u8; 1];
+    let sections = [
+        PendingSection {
+            kind: 5,
+            version: 0,
+            alignment_log2: 0,
+            payload: &payload,
+        },
+        PendingSection {
+            kind: 3,
+            version: 0,
+            alignment_log2: 0,
+            payload: &payload,
+        },
+    ];
+    match SnapshotPlan::new(&sections) {
+        Err(PlanError::NonAscendingKind { kind: 3, prev: 5 }) => {}
+        other => panic!("expected NonAscendingKind {{ kind: 3, prev: 5 }}, got {other:?}"),
     }
 }
 
@@ -108,7 +133,7 @@ fn header_only_open_skips_section_table() -> Result<(), SnapshotError> {
         Err(error) => panic!("plan validation failed: {error:?}"),
     };
     let mut buffer = [0u8; 128];
-    let written = match plan.write_into(&mut buffer) {
+    let written = match plan.write_into(&mut buffer, crc32c_append) {
         Ok(value) => value,
         Err(error) => panic!("write_into failed: {error:?}"),
     };

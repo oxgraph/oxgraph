@@ -8,6 +8,7 @@
 
 use std::collections::BTreeSet;
 
+use oxgraph_layout_util::crc32c_append;
 use oxgraph_snapshot::{
     PendingSection, PlanError, Snapshot, SnapshotBuilder, SnapshotError, SnapshotPlan,
 };
@@ -58,16 +59,17 @@ proptest! {
     fn writer_and_builder_emit_identical_bytes(
         sections in proptest::collection::vec(gen_section(), 0..8),
     ) {
-        // Deduplicate kinds: both encoders reject duplicates, and we want to
-        // exercise the success path here.
+        // Deduplicate kinds and sort ascending: both encoders mandate the v2
+        // strictly-ascending kind order, and we want the success path here.
         let mut seen = BTreeSet::new();
-        let unique: Vec<GenSection> = sections
+        let mut unique: Vec<GenSection> = sections
             .into_iter()
             .filter(|section| seen.insert(section.kind))
             .collect();
+        unique.sort_by_key(|section| section.kind);
 
         // Build via the owning builder.
-        let mut builder = SnapshotBuilder::new();
+        let mut builder = SnapshotBuilder::new(crc32c_append);
         for section in &unique {
             prop_plan(builder.add_section(
                 section.kind,
@@ -91,7 +93,7 @@ proptest! {
         let plan = prop_plan(SnapshotPlan::new(&pending))?;
         let needed = prop_plan(plan.encoded_len())?;
         let mut from_plan = vec![0u8; needed];
-        let written = prop_plan(plan.write_into(&mut from_plan))?;
+        let written = prop_plan(plan.write_into(&mut from_plan, crc32c_append))?;
         prop_assert_eq!(written, needed);
 
         // The two encoders must agree byte for byte.

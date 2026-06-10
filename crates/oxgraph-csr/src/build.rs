@@ -17,8 +17,8 @@ use oxgraph_graph::{
     RelationWeight, TopologyBase, TopologyCounts,
 };
 use oxgraph_layout_util::{
-    IdOutOfBounds, LayoutIndex, LayoutWord, id_to_slot, index_from_usize, map_offset_overflow,
-    next_dense_index, slot_or_max,
+    IdOutOfBounds, LayoutIndex, LayoutWord, crc32c_append, id_to_slot, index_from_usize,
+    map_offset_overflow, next_dense_index, slot_or_max,
 };
 #[cfg(feature = "build-property-arrow")]
 use oxgraph_property::{
@@ -1332,7 +1332,7 @@ where
     NodeIndex: LayoutIndex + CsrSnapshotIndex,
     EdgeIndex: LayoutIndex + CsrSnapshotIndex,
 {
-    let mut builder = SnapshotBuilder::new();
+    let mut builder = SnapshotBuilder::new(crc32c_append);
     builder.add_section_widths(
         EdgeIndex::OFFSETS_KIND,
         EdgeIndex::SECTION_VERSION,
@@ -1363,7 +1363,7 @@ where
         )?,
         IdentityModeRecord::<EdgeIndex>::explicit_map(IdFamily::Relation, topology.edge_ids.len())?,
     ];
-    let mut builder = SnapshotBuilder::new();
+    let mut builder = SnapshotBuilder::new(crc32c_append);
     builder.add_section_widths(
         EdgeIndex::OFFSETS_KIND,
         EdgeIndex::SECTION_VERSION,

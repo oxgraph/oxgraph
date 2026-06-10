@@ -2,11 +2,12 @@
 //! layers.
 //!
 //! Every layout exporter (CSR, BCSR) validates its property layers against the
-//! topology counts and then appends the SAME section tail — identity modes,
-//! one explicit identity map, property descriptors, property data — in the
-//! canonical order. The layout-specific parts (which counts are required,
-//! which identity modes apply, which map kind carries the explicit map) stay
-//! in each layout crate; the mechanics live here once.
+//! topology counts and then appends the SAME section tail — property
+//! descriptors, property data, identity modes, one explicit identity map — in
+//! the canonical (ascending-kind) order the v2 container mandates. The
+//! layout-specific parts (which counts are required, which identity modes
+//! apply, which map kind carries the explicit map) stay in each layout crate;
+//! the mechanics live here once.
 
 use oxgraph_layout_util::SnapshotWidth;
 use oxgraph_snapshot::{PlanError, SnapshotBuilder};
@@ -77,14 +78,18 @@ where
     Ok(())
 }
 
-/// Appends the canonical property-export section tail: identity modes, the
-/// explicit identity map under `identity_map_kind`, then the encoded property
-/// descriptors and data.
+/// Appends the canonical property-export section tail: the encoded property
+/// descriptors and data, then the identity modes and the explicit identity
+/// map under `identity_map_kind`.
+///
+/// The order follows the ascending kind values inside the property band
+/// (descriptors < data < identity modes < identity maps), which the v2
+/// container mandates table-wide.
 ///
 /// # Errors
 ///
-/// Returns [`PlanError`] when section planning rejects a section (duplicate
-/// kind, count, or alignment).
+/// Returns [`PlanError`] when section planning rejects a section
+/// (non-ascending kind, count, or alignment).
 ///
 /// # Performance
 ///
@@ -100,12 +105,6 @@ where
     W: PropertySnapshotMetaWord,
     MapW: SnapshotWidth,
 {
-    builder.add_section_little_endian(
-        W::IDENTITY_MODES_KIND,
-        SNAPSHOT_PROPERTY_VERSION,
-        identity_modes,
-    )?;
-    builder.add_section_widths(identity_map_kind, SNAPSHOT_PROPERTY_VERSION, identity_map)?;
     builder.add_section(
         W::PROPERTY_DESCRIPTORS_KIND,
         SNAPSHOT_PROPERTY_VERSION,
@@ -118,5 +117,11 @@ where
         0,
         encoded.data,
     )?;
+    builder.add_section_little_endian(
+        W::IDENTITY_MODES_KIND,
+        SNAPSHOT_PROPERTY_VERSION,
+        identity_modes,
+    )?;
+    builder.add_section_widths(identity_map_kind, SNAPSHOT_PROPERTY_VERSION, identity_map)?;
     Ok(())
 }

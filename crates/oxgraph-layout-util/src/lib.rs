@@ -44,6 +44,63 @@ use zerocopy::{
     byteorder::{LE, U16, U32, U64},
 };
 
+// ---------------------------------------------------------------------------
+// CRC-32C (Castagnoli)
+// ---------------------------------------------------------------------------
+
+/// Lookup table for the byte-at-a-time reflected CRC-32C computation.
+///
+/// Generated at compile time from the reflected Castagnoli polynomial
+/// `0x82F6_3B78` (bit-reversal of `0x1EDC_6F41`).
+const CRC32C_TABLE: [u32; 256] = build_crc32c_table();
+
+/// Builds the 256-entry reflected CRC-32C table at compile time.
+const fn build_crc32c_table() -> [u32; 256] {
+    let mut table = [0u32; 256];
+    let mut index: usize = 0;
+    let mut seed: u32 = 0;
+    while index < 256 {
+        let mut crc = seed;
+        let mut bit = 0;
+        while bit < 8 {
+            let mask = (crc & 1).wrapping_neg();
+            crc = (crc >> 1) ^ (0x82F6_3B78 & mask);
+            bit += 1;
+        }
+        table[index] = crc;
+        index += 1;
+        seed += 1;
+    }
+    table
+}
+
+/// Continues a CRC-32C (Castagnoli, polynomial `0x1EDC_6F41`) checksum over
+/// `bytes`, seeded with the result of a prior call (seed `0` starts a fresh
+/// checksum).
+///
+/// This is a portable, table-driven software implementation provided so
+/// `no_std` layout crates can produce checksummed snapshot containers without
+/// a `std`-only CRC dependency. It satisfies the continuation law
+/// `crc32c_append(crc32c_append(0, a), b) == crc32c_append(0, ab)`, matching
+/// the `crc32c` crate's `crc32c_append`, and `crc32c_append(0, b"") == 0`.
+/// `std` consumers on hot write paths may prefer a hardware-accelerated
+/// implementation (e.g. the `crc32c` crate) — any continuation-style CRC-32C
+/// is byte-for-byte interchangeable with this one.
+///
+/// # Performance
+///
+/// This function is `O(bytes.len())` (one table lookup per byte; no
+/// allocation).
+#[must_use]
+pub fn crc32c_append(crc: u32, bytes: &[u8]) -> u32 {
+    let mut state = !crc;
+    for &byte in bytes {
+        let index = usize::from(state.to_le_bytes()[0] ^ byte);
+        state = (state >> 8) ^ CRC32C_TABLE[index];
+    }
+    !state
+}
+
 /// Sealed module preventing external types from satisfying the in-crate
 /// index/word traits.
 mod sealed {
