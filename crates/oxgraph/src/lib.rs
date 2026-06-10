@@ -23,7 +23,7 @@ extern crate kani;
 pub mod layout {
     pub use oxgraph_layout_util::{
         Axis, EdgeAxis, HyperedgeAxis, IdSlice, IncidenceAxis, LayoutIndex, LayoutSnapshotWord,
-        LayoutWord, LocalId, NodeAxis, SnapshotWidth, VertexAxis, ZerocopyWord,
+        LayoutWord, LocalId, NodeAxis, SnapshotWidth, VertexAxis, ZerocopyWord, build, integrity,
     };
 }
 
@@ -36,13 +36,13 @@ pub mod layout {
 pub mod topology {
     pub use oxgraph_topology::{
         CanonicalElementIdentity, CanonicalIncidenceIdentity, CanonicalRelationIdentity,
-        ContainsElement, ContainsIncidence, ContainsRelation, ElementId, ElementIncidenceCount,
-        ElementIncidences, ElementIndex, ElementPredecessors, ElementSuccessors, ElementWeight,
-        IncidenceBase, IncidenceCounts, IncidenceElement, IncidenceIndex, IncidenceRelation,
-        IncidenceRole, IncidenceView, IncidenceWeight, LocalElementIdentity,
-        LocalIncidenceIdentity, LocalRelationIdentity, RelationId, RelationIncidenceCount,
-        RelationIncidences, RelationIndex, RelationWeight, TopologyBase, TopologyCounts,
-        TopologyId,
+        ContainsElement, ContainsIncidence, ContainsRelation, DenseElementIndex,
+        DenseIncidenceIndex, DenseRelationIndex, ElementId, ElementIncidenceCount,
+        ElementIncidences, ElementPredecessors, ElementSuccessors, ElementWeight, IncidenceBase,
+        IncidenceCounts, IncidenceElement, IncidenceRelation, IncidenceRole, IncidenceView,
+        IncidenceWeight, LocalElementIdentity, LocalIncidenceIdentity, LocalRelationIdentity,
+        RelationId, RelationIncidenceCount, RelationIncidences, RelationWeight, TopologyBase,
+        TopologyCounts, TopologyId,
     };
 }
 
@@ -54,10 +54,10 @@ pub mod topology {
 #[cfg(feature = "graph")]
 pub mod graph {
     pub use oxgraph_graph::{
-        ContainsEdge, ContainsEndpoint, ContainsNode, DirectedGraph, EdgeEndpointGraph, EdgeId,
-        EdgeIndex, EdgeSourceGraph, EdgeTargetGraph, EndpointId, EndpointIndex, EndpointRole,
-        ForwardGraph, GraphBase, GraphCounts, IncomingEdgeCount, IncomingGraph,
-        IncomingNeighborsGraph, NodeId, NodeIndex, OutgoingEdgeCount, OutgoingGraph,
+        ContainsEdge, ContainsEndpoint, ContainsNode, DenseEdgeIndex, DenseEndpointIndex,
+        DenseNodeIndex, DirectedGraph, EdgeEndpointGraph, EdgeId, EdgeSourceGraph, EdgeTargetGraph,
+        EndpointId, EndpointRole, ForwardGraph, GraphBase, GraphCounts, IncomingEdgeCount,
+        IncomingGraph, IncomingNeighborsGraph, NodeId, OutgoingEdgeCount, OutgoingGraph,
         OutgoingNeighborsGraph, ReverseGraph,
     };
 }
@@ -70,14 +70,14 @@ pub mod graph {
 #[cfg(feature = "hyper")]
 pub mod hyper {
     pub use oxgraph_hyper::{
-        ContainsHyperedge, ContainsParticipant, ContainsVertex, DirectedHyperedgeIncidences,
+        ContainsHyperedge, ContainsParticipant, ContainsVertex, DenseHyperedgeIndex,
+        DenseParticipantIndex, DenseVertexIndex, DirectedHyperedgeIncidences,
         DirectedHyperedgeParticipants, DirectedHypergraph, DirectedVertexHyperedges,
         DirectedVertexPredecessors, DirectedVertexSuccessors, HyperedgeId, HyperedgeIncidences,
-        HyperedgeIndex, HyperedgeParticipantCount, HyperedgeParticipants, Hypergraph,
-        HypergraphBase, HypergraphCounts, IncidentHyperedgeCount, IncidentHyperedges,
-        ParticipantBase, ParticipantCounts, ParticipantHyperedge, ParticipantId, ParticipantIndex,
-        ParticipantRole, ParticipantRoleOf, ParticipantVertex, VertexId, VertexIncidences,
-        VertexIndex,
+        HyperedgeParticipantCount, HyperedgeParticipants, Hypergraph, HypergraphBase,
+        HypergraphCounts, IncidentHyperedgeCount, IncidentHyperedges, ParticipantBase,
+        ParticipantCounts, ParticipantHyperedge, ParticipantId, ParticipantRole, ParticipantRoleOf,
+        ParticipantVertex, VertexId, VertexIncidences,
     };
 }
 
@@ -248,8 +248,8 @@ pub mod graph_build {
     // at [`crate::layout`]; the `graph-build` feature enables it.
     pub use oxgraph_csr::build::{
         FrozenGraph, FrozenOutEdges, FrozenSuccessors, FrozenWeightedGraph, GraphBuildError,
-        GraphBuilder, GraphEdgeId, GraphNodeId, WeightedGraphBuilder, csr_slice_to_le,
-        export_csr_snapshot, export_weighted_csr_snapshot, identity_slice_to_le,
+        GraphBuilder, GraphEdgeId, GraphNodeId, WeightedGraphBuilder, export_csr_snapshot,
+        export_weighted_csr_snapshot,
     };
     #[cfg(feature = "graph-property-arrow")]
     pub use oxgraph_csr::build::{
@@ -277,7 +277,6 @@ pub mod hyper_build {
     #[cfg(feature = "hyper-property-arrow")]
     pub use oxgraph_hyper_bcsr::build::{
         export_bcsr_snapshot_with_properties, export_weighted_bcsr_snapshot_with_properties,
-        identity_slice_to_le,
     };
 }
 

@@ -43,12 +43,12 @@ pub mod build;
 use core::{fmt, marker::PhantomData};
 
 use oxgraph_graph::{
-    ContainsElement, ContainsRelation, EdgeTargetGraph, ElementIndex, ElementSuccessors,
-    GraphCounts, OutgoingEdgeCount, OutgoingGraph, RelationIndex, TopologyBase, TopologyCounts,
+    ContainsElement, ContainsRelation, DenseElementIndex, DenseRelationIndex, EdgeTargetGraph,
+    ElementSuccessors, OutgoingEdgeCount, OutgoingGraph, TopologyBase, TopologyCounts,
 };
 use oxgraph_layout_util::{
-    IdSlice, LocalId, NodeAxis, OffsetIntegrityIssue, SnapshotWidth, check_offset_section,
-    check_value_range,
+    IdSlice, LocalId, NodeAxis, SnapshotWidth,
+    integrity::{OffsetIntegrityIssue, check_offset_section, check_value_range},
 };
 pub use oxgraph_layout_util::{LayoutIndex, LayoutSnapshotWord, LayoutWord};
 use oxgraph_snapshot::{SectionBindError, SectionViewError, Snapshot};
@@ -288,7 +288,7 @@ impl<Index> EdgeSlot<Checked, Index> {
     where
         Index: LayoutIndex,
     {
-        let raw = oxgraph_layout_util::usize_to_index_validated::<Index>(slot)?;
+        let raw = oxgraph_layout_util::integrity::usize_to_index_validated::<Index>(slot)?;
         Some(Self::from_raw_slot(raw, slot))
     }
 
@@ -678,7 +678,7 @@ where
     ///
     /// This method is `O(1)`.
     fn checked_offset_slot(offset: EdgeIndex) -> usize {
-        oxgraph_layout_util::index_to_usize_validated(offset)
+        oxgraph_layout_util::integrity::index_to_usize_validated(offset)
             .unwrap_or_else(|| unreachable!("checked CSR offset must fit usize"))
     }
 
@@ -859,17 +859,7 @@ where
     }
 }
 
-impl<NodeIndex, EdgeIndex, OffsetWord, TargetWord> GraphCounts
-    for CsrGraph<'_, NodeIndex, EdgeIndex, OffsetWord, TargetWord>
-where
-    NodeIndex: LayoutIndex,
-    EdgeIndex: LayoutIndex,
-    OffsetWord: LayoutWord<Index = EdgeIndex>,
-    TargetWord: LayoutWord<Index = NodeIndex>,
-{
-}
-
-impl<NodeIndex, EdgeIndex, OffsetWord, TargetWord> ElementIndex
+impl<NodeIndex, EdgeIndex, OffsetWord, TargetWord> DenseElementIndex
     for CsrGraph<'_, NodeIndex, EdgeIndex, OffsetWord, TargetWord>
 where
     NodeIndex: LayoutIndex,
@@ -886,7 +876,7 @@ where
     }
 }
 
-impl<NodeIndex, EdgeIndex, OffsetWord, TargetWord> RelationIndex
+impl<NodeIndex, EdgeIndex, OffsetWord, TargetWord> DenseRelationIndex
     for CsrGraph<'_, NodeIndex, EdgeIndex, OffsetWord, TargetWord>
 where
     NodeIndex: LayoutIndex,

@@ -8,8 +8,8 @@ use oxgraph_algo::{
     reverse_breadth_first_search_bounded,
 };
 use oxgraph_graph::{
-    CanonicalElementIdentity, CanonicalRelationIdentity, EdgeSourceGraph, EdgeTargetGraph,
-    ElementIndex, LocalElementIdentity, OutgoingGraph,
+    CanonicalElementIdentity, CanonicalRelationIdentity, DenseElementIndex, EdgeSourceGraph,
+    EdgeTargetGraph, LocalElementIdentity, OutgoingGraph,
 };
 
 use crate::{

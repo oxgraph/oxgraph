@@ -7,8 +7,8 @@
 
 use arrow_array::{Array, PrimitiveArray, types::ArrowPrimitiveType};
 use oxgraph_topology::{
-    ElementIndex, ElementWeight, IncidenceBase, IncidenceIndex, IncidenceWeight, RelationIndex,
-    RelationWeight, TopologyBase,
+    DenseElementIndex, DenseIncidenceIndex, DenseRelationIndex, ElementWeight, IncidenceBase,
+    IncidenceWeight, RelationWeight, TopologyBase,
 };
 
 use crate::{
@@ -142,7 +142,7 @@ macro_rules! impl_axis_incidence_base {
     ($storage:ident) => {
         impl<T, Id, I, P> IncidenceBase for $storage<'_, IncidenceAxis, T, Id, I, P>
         where
-            T: IncidenceIndex,
+            T: DenseIncidenceIndex,
             I: PropertyIndex,
             P: ArrowPrimitiveType,
         {
@@ -209,14 +209,14 @@ where
     }
 }
 
-impl_axis_topology_base!(DenseWeights, ElementAxis, ElementIndex);
-impl_axis_topology_base!(DenseWeights, RelationAxis, RelationIndex);
-impl_axis_topology_base!(DenseWeights, IncidenceAxis, IncidenceIndex);
+impl_axis_topology_base!(DenseWeights, ElementAxis, DenseElementIndex);
+impl_axis_topology_base!(DenseWeights, RelationAxis, DenseRelationIndex);
+impl_axis_topology_base!(DenseWeights, IncidenceAxis, DenseIncidenceIndex);
 impl_axis_incidence_base!(DenseWeights);
 
 impl_dense_axis_weight!(
     ElementAxis,
-    ElementIndex,
+    DenseElementIndex,
     ElementId,
     element_index,
     ElementWeight,
@@ -224,7 +224,7 @@ impl_dense_axis_weight!(
 );
 impl_dense_axis_weight!(
     RelationAxis,
-    RelationIndex,
+    DenseRelationIndex,
     RelationId,
     relation_index,
     RelationWeight,
@@ -232,7 +232,7 @@ impl_dense_axis_weight!(
 );
 impl_dense_axis_weight!(
     IncidenceAxis,
-    IncidenceIndex,
+    DenseIncidenceIndex,
     IncidenceId,
     incidence_index,
     IncidenceWeight,
@@ -304,14 +304,14 @@ where
     }
 }
 
-impl_axis_topology_base!(SparseWeights, ElementAxis, ElementIndex);
-impl_axis_topology_base!(SparseWeights, RelationAxis, RelationIndex);
-impl_axis_topology_base!(SparseWeights, IncidenceAxis, IncidenceIndex);
+impl_axis_topology_base!(SparseWeights, ElementAxis, DenseElementIndex);
+impl_axis_topology_base!(SparseWeights, RelationAxis, DenseRelationIndex);
+impl_axis_topology_base!(SparseWeights, IncidenceAxis, DenseIncidenceIndex);
 impl_axis_incidence_base!(SparseWeights);
 
 impl_sparse_axis_weight!(
     ElementAxis,
-    ElementIndex,
+    DenseElementIndex,
     ElementId,
     element_index,
     ElementWeight,
@@ -319,7 +319,7 @@ impl_sparse_axis_weight!(
 );
 impl_sparse_axis_weight!(
     RelationAxis,
-    RelationIndex,
+    DenseRelationIndex,
     RelationId,
     relation_index,
     RelationWeight,
@@ -327,7 +327,7 @@ impl_sparse_axis_weight!(
 );
 impl_sparse_axis_weight!(
     IncidenceAxis,
-    IncidenceIndex,
+    DenseIncidenceIndex,
     IncidenceId,
     incidence_index,
     IncidenceWeight,

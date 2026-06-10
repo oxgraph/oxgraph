@@ -4,14 +4,14 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use oxgraph_csr::build::GraphBuilder;
 use oxgraph_graph::{
-    EdgeSourceGraph, EdgeTargetGraph, ElementIndex, ElementPredecessors, ElementSuccessors,
-    GraphCounts, IncomingEdgeCount, IncomingGraph, LocalElementIdentity, LocalRelationIdentity,
-    OutgoingEdgeCount, OutgoingGraph, RelationIndex, TopologyBase, TopologyCounts,
+    DenseElementIndex, DenseRelationIndex, EdgeSourceGraph, EdgeTargetGraph, ElementPredecessors,
+    ElementSuccessors, IncomingEdgeCount, IncomingGraph, LocalElementIdentity,
+    LocalRelationIdentity, OutgoingEdgeCount, OutgoingGraph, TopologyBase, TopologyCounts,
 };
 use oxgraph_hyper::{
-    DirectedHyperedgeIncidences, DirectedHyperedgeParticipants, DirectedVertexHyperedges,
-    ElementIncidenceCount, HypergraphCounts, IncidenceBase, IncidenceCounts, IncidenceElement,
-    IncidenceIndex, IncidenceRelation, IncidenceRole, IncidentHyperedges, RelationIncidenceCount,
+    DenseIncidenceIndex, DirectedHyperedgeIncidences, DirectedHyperedgeParticipants,
+    DirectedVertexHyperedges, ElementIncidenceCount, IncidenceBase, IncidenceCounts,
+    IncidenceElement, IncidenceRelation, IncidenceRole, IncidentHyperedges, RelationIncidenceCount,
     RelationIncidences,
 };
 use oxgraph_hyper_bcsr::build::{HyperVertexId, HypergraphBuilder};
@@ -381,9 +381,7 @@ impl TopologyCounts for GraphProjection {
     }
 }
 
-impl GraphCounts for GraphProjection {}
-
-impl ElementIndex for GraphProjection {
+impl DenseElementIndex for GraphProjection {
     fn element_bound(&self) -> usize {
         self.elements.len()
     }
@@ -393,7 +391,7 @@ impl ElementIndex for GraphProjection {
     }
 }
 
-impl RelationIndex for GraphProjection {
+impl DenseRelationIndex for GraphProjection {
     fn relation_bound(&self) -> usize {
         self.relations.len()
     }
@@ -776,15 +774,13 @@ impl TopologyCounts for HypergraphProjection {
     }
 }
 
-impl HypergraphCounts for HypergraphProjection {}
-
 impl IncidenceCounts for HypergraphProjection {
     fn incidence_count(&self) -> usize {
         self.incidences.len()
     }
 }
 
-impl ElementIndex for HypergraphProjection {
+impl DenseElementIndex for HypergraphProjection {
     fn element_bound(&self) -> usize {
         self.elements.len()
     }
@@ -794,7 +790,7 @@ impl ElementIndex for HypergraphProjection {
     }
 }
 
-impl RelationIndex for HypergraphProjection {
+impl DenseRelationIndex for HypergraphProjection {
     fn relation_bound(&self) -> usize {
         self.relations.len()
     }
@@ -804,7 +800,7 @@ impl RelationIndex for HypergraphProjection {
     }
 }
 
-impl IncidenceIndex for HypergraphProjection {
+impl DenseIncidenceIndex for HypergraphProjection {
     fn incidence_bound(&self) -> usize {
         self.incidences.len()
     }

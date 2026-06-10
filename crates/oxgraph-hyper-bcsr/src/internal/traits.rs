@@ -3,12 +3,12 @@
 //! [`BcsrHypergraph`]: crate::BcsrHypergraph
 
 use oxgraph_hyper::{
-    ContainsElement, ContainsIncidence, ContainsRelation, DirectedHyperedgeIncidences,
-    DirectedHyperedgeParticipants, DirectedVertexHyperedges, ElementIncidenceCount,
-    ElementIncidences, ElementIndex, ElementPredecessors, ElementSuccessors, HyperedgeParticipants,
-    HypergraphCounts, IncidenceBase, IncidenceCounts, IncidenceElement, IncidenceIndex,
+    ContainsElement, ContainsIncidence, ContainsRelation, DenseElementIndex, DenseIncidenceIndex,
+    DenseRelationIndex, DirectedHyperedgeIncidences, DirectedHyperedgeParticipants,
+    DirectedVertexHyperedges, ElementIncidenceCount, ElementIncidences, ElementPredecessors,
+    ElementSuccessors, HyperedgeParticipants, IncidenceBase, IncidenceCounts, IncidenceElement,
     IncidenceRelation, IncidenceRole, IncidentHyperedges, RelationIncidenceCount,
-    RelationIncidences, RelationIndex, TopologyBase, TopologyCounts,
+    RelationIncidences, TopologyBase, TopologyCounts,
 };
 
 use crate::{
@@ -232,9 +232,7 @@ impl<W: BcsrWords> IncidenceCounts for BcsrHypergraph<'_, W> {
     }
 }
 
-impl<W: BcsrWords> HypergraphCounts for BcsrHypergraph<'_, W> {}
-
-impl<W: BcsrWords> ElementIndex for BcsrHypergraph<'_, W> {
+impl<W: BcsrWords> DenseElementIndex for BcsrHypergraph<'_, W> {
     fn element_bound(&self) -> usize {
         self.vertex_count()
     }
@@ -244,7 +242,7 @@ impl<W: BcsrWords> ElementIndex for BcsrHypergraph<'_, W> {
     }
 }
 
-impl<W: BcsrWords> RelationIndex for BcsrHypergraph<'_, W> {
+impl<W: BcsrWords> DenseRelationIndex for BcsrHypergraph<'_, W> {
     fn relation_bound(&self) -> usize {
         self.hyperedge_count()
     }
@@ -254,7 +252,7 @@ impl<W: BcsrWords> RelationIndex for BcsrHypergraph<'_, W> {
     }
 }
 
-impl<W: BcsrWords> IncidenceIndex for BcsrHypergraph<'_, W> {
+impl<W: BcsrWords> DenseIncidenceIndex for BcsrHypergraph<'_, W> {
     fn incidence_bound(&self) -> usize {
         self.counts().total_incidences
     }

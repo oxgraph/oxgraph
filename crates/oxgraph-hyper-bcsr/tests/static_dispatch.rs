@@ -1,11 +1,12 @@
 //! Static-dispatch tests for [`BcsrHypergraph`] over `oxgraph-hyper` traits.
 
 use oxgraph_hyper::{
-    ContainsElement, ContainsIncidence, ContainsRelation, DirectedHyperedgeParticipants,
-    DirectedVertexPredecessors, DirectedVertexSuccessors, ElementIncidenceCount, ElementIndex,
-    HyperedgeParticipantCount, HyperedgeParticipants, HypergraphCounts, IncidenceBase,
-    IncidenceElement, IncidenceIndex, IncidenceRelation, IncidenceRole, IncidentHyperedgeCount,
-    IncidentHyperedges, RelationIncidenceCount, RelationIncidences, RelationIndex, TopologyBase,
+    ContainsElement, ContainsIncidence, ContainsRelation, DenseElementIndex, DenseIncidenceIndex,
+    DenseRelationIndex, DirectedHyperedgeParticipants, DirectedVertexPredecessors,
+    DirectedVertexSuccessors, ElementIncidenceCount, HyperedgeParticipantCount,
+    HyperedgeParticipants, HypergraphCounts, IncidenceBase, IncidenceElement, IncidenceRelation,
+    IncidenceRole, IncidentHyperedgeCount, IncidentHyperedges, RelationIncidenceCount,
+    RelationIncidences, TopologyBase,
 };
 use oxgraph_hyper_bcsr::{
     BcsrError, BcsrHyperedgeId, BcsrNativeHypergraph, BcsrParticipantId, BcsrRole, BcsrSections,
@@ -112,21 +113,21 @@ fn incident_size_via_trait<H: IncidentHyperedgeCount>(view: &H, vertex: H::Eleme
 
 fn check_element_index<H>(view: &H, vertex: H::ElementId, expected: usize)
 where
-    H: ElementIndex,
+    H: DenseElementIndex,
 {
     assert_eq!(view.element_index(vertex), expected);
 }
 
 fn check_relation_index<H>(view: &H, hyperedge: H::RelationId, expected: usize)
 where
-    H: RelationIndex,
+    H: DenseRelationIndex,
 {
     assert_eq!(view.relation_index(hyperedge), expected);
 }
 
 fn check_incidence_index<H>(view: &H, incidence: H::IncidenceId, expected: usize)
 where
-    H: IncidenceIndex,
+    H: DenseIncidenceIndex,
 {
     assert_eq!(view.incidence_index(incidence), expected);
 }

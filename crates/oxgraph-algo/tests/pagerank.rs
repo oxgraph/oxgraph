@@ -25,7 +25,8 @@ use oxgraph_hyper_bcsr::{
     BcsrVertexId,
 };
 use oxgraph_topology::{
-    ElementIndex, IncidenceBase, IncidenceWeight, RelationIndex, RelationWeight, TopologyBase,
+    DenseElementIndex, DenseRelationIndex, IncidenceBase, IncidenceWeight, RelationWeight,
+    TopologyBase,
 };
 use proptest::prelude::*;
 

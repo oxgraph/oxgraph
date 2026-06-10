@@ -8,7 +8,7 @@ use oxgraph_algo::{
     LongestPathError, ToposortError, connected_components, longest_path_dag, shortest_path_lengths,
     strongly_connected_components, topological_sort,
 };
-use oxgraph_topology::{ElementIndex, ElementSuccessors, TopologyBase};
+use oxgraph_topology::{DenseElementIndex, ElementSuccessors, TopologyBase};
 use proptest::prelude::*;
 
 /// Minimal directed adjacency-list view implementing only the traits the
@@ -35,7 +35,7 @@ impl TopologyBase for FixtureGraph {
     type RelationId = usize;
 }
 
-impl ElementIndex for FixtureGraph {
+impl DenseElementIndex for FixtureGraph {
     fn element_bound(&self) -> usize {
         self.adjacency.len()
     }

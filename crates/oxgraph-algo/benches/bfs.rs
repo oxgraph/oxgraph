@@ -31,7 +31,7 @@ use oxgraph_csr::{CsrNativeGraph, CsrNodeId};
 use oxgraph_hyper_bcsr::{BcsrSnapshotHypergraph, BcsrSnapshotIndex, BcsrVertexId};
 use oxgraph_layout_util::crc32c_append;
 use oxgraph_snapshot::{Snapshot, SnapshotBuilder};
-use oxgraph_topology::ElementIndex;
+use oxgraph_topology::DenseElementIndex;
 
 /// `u32` head offsets section kind derived from the base-plus-width scheme.
 const SNAPSHOT_KIND_BCSR_HEAD_OFFSETS_U32: u32 = <u32 as BcsrSnapshotIndex>::HEAD_OFFSETS_KIND;

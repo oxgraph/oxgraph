@@ -10,7 +10,7 @@ use oxgraph_property::{
     SparseWeights, StorageMode, encode_property_snapshot, rekey_layer_to_local,
     validate_property_sections, validate_unique_layer_ids, validate_unique_names,
 };
-use oxgraph_topology::{RelationIndex, RelationWeight, TopologyBase};
+use oxgraph_topology::{DenseRelationIndex, RelationWeight, TopologyBase};
 use proptest::{prelude::*, test_runner::TestCaseError};
 
 /// Test topology with dense relation IDs.
@@ -25,7 +25,7 @@ impl TopologyBase for Topology {
     type RelationId = u32;
 }
 
-impl RelationIndex for Topology {
+impl DenseRelationIndex for Topology {
     fn relation_bound(&self) -> usize {
         self.relation_bound
     }

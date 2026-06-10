@@ -1,9 +1,14 @@
 //! Property tests for layout-util primitives (build-time + read-time).
 
 use oxgraph_layout_util::{
-    IdOutOfBounds, LayoutIndex, OffsetIntegrityIssue, OffsetOverflow, build_offset_index,
-    check_offset_section, check_offsets_monotonic, check_value_range, id_to_slot, index_from_usize,
-    slot_or_max,
+    LayoutIndex,
+    build::{
+        IdOutOfBounds, OffsetOverflow, build_offset_index, id_to_slot, index_from_usize,
+        slot_or_max,
+    },
+    integrity::{
+        OffsetIntegrityIssue, check_offset_section, check_offsets_monotonic, check_value_range,
+    },
 };
 use proptest::{prelude::*, test_runner::TestCaseError};
 
@@ -239,7 +244,7 @@ proptest! {
     #[test]
     fn next_dense_index_yields_dense_u16_ids(start in 0_usize..(u16::MAX as usize)) {
         let mut counter = start;
-        let id: u16 = oxgraph_layout_util::next_dense_index(&mut counter, |value| value)
+        let id: u16 = oxgraph_layout_util::build::next_dense_index(&mut counter, |value| value)
             .expect("in-width count allocates");
         prop_assert_eq!(usize::from(id), start);
         prop_assert_eq!(counter, start + 1);
@@ -252,7 +257,7 @@ proptest! {
     ) {
         let mut counter = excess;
         let result: Result<u16, usize> =
-            oxgraph_layout_util::next_dense_index(&mut counter, |value| value);
+            oxgraph_layout_util::build::next_dense_index(&mut counter, |value| value);
         prop_assert_eq!(result, Err(excess));
         prop_assert_eq!(counter, excess);
     }
@@ -264,6 +269,6 @@ proptest! {
 fn next_dense_index_rejects_counter_overflow() {
     let mut counter = usize::MAX;
     let result: Result<u64, usize> =
-        oxgraph_layout_util::next_dense_index(&mut counter, |value| value);
+        oxgraph_layout_util::build::next_dense_index(&mut counter, |value| value);
     assert_eq!(result, Err(usize::MAX));
 }

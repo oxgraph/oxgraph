@@ -1199,13 +1199,17 @@ This matters because mutation changes many things:
 * memory layout,
 * and traversal guarantees.
 
-Mutation must be considered in the v1 capability model.
+Implementation experience revised where mutation lives: mutation SEMANTICS
+live in engines (`oxgraph-db` overlays with canonical-ID watermarks, tombstone
+masking, per-family deltas, and commit/freeze; `oxgraph-postgres` sync-driven
+rebuild), and a shared mutation VOCABULARY in `oxgraph-topology` is deferred
+until two consumers exist. See "Mutation capability" in
+`docs/architecture.md`.
 
-But production-grade mutation engines should not be required for the MVP.
+The revised rule is:
 
-The v1 rule is:
-
-> Model mutation capabilities early. Implement mutation strategies incrementally.
+> Implement mutation strategies in engines. Defer shared mutation capability
+> traits until a second engine or a generic mutation consumer needs them.
 
 The preferred flow is:
 

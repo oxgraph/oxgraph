@@ -12,13 +12,17 @@ use core::{error::Error, fmt};
 
 use oxgraph_graph::{
     CanonicalElementIdentity, CanonicalRelationIdentity, ContainsElement, ContainsRelation,
-    EdgeSourceGraph, EdgeTargetGraph, ElementIndex, ElementSuccessors, ElementWeight, GraphCounts,
-    LocalElementIdentity, LocalRelationIdentity, OutgoingEdgeCount, OutgoingGraph, RelationIndex,
+    DenseElementIndex, DenseRelationIndex, EdgeSourceGraph, EdgeTargetGraph, ElementSuccessors,
+    ElementWeight, LocalElementIdentity, LocalRelationIdentity, OutgoingEdgeCount, OutgoingGraph,
     RelationWeight, TopologyBase, TopologyCounts,
 };
 use oxgraph_layout_util::{
-    IdOutOfBounds, LayoutIndex, LayoutWord, crc32c_append, id_to_slot, index_from_usize,
-    map_offset_overflow, next_dense_index, slot_or_max,
+    LayoutIndex, LayoutWord,
+    build::{
+        IdOutOfBounds, id_to_slot, index_from_usize, map_offset_overflow, next_dense_index,
+        slot_or_max,
+    },
+    crc32c_append,
 };
 #[cfg(feature = "build-property-arrow")]
 use oxgraph_property::{
@@ -744,14 +748,7 @@ macro_rules! impl_topology_for {
             }
         }
 
-        impl<NodeIndex, EdgeIndex$(, $extra)*> GraphCounts for $name<NodeIndex, EdgeIndex$(, $extra)*>
-        where
-            NodeIndex: LayoutIndex,
-            EdgeIndex: LayoutIndex,
-        {
-        }
-
-        impl<NodeIndex, EdgeIndex$(, $extra)*> ElementIndex for $name<NodeIndex, EdgeIndex$(, $extra)*>
+        impl<NodeIndex, EdgeIndex$(, $extra)*> DenseElementIndex for $name<NodeIndex, EdgeIndex$(, $extra)*>
         where
             NodeIndex: LayoutIndex,
             EdgeIndex: LayoutIndex,
@@ -765,7 +762,7 @@ macro_rules! impl_topology_for {
             }
         }
 
-        impl<NodeIndex, EdgeIndex$(, $extra)*> RelationIndex for $name<NodeIndex, EdgeIndex$(, $extra)*>
+        impl<NodeIndex, EdgeIndex$(, $extra)*> DenseRelationIndex for $name<NodeIndex, EdgeIndex$(, $extra)*>
         where
             NodeIndex: LayoutIndex,
             EdgeIndex: LayoutIndex,
@@ -1141,36 +1138,6 @@ where
         .to_usize()
         .unwrap_or(topology.edge_ids.len());
     start..end
-}
-
-/// Converts a CSR payload slice into explicit little-endian words.
-///
-/// Thin wrapper over [`oxgraph_layout_util::slice_to_le`], kept so the umbrella
-/// re-export surface stays stable; exporters route through
-/// [`SnapshotBuilder::add_section_widths`] directly.
-///
-/// # Performance
-///
-/// This function is `O(values.len())`.
-pub fn csr_slice_to_le<I>(values: &[I]) -> Vec<I::LittleEndianWord>
-where
-    I: CsrSnapshotIndex,
-{
-    oxgraph_layout_util::slice_to_le(values)
-}
-
-/// Converts an identity-map payload slice into explicit little-endian words.
-///
-/// Thin wrapper over [`oxgraph_layout_util::slice_to_le`].
-///
-/// # Performance
-///
-/// This function is `O(values.len())`.
-pub fn identity_slice_to_le<I>(values: &[I]) -> Vec<I::LittleEndianWord>
-where
-    I: CsrSnapshotIndex,
-{
-    oxgraph_layout_util::slice_to_le(values)
 }
 
 /// Exports a frozen graph topology and identity metadata as a CSR snapshot.

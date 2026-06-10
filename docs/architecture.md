@@ -117,6 +117,27 @@ export helpers, because the identity records and typed value payloads are part
 of the property/identity snapshot contract. Generic Rust weight fields have no
 wire format unless the caller supplies explicit Arrow property layers.
 
+### Mutation capability
+
+`oxgraph-topology` deliberately defines no mutable capability traits. Mutation
+semantics live in engines; the shared vocabulary stays read-view only.
+
+The decision rests on three observations:
+
+- No consumer writes code generic over "a mutable topology". Every generic
+  bound in the workspace is a read-view capability; an `AddElement`-style
+  trait would have zero generic call sites.
+- `oxgraph-db` mutates through overlay semantics — canonical-ID watermarks,
+  tombstone masking, per-family deltas, and commit/freeze — which carry far
+  more contract (identity stability, visibility, compaction) than a topology
+  mutation trait could express without becoming the database's API.
+- `oxgraph-postgres` does not mutate views in place at all: it re-derives its
+  borrowed topology through sync-driven rebuild from source-of-truth rows.
+
+Revisit trigger: a second engine with overlay-like write semantics, or a
+consumer that genuinely needs to be generic over mutation. Until then,
+mutation vocabulary is deferred and mutation semantics remain engine-owned.
+
 ## PageRank
 
 `oxgraph-algo::pagerank` uses induced visible-state semantics:
@@ -144,8 +165,8 @@ crate root. Its default feature set is empty. Feature names expose dependency
 costs explicitly, including:
 
 - `property-arrow`;
-- `graph-snapshot`;
-- `hyper-snapshot`;
+- `graph-build`;
+- `hyper-build`;
 - `graph-property-arrow`;
 - `hyper-property-arrow`.
 

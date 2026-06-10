@@ -3,7 +3,7 @@
 use core::iter::FusedIterator;
 
 use oxgraph_topology::{
-    ContainsElement, ElementId, ElementIndex, ElementPredecessors, ElementSuccessors,
+    ContainsElement, DenseElementIndex, ElementId, ElementPredecessors, ElementSuccessors,
 };
 
 use crate::bfs::{
@@ -24,7 +24,7 @@ use crate::bfs::{
 #[must_use = "iterators are lazy and do nothing unless consumed"]
 pub struct BreadthFirstSearch<'graph, G>
 where
-    G: ContainsElement + ElementSuccessors + ElementIndex,
+    G: ContainsElement + ElementSuccessors + DenseElementIndex,
 {
     /// Underlying generic BFS driver carrying the seeded frontier.
     inner: Bfs<'graph, G, SeededOwnedFrontier<G>, Forward>,
@@ -32,7 +32,7 @@ where
 
 impl<G> Iterator for BreadthFirstSearch<'_, G>
 where
-    G: ContainsElement + ElementSuccessors + ElementIndex,
+    G: ContainsElement + ElementSuccessors + DenseElementIndex,
 {
     type Item = ElementId<G>;
 
@@ -42,7 +42,7 @@ where
 }
 
 impl<G> FusedIterator for BreadthFirstSearch<'_, G> where
-    G: ContainsElement + ElementSuccessors + ElementIndex
+    G: ContainsElement + ElementSuccessors + DenseElementIndex
 {
 }
 
@@ -78,7 +78,7 @@ pub fn breadth_first_search<G>(
     start: ElementId<G>,
 ) -> Result<BreadthFirstSearch<'_, G>, BfsError>
 where
-    G: ContainsElement + ElementSuccessors + ElementIndex,
+    G: ContainsElement + ElementSuccessors + DenseElementIndex,
 {
     let witness = ValidatedStart::new(graph, start)?;
     let frontier = SeededOwnedFrontier::new(start, witness);
@@ -101,7 +101,7 @@ where
 #[must_use = "iterators are lazy and do nothing unless consumed"]
 pub struct ReverseBreadthFirstSearch<'graph, G>
 where
-    G: ContainsElement + ElementPredecessors + ElementIndex,
+    G: ContainsElement + ElementPredecessors + DenseElementIndex,
 {
     /// Underlying generic BFS driver carrying the seeded frontier and reverse
     /// direction selector.
@@ -110,7 +110,7 @@ where
 
 impl<G> Iterator for ReverseBreadthFirstSearch<'_, G>
 where
-    G: ContainsElement + ElementPredecessors + ElementIndex,
+    G: ContainsElement + ElementPredecessors + DenseElementIndex,
 {
     type Item = ElementId<G>;
 
@@ -120,7 +120,7 @@ where
 }
 
 impl<G> FusedIterator for ReverseBreadthFirstSearch<'_, G> where
-    G: ContainsElement + ElementPredecessors + ElementIndex
+    G: ContainsElement + ElementPredecessors + DenseElementIndex
 {
 }
 
@@ -146,7 +146,7 @@ pub fn reverse_breadth_first_search<G>(
     start: ElementId<G>,
 ) -> Result<ReverseBreadthFirstSearch<'_, G>, BfsError>
 where
-    G: ContainsElement + ElementPredecessors + ElementIndex,
+    G: ContainsElement + ElementPredecessors + DenseElementIndex,
 {
     let witness = ValidatedStart::new(graph, start)?;
     let frontier = SeededOwnedFrontier::new(start, witness);

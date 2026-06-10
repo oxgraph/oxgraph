@@ -55,8 +55,6 @@ impl TopologyCounts for TinyDirectedGraph {
     }
 }
 
-impl GraphCounts for TinyDirectedGraph {}
-
 /// Graph-facing node ID alias for the example graph.
 type GraphNode = GraphNodeId<TinyDirectedGraph>;
 

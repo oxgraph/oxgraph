@@ -11,9 +11,14 @@
 use alloc::{vec, vec::Vec};
 
 use crate::{
-    IdOutOfBounds, LayoutIndex, OffsetIntegrityIssue, OffsetOverflow, build_offset_index,
-    check_offset_section, check_offsets_monotonic, check_value_range, id_to_slot, index_from_usize,
-    slot_or_max,
+    LayoutIndex,
+    build::{
+        IdOutOfBounds, OffsetOverflow, build_offset_index, id_to_slot, index_from_usize,
+        slot_or_max,
+    },
+    integrity::{
+        OffsetIntegrityIssue, check_offset_section, check_offsets_monotonic, check_value_range,
+    },
 };
 
 // ---------------------------------------------------------------------------
@@ -303,7 +308,7 @@ fn check_offsets_monotonic_first_zero_required() {
 fn next_dense_index_allocation_contract_u16() {
     let start: usize = kani::any();
     let mut counter = start;
-    let result: Result<u16, usize> = crate::next_dense_index(&mut counter, |value| value);
+    let result: Result<u16, usize> = crate::build::next_dense_index(&mut counter, |value| value);
     match result {
         Ok(id) => {
             assert!(start <= u16::MAX as usize);

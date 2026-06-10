@@ -5,7 +5,9 @@
 //! data, or yield an inconsistent view of the bipartite incidence relation.
 //! The depth of the walk is selected by [`BcsrValidation`].
 
-use oxgraph_layout_util::{OffsetIntegrityIssue, check_offset_section, check_value_range};
+use oxgraph_layout_util::integrity::{
+    OffsetIntegrityIssue, check_offset_section, check_value_range,
+};
 
 use crate::{
     error::{BcsrError, BcsrRoleSide, BcsrSection},
@@ -324,7 +326,7 @@ where
 
 /// Validates one offset array: length is `count + 1`, first offset is 0,
 /// monotonic non-decreasing, final offset matches `value_len`. Delegates to
-/// [`oxgraph_layout_util::check_offset_section`] and stamps the [`BcsrSection`]
+/// [`oxgraph_layout_util::integrity::check_offset_section`] and stamps the [`BcsrSection`]
 /// discriminator on any returned issue.
 fn validate_one_offsets<Word: LayoutWord>(
     offsets: &[Word],
@@ -397,7 +399,7 @@ where
 }
 
 /// Returns `Err` if any vertex word is `>= vertex_count`. Delegates to
-/// [`oxgraph_layout_util::check_value_range`] and stamps [`BcsrSection`] on the
+/// [`oxgraph_layout_util::integrity::check_value_range`] and stamps [`BcsrSection`] on the
 /// returned issue.
 fn check_vertex_values<Word: LayoutWord>(
     values: &[Word],
@@ -409,7 +411,7 @@ fn check_vertex_values<Word: LayoutWord>(
 }
 
 /// Returns `Err` if any hyperedge word is `>= hyperedge_count`. Delegates to
-/// [`oxgraph_layout_util::check_value_range`] and stamps [`BcsrSection`] on the
+/// [`oxgraph_layout_util::integrity::check_value_range`] and stamps [`BcsrSection`] on the
 /// returned issue.
 fn check_hyperedge_values<Word: LayoutWord>(
     values: &[Word],
@@ -700,7 +702,7 @@ pub(in crate::internal) fn index_to_usize<Index: LayoutIndex>(
 ///
 /// This function is `O(1)`.
 pub(in crate::internal) fn index_to_usize_validated<Index: LayoutIndex>(value: Index) -> usize {
-    oxgraph_layout_util::index_to_usize_validated(value)
+    oxgraph_layout_util::integrity::index_to_usize_validated(value)
         .unwrap_or_else(|| unreachable!("validated bipartite-CSR index must fit usize"))
 }
 
@@ -715,6 +717,6 @@ pub(in crate::internal) fn index_to_usize_validated<Index: LayoutIndex>(value: I
 ///
 /// This function is `O(1)`.
 pub(in crate::internal) fn usize_to_index_validated<Index: LayoutIndex>(value: usize) -> Index {
-    oxgraph_layout_util::usize_to_index_validated(value)
+    oxgraph_layout_util::integrity::usize_to_index_validated(value)
         .unwrap_or_else(|| unreachable!("validated BCSR slot must fit index"))
 }

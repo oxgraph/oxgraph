@@ -41,8 +41,8 @@ pub trait PageRankHypergraph:
     DirectedVertexHyperedges
     + DirectedHyperedgeIncidences
     + IncidenceElement
-    + ElementIndex
-    + RelationIndex
+    + DenseElementIndex
+    + DenseRelationIndex
 {
 }
 
@@ -50,13 +50,13 @@ impl<T> PageRankHypergraph for T where
     T: DirectedVertexHyperedges
         + DirectedHyperedgeIncidences
         + IncidenceElement
-        + ElementIndex
-        + RelationIndex
+        + DenseElementIndex
+        + DenseRelationIndex
 {
 }
 use oxgraph_topology::{
-    ElementId, ElementIndex, IncidenceElement, IncidenceIndex, IncidenceWeight, RelationId,
-    RelationIndex, RelationWeight,
+    DenseElementIndex, DenseIncidenceIndex, DenseRelationIndex, ElementId, IncidenceElement,
+    IncidenceWeight, RelationId, RelationWeight,
 };
 
 /// Rank scalar accepted by `OxGraph` `PageRank` entry points.
@@ -251,7 +251,7 @@ impl IntoPageRankScalar<f32> for f64 {
 /// the outgoing-edge iterator.
 pub trait OutgoingDistribution<G, S>
 where
-    G: ForwardGraph + ElementIndex,
+    G: ForwardGraph + DenseElementIndex,
     S: PageRankScalar,
 {
     /// Distributes `rank` from `element` to its outgoing visible neighbors.
@@ -293,7 +293,7 @@ pub struct Uniform;
 
 impl<G, S> OutgoingDistribution<G, S> for Uniform
 where
-    G: ForwardGraph + ElementIndex,
+    G: ForwardGraph + DenseElementIndex,
     S: PageRankScalar,
 {
     fn distribute_outgoing(
@@ -359,7 +359,7 @@ impl<'w, W> Weighted<'w, W> {
 
 impl<G, W, S> OutgoingDistribution<G, S> for Weighted<'_, W>
 where
-    G: ForwardGraph + ElementIndex + RelationIndex,
+    G: ForwardGraph + DenseElementIndex + DenseRelationIndex,
     W: RelationWeight<ElementId = G::ElementId, RelationId = G::RelationId>,
     W::Weight: IntoPageRankScalar<S>,
     S: PageRankScalar,
@@ -571,7 +571,7 @@ impl<'rw, 'iw, RW, IW> HyperWeighted<'rw, 'iw, RW, IW> {
 
 impl<H, RW, IW, S> HypergraphOutgoingDistribution<H, S> for HyperWeighted<'_, '_, RW, IW>
 where
-    H: PageRankHypergraph + IncidenceIndex,
+    H: PageRankHypergraph + DenseIncidenceIndex,
     RW: RelationWeight<ElementId = H::ElementId, RelationId = H::RelationId>,
     RW::Weight: IntoPageRankScalar<S>,
     IW: IncidenceWeight<
@@ -1040,7 +1040,7 @@ impl<G, S: PageRankScalar> PageRankWorkspace<G, S> {
     #[must_use]
     pub fn for_graph(graph: &G) -> Self
     where
-        G: ElementIndex,
+        G: DenseElementIndex,
     {
         Self::with_element_bound(graph.element_bound())
     }
@@ -1149,7 +1149,7 @@ impl<H, S: PageRankScalar> HypergraphPageRankWorkspace<H, S> {
     #[must_use]
     pub fn for_hypergraph(hypergraph: &H) -> Self
     where
-        H: ElementIndex + RelationIndex,
+        H: DenseElementIndex + DenseRelationIndex,
     {
         Self::with_bounds(hypergraph.element_bound(), hypergraph.relation_bound())
     }
@@ -1258,7 +1258,7 @@ pub fn pagerank_graph<G, D, I, S>(
     ranks: &mut [S],
 ) -> Result<PageRankReport<S>, PageRankError<S>>
 where
-    G: ForwardGraph + ElementIndex,
+    G: ForwardGraph + DenseElementIndex,
     D: OutgoingDistribution<G, S>,
     I: Clone + IntoIterator<Item = ElementId<G>>,
     S: PageRankScalar,
@@ -1307,7 +1307,7 @@ pub fn pagerank_graph_with_scratch<G, D, I, S>(
     scratch: PageRankScratch<'_, S>,
 ) -> Result<PageRankReport<S>, PageRankError<S>>
 where
-    G: ForwardGraph + ElementIndex,
+    G: ForwardGraph + DenseElementIndex,
     D: OutgoingDistribution<G, S>,
     I: Clone + IntoIterator<Item = ElementId<G>>,
     S: PageRankScalar,
@@ -1368,7 +1368,7 @@ pub fn pagerank_graph_with_workspace<G, D, I, S>(
     workspace: &mut PageRankWorkspace<G, S>,
 ) -> Result<PageRankReport<S>, PageRankError<S>>
 where
-    G: ForwardGraph + ElementIndex,
+    G: ForwardGraph + DenseElementIndex,
     D: OutgoingDistribution<G, S>,
     I: Clone + IntoIterator<Item = ElementId<G>>,
     S: PageRankScalar,
@@ -1829,7 +1829,7 @@ where
         visible_relations: &mut [u8],
     ) -> Result<(usize, S), PageRankError<S>>
     where
-        H: ElementIndex + RelationIndex,
+        H: DenseElementIndex + DenseRelationIndex,
         IE: IntoIterator<Item = ElementId<H>>,
         IR: IntoIterator<Item = RelationId<H>>,
     {
@@ -1883,7 +1883,7 @@ fn build_hyper_personalization_into<H, IE, IR, S>(
     visible_relations: &mut [u8],
 ) -> Result<(), PageRankError<S>>
 where
-    H: ElementIndex + RelationIndex,
+    H: DenseElementIndex + DenseRelationIndex,
     IE: IntoIterator<Item = ElementId<H>>,
     IR: IntoIterator<Item = RelationId<H>>,
     S: PageRankScalar,
@@ -1942,7 +1942,7 @@ fn initialize_ranks<G, I, S>(
     ranks: &mut [S],
 ) -> Result<(), PageRankError<S>>
 where
-    G: ElementIndex,
+    G: DenseElementIndex,
     I: IntoIterator<Item = ElementId<G>>,
     S: PageRankScalar,
 {
@@ -1968,7 +1968,7 @@ fn initialize_hyper_ranks<H, IE, IR, S>(
     relation_ranks: &mut [S],
 ) -> Result<(), PageRankError<S>>
 where
-    H: ElementIndex + RelationIndex,
+    H: DenseElementIndex + DenseRelationIndex,
     IE: IntoIterator<Item = ElementId<H>>,
     IR: IntoIterator<Item = RelationId<H>>,
     S: PageRankScalar,
@@ -2007,7 +2007,7 @@ fn iterate_graph<G, D, I, S>(
     next: &mut [S],
 ) -> Result<PageRankReport<S>, PageRankError<S>>
 where
-    G: ForwardGraph + ElementIndex,
+    G: ForwardGraph + DenseElementIndex,
     D: OutgoingDistribution<G, S>,
     I: Clone + IntoIterator<Item = ElementId<G>>,
     S: PageRankScalar,
@@ -2126,7 +2126,7 @@ where
     })
 }
 
-fn checked_element_index<G: ElementIndex, S>(
+fn checked_element_index<G: DenseElementIndex, S>(
     graph: &G,
     element: ElementId<G>,
 ) -> Result<usize, PageRankError<S>> {
@@ -2157,7 +2157,7 @@ fn checked_relation_weight<G, W, S>(
     relation: RelationId<G>,
 ) -> Result<S, PageRankError<S>>
 where
-    G: RelationIndex,
+    G: DenseRelationIndex,
     W: RelationWeight<ElementId = G::ElementId, RelationId = G::RelationId>,
     W::Weight: IntoPageRankScalar<S>,
     S: PageRankScalar,
@@ -2178,7 +2178,7 @@ fn checked_incidence_weight<H, W, S>(
     incidence: H::IncidenceId,
 ) -> Result<S, PageRankError<S>>
 where
-    H: IncidenceIndex,
+    H: DenseIncidenceIndex,
     W: IncidenceWeight<
             ElementId = H::ElementId,
             RelationId = H::RelationId,
@@ -2207,7 +2207,7 @@ fn outgoing_weight_total<G, W, S>(
     visible: &[u8],
 ) -> Result<S, PageRankError<S>>
 where
-    G: ForwardGraph + ElementIndex + RelationIndex,
+    G: ForwardGraph + DenseElementIndex + DenseRelationIndex,
     W: RelationWeight<ElementId = G::ElementId, RelationId = G::RelationId>,
     W::Weight: IntoPageRankScalar<S>,
     S: PageRankScalar,
@@ -2260,7 +2260,7 @@ fn apply_graph_teleport<G, I, S>(
     next: &[S],
 ) -> Result<S, PageRankError<S>>
 where
-    G: ElementIndex,
+    G: DenseElementIndex,
     I: IntoIterator<Item = ElementId<G>>,
     S: PageRankScalar,
 {
@@ -2281,7 +2281,7 @@ where
     Ok(delta)
 }
 
-fn checked_relation_index_for<H: RelationIndex, S>(
+fn checked_relation_index_for<H: DenseRelationIndex, S>(
     hypergraph: &H,
     relation: RelationId<H>,
 ) -> Result<usize, PageRankError<S>> {
@@ -2297,7 +2297,7 @@ fn hyper_outgoing_relation_weight<H, W, S>(
     visible_relations: &[u8],
 ) -> Result<S, PageRankError<S>>
 where
-    H: DirectedVertexHyperedges + RelationIndex,
+    H: DirectedVertexHyperedges + DenseRelationIndex,
     W: RelationWeight<ElementId = H::ElementId, RelationId = H::RelationId>,
     W::Weight: IntoPageRankScalar<S>,
     S: PageRankScalar,
@@ -2319,7 +2319,7 @@ fn hyper_target_incidence_weight<H, W, S>(
     visible_elements: &[u8],
 ) -> Result<S, PageRankError<S>>
 where
-    H: DirectedHyperedgeIncidences + IncidenceElement + ElementIndex + IncidenceIndex,
+    H: DirectedHyperedgeIncidences + IncidenceElement + DenseElementIndex + DenseIncidenceIndex,
     W: IncidenceWeight<
             ElementId = H::ElementId,
             RelationId = H::RelationId,
@@ -2356,7 +2356,7 @@ fn apply_hyper_teleport<H, IE, IR, S>(
     next_relations: &[S],
 ) -> Result<S, PageRankError<S>>
 where
-    H: ElementIndex + RelationIndex,
+    H: DenseElementIndex + DenseRelationIndex,
     IE: IntoIterator<Item = ElementId<H>>,
     IR: IntoIterator<Item = RelationId<H>>,
     S: PageRankScalar,

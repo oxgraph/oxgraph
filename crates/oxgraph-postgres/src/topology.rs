@@ -5,7 +5,7 @@ use alloc::vec::Vec;
 use oxgraph_csc::{CscNodeId, CscSnapshotGraph};
 use oxgraph_csr::{CsrNodeId, CsrSnapshotGraph};
 use oxgraph_graph::{
-    ContainsElement, EdgeTargetGraph, ElementIndex, ElementPredecessors, ElementSuccessors,
+    ContainsElement, DenseElementIndex, EdgeTargetGraph, ElementPredecessors, ElementSuccessors,
     OutgoingGraph, OutgoingNeighborsGraph, TopologyBase, TopologyCounts,
 };
 use oxgraph_snapshot::Snapshot;
@@ -506,7 +506,7 @@ impl ContainsElement for OverlayOutView<'_> {
     }
 }
 
-impl ElementIndex for OverlayOutView<'_> {
+impl DenseElementIndex for OverlayOutView<'_> {
     fn element_bound(&self) -> usize {
         self.node_count
     }
@@ -658,7 +658,7 @@ impl ContainsElement for OverlayInView<'_> {
     }
 }
 
-impl ElementIndex for OverlayInView<'_> {
+impl DenseElementIndex for OverlayInView<'_> {
     fn element_bound(&self) -> usize {
         self.node_count
     }

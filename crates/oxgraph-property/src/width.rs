@@ -9,7 +9,7 @@ use std::vec::Vec;
 
 use arrow_array::{PrimitiveArray, types::ArrowPrimitiveType};
 use oxgraph_layout_util::SnapshotWidth;
-use oxgraph_topology::{ElementIndex, IncidenceIndex, RelationIndex, TopologyBase};
+use oxgraph_topology::{DenseElementIndex, DenseIncidenceIndex, DenseRelationIndex, TopologyBase};
 
 use crate::model::{IdFamily, PropertyError};
 
@@ -233,7 +233,7 @@ impl PropertyAxis for IncidenceAxis {
 /// Axis-aware topology bound accessor.
 ///
 /// Implemented for every topology view that exposes the per-axis index trait
-/// `ElementIndex` / `RelationIndex` / `IncidenceIndex`. Exists so that
+/// `DenseElementIndex` / `DenseRelationIndex` / `DenseIncidenceIndex`. Exists so that
 /// generic constructors on [`DenseWeights`] and [`SparseWeights`] can dispatch
 /// to the right `element_bound` / `relation_bound` / `incidence_bound` accessor
 /// from a single body, without parallel per-axis impl blocks.
@@ -256,7 +256,7 @@ pub trait AxisIndex<A: PropertyAxis>: TopologyBase {
 
 impl<T> AxisIndex<ElementAxis> for T
 where
-    T: ElementIndex,
+    T: DenseElementIndex,
 {
     fn axis_bound(&self) -> usize {
         self.element_bound()
@@ -265,7 +265,7 @@ where
 
 impl<T> AxisIndex<RelationAxis> for T
 where
-    T: RelationIndex,
+    T: DenseRelationIndex,
 {
     fn axis_bound(&self) -> usize {
         self.relation_bound()
@@ -274,7 +274,7 @@ where
 
 impl<T> AxisIndex<IncidenceAxis> for T
 where
-    T: IncidenceIndex,
+    T: DenseIncidenceIndex,
 {
     fn axis_bound(&self) -> usize {
         self.incidence_bound()

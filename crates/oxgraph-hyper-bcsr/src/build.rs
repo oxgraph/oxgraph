@@ -19,18 +19,21 @@ use core::{error::Error, fmt, marker::PhantomData};
 
 use oxgraph_hyper::{
     CanonicalElementIdentity, CanonicalIncidenceIdentity, CanonicalRelationIdentity,
-    ContainsElement, ContainsIncidence, ContainsRelation, DirectedHyperedgeIncidences,
-    DirectedHyperedgeParticipants, DirectedVertexHyperedges, ElementIncidenceCount,
-    ElementIncidences, ElementIndex as ElementIndexTrait, ElementPredecessors, ElementSuccessors,
-    ElementWeight, HyperedgeParticipants, HypergraphCounts, IncidenceBase, IncidenceCounts,
-    IncidenceElement, IncidenceIndex as IncidenceIndexTrait, IncidenceRelation, IncidenceRole,
-    IncidenceWeight, IncidentHyperedges, LocalElementIdentity, LocalIncidenceIdentity,
-    LocalRelationIdentity, RelationIncidenceCount, RelationIncidences,
-    RelationIndex as RelationIndexTrait, RelationWeight, TopologyBase, TopologyCounts,
+    ContainsElement, ContainsIncidence, ContainsRelation, DenseElementIndex, DenseIncidenceIndex,
+    DenseRelationIndex, DirectedHyperedgeIncidences, DirectedHyperedgeParticipants,
+    DirectedVertexHyperedges, ElementIncidenceCount, ElementIncidences, ElementPredecessors,
+    ElementSuccessors, ElementWeight, HyperedgeParticipants, IncidenceBase, IncidenceCounts,
+    IncidenceElement, IncidenceRelation, IncidenceRole, IncidenceWeight, IncidentHyperedges,
+    LocalElementIdentity, LocalIncidenceIdentity, LocalRelationIdentity, RelationIncidenceCount,
+    RelationIncidences, RelationWeight, TopologyBase, TopologyCounts,
 };
 use oxgraph_layout_util::{
-    IdOutOfBounds, LayoutIndex, LayoutWord, OffsetOverflow, build_offset_index, crc32c_append,
-    id_to_slot, index_from_usize, slot_or_max,
+    LayoutIndex, LayoutWord,
+    build::{
+        IdOutOfBounds, OffsetOverflow, build_offset_index, id_to_slot, index_from_usize,
+        slot_or_max,
+    },
+    crc32c_append,
 };
 #[cfg(feature = "build-property-arrow")]
 use oxgraph_property::{
@@ -1097,15 +1100,6 @@ macro_rules! impl_topology_for {
             }
         }
 
-        impl<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*> HypergraphCounts
-            for $name<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*>
-        where
-            VertexIndex: LayoutIndex + LayoutWord<Index = VertexIndex>,
-            RelationIndex: LayoutIndex + LayoutWord<Index = RelationIndex>,
-            IncidenceIndex: LayoutIndex + LayoutWord<Index = IncidenceIndex>,
-        {
-        }
-
         impl<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*> IncidenceCounts
             for $name<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*>
         where
@@ -1118,7 +1112,7 @@ macro_rules! impl_topology_for {
             }
         }
 
-        impl<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*> ElementIndexTrait
+        impl<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*> DenseElementIndex
             for $name<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*>
         where
             VertexIndex: LayoutIndex + LayoutWord<Index = VertexIndex>,
@@ -1134,7 +1128,7 @@ macro_rules! impl_topology_for {
             }
         }
 
-        impl<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*> RelationIndexTrait
+        impl<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*> DenseRelationIndex
             for $name<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*>
         where
             VertexIndex: LayoutIndex + LayoutWord<Index = VertexIndex>,
@@ -1150,7 +1144,7 @@ macro_rules! impl_topology_for {
             }
         }
 
-        impl<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*> IncidenceIndexTrait
+        impl<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*> DenseIncidenceIndex
             for $name<VertexIndex, RelationIndex, IncidenceIndex$(, $extra)*>
         where
             VertexIndex: LayoutIndex + LayoutWord<Index = VertexIndex>,
@@ -1596,21 +1590,6 @@ where
     fn incidence_weight(&self, incidence: HyperParticipantId<IncidenceIndex>) -> Self::Weight {
         self.incidence_weights[participant_slot(incidence)]
     }
-}
-
-/// Converts an identity-map payload slice into explicit little-endian words.
-///
-/// Thin wrapper over [`oxgraph_layout_util::slice_to_le`].
-///
-/// # Performance
-///
-/// This function is `O(values.len())`.
-#[cfg(feature = "build-property-arrow")]
-pub fn identity_slice_to_le<I>(values: &[I]) -> Vec<I::LittleEndianWord>
-where
-    I: PropertySnapshotMetaWord,
-{
-    oxgraph_layout_util::slice_to_le(values)
 }
 
 /// Exports a frozen hypergraph topology as a BCSR snapshot.

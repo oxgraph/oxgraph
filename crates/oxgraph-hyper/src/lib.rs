@@ -24,12 +24,12 @@ extern crate kani;
 
 pub use oxgraph_topology::{
     CanonicalElementIdentity, CanonicalIncidenceIdentity, CanonicalRelationIdentity,
-    ContainsElement, ContainsIncidence, ContainsRelation, ElementIncidenceCount, ElementIncidences,
-    ElementIndex, ElementPredecessors, ElementSuccessors, ElementWeight, IncidenceBase,
-    IncidenceCounts, IncidenceElement, IncidenceIndex, IncidenceRelation, IncidenceRole,
-    IncidenceWeight, LocalElementIdentity, LocalIncidenceIdentity, LocalRelationIdentity,
-    RelationIncidenceCount, RelationIncidences, RelationIndex, RelationWeight, TopologyBase,
-    TopologyCounts, TopologyId,
+    ContainsElement, ContainsIncidence, ContainsRelation, DenseElementIndex, DenseIncidenceIndex,
+    DenseRelationIndex, ElementIncidenceCount, ElementIncidences, ElementPredecessors,
+    ElementSuccessors, ElementWeight, IncidenceBase, IncidenceCounts, IncidenceElement,
+    IncidenceRelation, IncidenceRole, IncidenceWeight, LocalElementIdentity,
+    LocalIncidenceIdentity, LocalRelationIdentity, RelationIncidenceCount, RelationIncidences,
+    RelationWeight, TopologyBase, TopologyCounts, TopologyId,
 };
 
 /// Hypergraph-facing alias for a topology element ID (vertex).
@@ -75,6 +75,8 @@ pub trait HypergraphCounts: TopologyCounts {
     }
 }
 
+impl<T> HypergraphCounts for T where T: TopologyCounts {}
+
 /// Participant-record count capability for hypergraph views.
 ///
 /// Hypergraph-facing name for [`IncidenceCounts`].
@@ -89,8 +91,8 @@ impl<T> ParticipantCounts for T where T: IncidenceCounts {}
 
 /// Dense vertex-index capability for hypergraph views.
 ///
-/// Hypergraph-facing name for [`ElementIndex`].
-pub trait VertexIndex: ElementIndex {
+/// Hypergraph-facing name for [`DenseElementIndex`].
+pub trait DenseVertexIndex: DenseElementIndex {
     /// Returns the exclusive upper bound for vertex indexes in this view.
     fn vertex_bound(&self) -> usize {
         self.element_bound()
@@ -102,12 +104,12 @@ pub trait VertexIndex: ElementIndex {
     }
 }
 
-impl<T> VertexIndex for T where T: ElementIndex {}
+impl<T> DenseVertexIndex for T where T: DenseElementIndex {}
 
 /// Dense hyperedge-index capability for hypergraph views.
 ///
-/// Hypergraph-facing name for [`RelationIndex`].
-pub trait HyperedgeIndex: RelationIndex {
+/// Hypergraph-facing name for [`DenseRelationIndex`].
+pub trait DenseHyperedgeIndex: DenseRelationIndex {
     /// Returns the exclusive upper bound for hyperedge indexes in this view.
     fn hyperedge_bound(&self) -> usize {
         self.relation_bound()
@@ -119,12 +121,12 @@ pub trait HyperedgeIndex: RelationIndex {
     }
 }
 
-impl<T> HyperedgeIndex for T where T: RelationIndex {}
+impl<T> DenseHyperedgeIndex for T where T: DenseRelationIndex {}
 
 /// Dense participant-index capability for hypergraph views with incidences.
 ///
-/// Hypergraph-facing name for [`IncidenceIndex`].
-pub trait ParticipantIndex: IncidenceIndex {
+/// Hypergraph-facing name for [`DenseIncidenceIndex`].
+pub trait DenseParticipantIndex: DenseIncidenceIndex {
     /// Returns the exclusive upper bound for participant indexes in this view.
     fn participant_bound(&self) -> usize {
         self.incidence_bound()
@@ -136,7 +138,7 @@ pub trait ParticipantIndex: IncidenceIndex {
     }
 }
 
-impl<T> ParticipantIndex for T where T: IncidenceIndex {}
+impl<T> DenseParticipantIndex for T where T: DenseIncidenceIndex {}
 
 /// Vertex-ID containment capability for hypergraph views.
 ///

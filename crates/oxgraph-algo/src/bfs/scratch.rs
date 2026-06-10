@@ -3,7 +3,7 @@
 use core::iter::FusedIterator;
 
 use oxgraph_topology::{
-    ContainsElement, ElementId, ElementIndex, ElementPredecessors, ElementSuccessors,
+    ContainsElement, DenseElementIndex, ElementId, ElementPredecessors, ElementSuccessors,
 };
 
 use crate::bfs::{
@@ -25,7 +25,7 @@ use crate::bfs::{
 #[must_use = "iterators are lazy and do nothing unless consumed"]
 pub struct BreadthFirstSearchScratch<'graph, 'scratch, G>
 where
-    G: ContainsElement + ElementSuccessors + ElementIndex,
+    G: ContainsElement + ElementSuccessors + DenseElementIndex,
 {
     /// Underlying generic BFS driver carrying the seeded frontier.
     inner: Bfs<'graph, G, SeededByteFlagFrontier<'scratch, G>, Forward>,
@@ -33,7 +33,7 @@ where
 
 impl<G> Iterator for BreadthFirstSearchScratch<'_, '_, G>
 where
-    G: ContainsElement + ElementSuccessors + ElementIndex,
+    G: ContainsElement + ElementSuccessors + DenseElementIndex,
 {
     type Item = ElementId<G>;
 
@@ -43,7 +43,7 @@ where
 }
 
 impl<G> FusedIterator for BreadthFirstSearchScratch<'_, '_, G> where
-    G: ContainsElement + ElementSuccessors + ElementIndex
+    G: ContainsElement + ElementSuccessors + DenseElementIndex
 {
 }
 
@@ -83,7 +83,7 @@ pub fn breadth_first_search_with_scratch<'graph, 'scratch, G>(
     queue: &'scratch mut [ElementId<G>],
 ) -> Result<BreadthFirstSearchScratch<'graph, 'scratch, G>, BfsError>
 where
-    G: ContainsElement + ElementSuccessors + ElementIndex,
+    G: ContainsElement + ElementSuccessors + DenseElementIndex,
 {
     let witness = ValidatedScratch::new(graph, start, visited.len(), queue.len())?;
     let frontier = SeededByteFlagFrontier::new(visited, queue, start, witness);
@@ -106,7 +106,7 @@ where
 #[must_use = "iterators are lazy and do nothing unless consumed"]
 pub struct ReverseBreadthFirstSearchScratch<'graph, 'scratch, G>
 where
-    G: ContainsElement + ElementPredecessors + ElementIndex,
+    G: ContainsElement + ElementPredecessors + DenseElementIndex,
 {
     /// Underlying generic BFS driver carrying the seeded frontier and reverse
     /// direction selector.
@@ -115,7 +115,7 @@ where
 
 impl<G> Iterator for ReverseBreadthFirstSearchScratch<'_, '_, G>
 where
-    G: ContainsElement + ElementPredecessors + ElementIndex,
+    G: ContainsElement + ElementPredecessors + DenseElementIndex,
 {
     type Item = ElementId<G>;
 
@@ -125,7 +125,7 @@ where
 }
 
 impl<G> FusedIterator for ReverseBreadthFirstSearchScratch<'_, '_, G> where
-    G: ContainsElement + ElementPredecessors + ElementIndex
+    G: ContainsElement + ElementPredecessors + DenseElementIndex
 {
 }
 
@@ -162,7 +162,7 @@ pub fn reverse_breadth_first_search_with_scratch<'graph, 'scratch, G>(
     queue: &'scratch mut [ElementId<G>],
 ) -> Result<ReverseBreadthFirstSearchScratch<'graph, 'scratch, G>, BfsError>
 where
-    G: ContainsElement + ElementPredecessors + ElementIndex,
+    G: ContainsElement + ElementPredecessors + DenseElementIndex,
 {
     let witness = ValidatedScratch::new(graph, start, visited.len(), queue.len())?;
     let frontier = SeededByteFlagFrontier::new(visited, queue, start, witness);

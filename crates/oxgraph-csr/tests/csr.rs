@@ -2,8 +2,8 @@
 
 use oxgraph_csr::{CsrEdgeId, CsrError, CsrGraph, CsrNativeGraph, CsrNodeId};
 use oxgraph_graph::{
-    EdgeTargetGraph, ElementIndex, GraphCounts, OutgoingEdgeCount, OutgoingGraph,
-    OutgoingNeighborsGraph, RelationIndex,
+    DenseElementIndex, DenseRelationIndex, EdgeTargetGraph, GraphCounts, OutgoingEdgeCount,
+    OutgoingGraph, OutgoingNeighborsGraph,
 };
 use proptest::prelude::*;
 use zerocopy::byteorder::{LE, U16, U32, U64};

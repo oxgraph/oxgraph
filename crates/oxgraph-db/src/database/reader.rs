@@ -6,7 +6,7 @@ use oxgraph_algo::{
     PageRankConfig, PageRankError, PageRankWorkspace, Uniform, longest_path_dag,
     pagerank_graph_with_workspace,
 };
-use oxgraph_graph::{CanonicalElementIdentity, ElementIndex, LocalElementIdentity};
+use oxgraph_graph::{CanonicalElementIdentity, DenseElementIndex, LocalElementIdentity};
 
 use super::IndexProbe;
 use crate::{

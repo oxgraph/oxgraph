@@ -7,7 +7,7 @@ use criterion::{Criterion, criterion_group, criterion_main};
 use oxgraph_algo::{
     connected_components, shortest_path_lengths, strongly_connected_components, topological_sort,
 };
-use oxgraph_topology::{ElementIndex, ElementSuccessors, TopologyBase};
+use oxgraph_topology::{DenseElementIndex, ElementSuccessors, TopologyBase};
 
 /// Minimal directed adjacency-list view used by the benches.
 struct FixtureGraph {
@@ -20,7 +20,7 @@ impl TopologyBase for FixtureGraph {
     type RelationId = usize;
 }
 
-impl ElementIndex for FixtureGraph {
+impl DenseElementIndex for FixtureGraph {
     fn element_bound(&self) -> usize {
         self.adjacency.len()
     }

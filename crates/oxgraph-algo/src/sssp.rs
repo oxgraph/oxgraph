@@ -10,7 +10,7 @@
 
 use alloc::{collections::VecDeque, vec, vec::Vec};
 
-use oxgraph_topology::{ElementIndex, ElementSuccessors, TopologyBase};
+use oxgraph_topology::{DenseElementIndex, ElementSuccessors, TopologyBase};
 
 /// Returns the hop distance from `source` to every reachable member of
 /// `elements`, including `source` itself at distance `0`.
@@ -30,7 +30,7 @@ pub fn shortest_path_lengths<G>(
     elements: &[<G as TopologyBase>::ElementId],
 ) -> Vec<(<G as TopologyBase>::ElementId, u64)>
 where
-    G: ElementIndex + ElementSuccessors,
+    G: DenseElementIndex + ElementSuccessors,
 {
     let bound = graph.element_bound();
     let mut member = vec![false; bound];

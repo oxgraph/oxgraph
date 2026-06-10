@@ -9,7 +9,7 @@ use oxgraph_property::{
     DenseWeights, IdFamily, LayerId, LayerRole, MissingPolicy, PropertyLayer,
     PropertyLayerDescriptor, RelationAxis, SparseWeights, StorageMode,
 };
-use oxgraph_topology::{RelationIndex, RelationWeight, TopologyBase};
+use oxgraph_topology::{DenseRelationIndex, RelationWeight, TopologyBase};
 
 /// Benchmark topology with dense relation IDs.
 struct BenchTopology {
@@ -22,7 +22,7 @@ impl TopologyBase for BenchTopology {
     type RelationId = u32;
 }
 
-impl RelationIndex for BenchTopology {
+impl DenseRelationIndex for BenchTopology {
     fn relation_bound(&self) -> usize {
         self.relations
     }

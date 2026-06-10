@@ -3,7 +3,7 @@
 use core::{iter::FusedIterator, marker::PhantomData};
 
 use oxgraph_topology::{
-    ContainsElement, ElementId, ElementIndex, ElementPredecessors, ElementSuccessors,
+    ContainsElement, DenseElementIndex, ElementId, ElementPredecessors, ElementSuccessors,
 };
 
 use crate::bfs::{
@@ -38,9 +38,9 @@ use crate::bfs::{
 /// and queue lengths `m` and `q`.
 pub struct BfsEpochScratch<'scratch, G>
 where
-    G: ContainsElement + ElementIndex,
+    G: ContainsElement + DenseElementIndex,
 {
-    /// Dense visited epoch marks indexed by `ElementIndex::element_index`.
+    /// Dense visited epoch marks indexed by `DenseElementIndex::element_index`.
     marks: &'scratch mut [u32],
     /// Queue storage for discovered elements.
     queue: &'scratch mut [ElementId<G>],
@@ -53,7 +53,7 @@ where
 
 impl<'scratch, G> BfsEpochScratch<'scratch, G>
 where
-    G: ContainsElement + ElementIndex,
+    G: ContainsElement + DenseElementIndex,
 {
     /// Creates reusable epoch scratch over caller-provided mark and queue
     /// slices.
@@ -151,7 +151,7 @@ where
 #[must_use = "iterators are lazy and do nothing unless consumed"]
 pub struct BreadthFirstSearchEpochScratch<'graph, 'borrow, G>
 where
-    G: ContainsElement + ElementSuccessors + ElementIndex,
+    G: ContainsElement + ElementSuccessors + DenseElementIndex,
 {
     /// Underlying generic BFS driver carrying the seeded frontier.
     inner: Bfs<'graph, G, SeededEpochFrontier<'borrow, G>, Forward>,
@@ -159,7 +159,7 @@ where
 
 impl<G> Iterator for BreadthFirstSearchEpochScratch<'_, '_, G>
 where
-    G: ContainsElement + ElementSuccessors + ElementIndex,
+    G: ContainsElement + ElementSuccessors + DenseElementIndex,
 {
     type Item = ElementId<G>;
 
@@ -169,7 +169,7 @@ where
 }
 
 impl<G> FusedIterator for BreadthFirstSearchEpochScratch<'_, '_, G> where
-    G: ContainsElement + ElementSuccessors + ElementIndex
+    G: ContainsElement + ElementSuccessors + DenseElementIndex
 {
 }
 
@@ -209,7 +209,7 @@ pub fn breadth_first_search_with_epoch_scratch<'graph, 'borrow, 'scratch, G>(
 ) -> Result<BreadthFirstSearchEpochScratch<'graph, 'borrow, G>, BfsError>
 where
     'scratch: 'borrow,
-    G: ContainsElement + ElementSuccessors + ElementIndex,
+    G: ContainsElement + ElementSuccessors + DenseElementIndex,
 {
     let witness = ValidatedScratch::new(graph, start, scratch.marks.len(), scratch.queue.len())?;
     let epoch = scratch.epoch.advance(scratch.marks);
@@ -233,7 +233,7 @@ where
 #[must_use = "iterators are lazy and do nothing unless consumed"]
 pub struct ReverseBreadthFirstSearchEpochScratch<'graph, 'borrow, G>
 where
-    G: ContainsElement + ElementPredecessors + ElementIndex,
+    G: ContainsElement + ElementPredecessors + DenseElementIndex,
 {
     /// Underlying generic BFS driver carrying the seeded frontier and reverse
     /// direction selector.
@@ -242,7 +242,7 @@ where
 
 impl<G> Iterator for ReverseBreadthFirstSearchEpochScratch<'_, '_, G>
 where
-    G: ContainsElement + ElementPredecessors + ElementIndex,
+    G: ContainsElement + ElementPredecessors + DenseElementIndex,
 {
     type Item = ElementId<G>;
 
@@ -252,7 +252,7 @@ where
 }
 
 impl<G> FusedIterator for ReverseBreadthFirstSearchEpochScratch<'_, '_, G> where
-    G: ContainsElement + ElementPredecessors + ElementIndex
+    G: ContainsElement + ElementPredecessors + DenseElementIndex
 {
 }
 
@@ -280,7 +280,7 @@ pub fn reverse_breadth_first_search_with_epoch_scratch<'graph, 'borrow, 'scratch
 ) -> Result<ReverseBreadthFirstSearchEpochScratch<'graph, 'borrow, G>, BfsError>
 where
     'scratch: 'borrow,
-    G: ContainsElement + ElementPredecessors + ElementIndex,
+    G: ContainsElement + ElementPredecessors + DenseElementIndex,
 {
     let witness = ValidatedScratch::new(graph, start, scratch.marks.len(), scratch.queue.len())?;
     let epoch = scratch.epoch.advance(scratch.marks);
