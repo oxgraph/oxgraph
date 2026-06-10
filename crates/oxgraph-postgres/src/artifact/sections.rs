@@ -2,7 +2,7 @@
 
 use oxgraph_csr::CsrSnapshotIndex;
 use oxgraph_layout_util::crc32c_append;
-use oxgraph_snapshot::{Snapshot, SnapshotBuilder};
+use oxgraph_snapshot::{Snapshot, SnapshotWriter};
 
 use super::metadata::{
     PostgresMetadata, SNAPSHOT_KIND_PG_INBOUND_OFFSETS_U32, SNAPSHOT_KIND_PG_INBOUND_TARGETS_U32,
@@ -32,16 +32,21 @@ pub fn attach_postgres_sections(
 ) -> Result<Vec<u8>, PostgresGraphError> {
     let forward = Snapshot::open(forward_topology_bytes)?;
     let inbound = inbound_topology_bytes.map(Snapshot::open).transpose()?;
-    let mut builder = SnapshotBuilder::new(crc32c_append);
+    let copied = forward
+        .sections()
+        .filter(|section| !is_postgres_owned_kind(section.kind()))
+        .count();
+    let inbound_count = if inbound.is_some() { 2 } else { 0 };
+    let mut writer = SnapshotWriter::new(copied + inbound_count + 1, crc32c_append)?;
     for section in forward.sections() {
         if is_postgres_owned_kind(section.kind()) {
             continue;
         }
-        builder.add_section(
+        writer.section_bytes(
             section.kind(),
             section.version(),
             alignment_log2_from_section(&section),
-            section.bytes().to_vec(),
+            section.bytes(),
         )?;
     }
     if let Some(inbound_snapshot) = inbound.as_ref() {
@@ -49,17 +54,17 @@ pub fn attach_postgres_sections(
             inbound_snapshot,
             u32::OFFSETS_KIND,
             SNAPSHOT_KIND_PG_INBOUND_OFFSETS_U32,
-            &mut builder,
+            &mut writer,
         )?;
         copy_csr_section(
             inbound_snapshot,
             u32::TARGETS_KIND,
             SNAPSHOT_KIND_PG_INBOUND_TARGETS_U32,
-            &mut builder,
+            &mut writer,
         )?;
     }
-    write_postgres_metadata_section(&mut builder, metadata)?;
-    builder.finish().map_err(PostgresGraphError::from)
+    write_postgres_metadata_section(&mut writer, metadata)?;
+    writer.finish().map_err(PostgresGraphError::from)
 }
 
 /// Appends or replaces the Postgres metadata section on CSR topology bytes.
@@ -86,18 +91,18 @@ fn copy_csr_section(
     snapshot: &Snapshot<'_>,
     source_kind: u32,
     dest_kind: u32,
-    builder: &mut SnapshotBuilder,
+    writer: &mut SnapshotWriter,
 ) -> Result<(), PostgresGraphError> {
     let section = snapshot
         .section(source_kind)
         .ok_or(PostgresGraphError::Build(BuildError::MissingCsrSection {
             kind: source_kind,
         }))?;
-    builder.add_section(
+    writer.section_bytes(
         dest_kind,
         section.version(),
         alignment_log2_from_section(&section),
-        section.bytes().to_vec(),
+        section.bytes(),
     )?;
     Ok(())
 }
@@ -107,7 +112,7 @@ fn is_postgres_owned_kind(kind: u32) -> bool {
     (0x0200..0x0300).contains(&kind)
 }
 
-/// Derives snapshot builder alignment metadata from a borrowed section view.
+/// Derives snapshot writer alignment metadata from a borrowed section view.
 fn alignment_log2_from_section(section: &oxgraph_snapshot::Section<'_>) -> u8 {
     let alignment = section.declared_alignment();
     if alignment <= 1 {

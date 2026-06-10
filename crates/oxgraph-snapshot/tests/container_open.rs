@@ -3,25 +3,28 @@
 use oxgraph_layout_util::crc32c_append;
 use oxgraph_snapshot::{
     FORMAT_MAGIC, FORMAT_MAJOR, FORMAT_MINOR, HEADER_SIZE, MAX_ALIGNMENT_LOG2, MAX_SECTION_COUNT,
-    PlanError, SECTION_ENTRY_SIZE, Snapshot, SnapshotBuilder, SnapshotError,
+    PlanError, SECTION_ENTRY_SIZE, Snapshot, SnapshotError, SnapshotWriter,
 };
 
-/// Convenience to add a section while panicking on builder errors.
-fn add(builder: &mut SnapshotBuilder, kind: u32, version: u32, alignment_log2: u8, payload: &[u8]) {
-    if let Err(error) = builder.add_section(kind, version, alignment_log2, payload.to_vec()) {
+/// Convenience to write a section while panicking on writer errors.
+fn add(writer: &mut SnapshotWriter, kind: u32, version: u32, alignment_log2: u8, payload: &[u8]) {
+    if let Err(error) = writer.section_bytes(kind, version, alignment_log2, payload) {
         let formatted: PlanError = error;
-        panic!("add_section({kind}): {formatted:?}");
+        panic!("section_bytes({kind}): {formatted:?}");
     }
 }
 
 /// Builds a known-good snapshot with two distinct, ascending sections.
 fn baseline_snapshot() -> Vec<u8> {
-    let mut builder = SnapshotBuilder::new(crc32c_append);
-    add(&mut builder, 1, 0, 2, b"abcd");
-    add(&mut builder, 2, 0, 0, b"xyz");
-    match builder.finish() {
+    let mut writer = match SnapshotWriter::new(2, crc32c_append) {
+        Ok(value) => value,
+        Err(error) => panic!("writer: {error:?}"),
+    };
+    add(&mut writer, 1, 0, 2, b"abcd");
+    add(&mut writer, 2, 0, 0, b"xyz");
+    match writer.finish() {
         Ok(bytes) => bytes,
-        Err(error) => panic!("builder finish: {error:?}"),
+        Err(error) => panic!("writer finish: {error:?}"),
     }
 }
 

@@ -7,23 +7,26 @@
 //! Run with: `cargo run -p oxgraph-snapshot --example pack_two_sections --features alloc`
 
 use oxgraph_layout_util::crc32c_append;
-use oxgraph_snapshot::{Snapshot, SnapshotBuilder, SnapshotError};
+use oxgraph_snapshot::{Snapshot, SnapshotError, SnapshotWriter};
 use zerocopy::byteorder::{LE, U32};
 
 fn main() -> Result<(), SnapshotError> {
     let words: [u32; 5] = [10, 20, 30, 40, 50];
-    let bytes_payload = b"oxgraph-snapshot v2.0".to_vec();
+    let bytes_payload = b"oxgraph-snapshot v2.0";
 
-    let mut builder = SnapshotBuilder::new(crc32c_append);
-    if let Err(error) = builder.add_section_typed(0x0100, 0, &words) {
+    let mut writer = match SnapshotWriter::new(2, crc32c_append) {
+        Ok(value) => value,
+        Err(error) => panic!("writer: {error:?}"),
+    };
+    if let Err(error) = writer.section_typed(0x0100, 0, &words) {
         panic!("typed section: {error:?}");
     }
-    if let Err(error) = builder.add_section(0x0101, 0, 0, bytes_payload) {
+    if let Err(error) = writer.section_bytes(0x0101, 0, 0, bytes_payload) {
         panic!("byte section: {error:?}");
     }
-    let snapshot_bytes = match builder.finish() {
+    let snapshot_bytes = match writer.finish() {
         Ok(value) => value,
-        Err(error) => panic!("builder finish: {error:?}"),
+        Err(error) => panic!("writer finish: {error:?}"),
     };
     println!("encoded snapshot: {} bytes", snapshot_bytes.len());
 

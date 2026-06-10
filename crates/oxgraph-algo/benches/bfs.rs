@@ -30,7 +30,7 @@ use oxgraph_algo::{
 use oxgraph_csr::{CsrNativeGraph, CsrNodeId};
 use oxgraph_hyper_bcsr::{BcsrSnapshotHypergraph, BcsrSnapshotIndex, BcsrVertexId};
 use oxgraph_layout_util::crc32c_append;
-use oxgraph_snapshot::{Snapshot, SnapshotBuilder};
+use oxgraph_snapshot::{Snapshot, SnapshotWriter};
 use oxgraph_topology::DenseElementIndex;
 
 /// `u32` head offsets section kind derived from the base-plus-width scheme.
@@ -455,56 +455,59 @@ fn words_to_bytes(words: &[u32]) -> Vec<u8> {
 fn bcsr_snapshot_bytes(node_count: u32, offsets: &[u32], targets: &[u32]) -> Vec<u8> {
     let sections = csr_to_bcsr_sections(node_count, offsets, targets);
 
-    let mut builder = SnapshotBuilder::new(crc32c_append);
-    let add = |builder: &mut SnapshotBuilder, kind: u32, words: &[u32]| {
-        if let Err(error) = builder.add_section(kind, 0, 2, words_to_bytes(words)) {
+    let mut writer = match SnapshotWriter::new(8, crc32c_append) {
+        Ok(value) => value,
+        Err(error) => panic!("BCSR snapshot writer: {error:?}"),
+    };
+    let add = |writer: &mut SnapshotWriter, kind: u32, words: &[u32]| {
+        if let Err(error) = writer.section_bytes(kind, 0, 2, &words_to_bytes(words)) {
             panic!("BCSR section {kind:#06x}: {error:?}");
         }
     };
     add(
-        &mut builder,
+        &mut writer,
         SNAPSHOT_KIND_BCSR_HEAD_OFFSETS_U32,
         &sections.head_offsets,
     );
     add(
-        &mut builder,
+        &mut writer,
         SNAPSHOT_KIND_BCSR_HEAD_PARTICIPANTS_U32,
         &sections.head_participants,
     );
     add(
-        &mut builder,
+        &mut writer,
         SNAPSHOT_KIND_BCSR_TAIL_OFFSETS_U32,
         &sections.tail_offsets,
     );
     add(
-        &mut builder,
+        &mut writer,
         SNAPSHOT_KIND_BCSR_TAIL_PARTICIPANTS_U32,
         &sections.tail_participants,
     );
     add(
-        &mut builder,
+        &mut writer,
         SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_OFFSETS_U32,
         &sections.vertex_outgoing_offsets,
     );
     add(
-        &mut builder,
+        &mut writer,
         SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_HYPEREDGES_U32,
         &sections.vertex_outgoing_hyperedges,
     );
     add(
-        &mut builder,
+        &mut writer,
         SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_OFFSETS_U32,
         &sections.vertex_incoming_offsets,
     );
     add(
-        &mut builder,
+        &mut writer,
         SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_HYPEREDGES_U32,
         &sections.vertex_incoming_hyperedges,
     );
 
-    match builder.finish() {
+    match writer.finish() {
         Ok(bytes) => bytes,
-        Err(error) => panic!("bench builder finish: {error:?}"),
+        Err(error) => panic!("bench writer finish: {error:?}"),
     }
 }
 

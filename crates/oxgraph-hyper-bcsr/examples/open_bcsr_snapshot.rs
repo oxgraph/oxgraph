@@ -12,7 +12,7 @@ use oxgraph_hyper_bcsr::{
     BcsrHyperedgeId, BcsrSnapshotError, BcsrSnapshotHypergraph, BcsrSnapshotIndex, BcsrVertexId,
 };
 use oxgraph_layout_util::crc32c_append;
-use oxgraph_snapshot::{Snapshot, SnapshotBuilder, SnapshotError};
+use oxgraph_snapshot::{Snapshot, SnapshotError, SnapshotWriter};
 
 /// `u32` head offsets section kind derived from the base-plus-width scheme.
 const SNAPSHOT_KIND_BCSR_HEAD_OFFSETS_U32: u32 = <u32 as BcsrSnapshotIndex>::HEAD_OFFSETS_KIND;
@@ -85,7 +85,6 @@ fn main() -> Result<(), DemoError> {
     let vertex_incoming_offsets: [u32; 4] = [0, 0, 1, 3];
     let vertex_incoming_hyperedges: [u32; 3] = [0, 0, 1];
 
-    let mut builder = SnapshotBuilder::new(crc32c_append);
     let entries: [(u32, &[u32]); 8] = [
         (SNAPSHOT_KIND_BCSR_HEAD_OFFSETS_U32, &head_offsets),
         (SNAPSHOT_KIND_BCSR_HEAD_PARTICIPANTS_U32, &head_participants),
@@ -108,14 +107,18 @@ fn main() -> Result<(), DemoError> {
             &vertex_incoming_hyperedges,
         ),
     ];
+    let mut writer = match SnapshotWriter::new(entries.len(), crc32c_append) {
+        Ok(value) => value,
+        Err(error) => panic!("writer: {error:?}"),
+    };
     for (kind, words) in entries {
-        if let Err(error) = builder.add_section(kind, 0, 2, words_to_bytes(words)) {
+        if let Err(error) = writer.section_bytes(kind, 0, 2, &words_to_bytes(words)) {
             panic!("section 0x{kind:04x}: {error:?}");
         }
     }
-    let bytes = match builder.finish() {
+    let bytes = match writer.finish() {
         Ok(value) => value,
-        Err(error) => panic!("builder finish: {error:?}"),
+        Err(error) => panic!("writer finish: {error:?}"),
     };
     println!("encoded snapshot: {} bytes", bytes.len());
 

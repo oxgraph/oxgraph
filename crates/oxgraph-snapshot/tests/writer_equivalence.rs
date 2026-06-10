@@ -1,10 +1,11 @@
-//! Equivalence law between the two encoders: for any logical section list,
-//! [`SnapshotWriter`] (write-through, exact table reservation) must produce
-//! bytes identical to [`SnapshotBuilder`] (own-then-copy), and an
-//! under-filled reservation must still open and resolve every section.
+//! Writer-internal equivalence laws: for any logical section list, streaming a
+//! payload through chunked [`SectionSink::write`] calls must produce bytes
+//! identical to the one-shot [`SnapshotWriter::section_bytes`] convenience
+//! (pinning the incremental-CRC continuation law), and an under-filled
+//! reservation must still open and resolve every section.
 
 use oxgraph_layout_util::crc32c_append;
-use oxgraph_snapshot::{Snapshot, SnapshotBuilder, SnapshotWriter};
+use oxgraph_snapshot::{Snapshot, SnapshotWriter};
 use proptest::prelude::*;
 
 /// One arbitrary logical section: a unique kind is assigned by index.
@@ -36,33 +37,44 @@ fn sections_strategy() -> impl Strategy<Value = Vec<ArbSection>> {
 }
 
 proptest! {
-    /// Exact-reservation writer output is byte-identical to the builder's.
+    /// Chunked streaming sink output is byte-identical to one-shot writes.
     #[test]
-    fn writer_matches_builder_bytes(sections in sections_strategy()) {
-        let mut builder = SnapshotBuilder::new(crc32c_append);
+    fn chunked_sink_matches_one_shot_bytes(
+        sections in sections_strategy(),
+        chunk in 1usize..16,
+    ) {
+        let mut one_shot =
+            SnapshotWriter::new(sections.len(), crc32c_append).expect("reservation fits");
         for (index, section) in sections.iter().enumerate() {
-            builder
-                .add_section(
+            one_shot
+                .section_bytes(
                     u32::try_from(index).expect("section index fits u32"),
                     section.version,
                     section.alignment_log2,
-                    section.payload.clone(),
+                    &section.payload,
                 )
-                .expect("builder accepts section");
-        }
-        let built = builder.finish().expect("builder encodes");
-
-        let mut writer = SnapshotWriter::new(sections.len(), crc32c_append).expect("reservation fits");
-        for (index, section) in sections.iter().enumerate() {
-            let mut sink = writer
-                .begin_section(u32::try_from(index).expect("section index fits u32"), section.version, section.alignment_log2)
                 .expect("writer accepts section");
-            sink.write(&section.payload);
+        }
+        let whole = one_shot.finish().expect("writer encodes");
+
+        let mut chunked =
+            SnapshotWriter::new(sections.len(), crc32c_append).expect("reservation fits");
+        for (index, section) in sections.iter().enumerate() {
+            let mut sink = chunked
+                .begin_section(
+                    u32::try_from(index).expect("section index fits u32"),
+                    section.version,
+                    section.alignment_log2,
+                )
+                .expect("writer accepts section");
+            for piece in section.payload.chunks(chunk) {
+                sink.write(piece);
+            }
             sink.end().expect("entry fits");
         }
-        let written = writer.finish().expect("writer encodes");
+        let streamed = chunked.finish().expect("writer encodes");
 
-        prop_assert_eq!(written, built);
+        prop_assert_eq!(streamed, whole);
     }
 
     /// An under-filled reservation still opens, and every section resolves

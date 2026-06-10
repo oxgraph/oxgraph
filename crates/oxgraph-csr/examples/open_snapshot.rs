@@ -10,7 +10,7 @@ use oxgraph_algo::breadth_first_search;
 use oxgraph_csr::{CsrNodeId, CsrSnapshotError, CsrSnapshotGraph, CsrSnapshotIndex};
 use oxgraph_graph::GraphCounts;
 use oxgraph_layout_util::crc32c_append;
-use oxgraph_snapshot::{Snapshot, SnapshotBuilder, SnapshotError};
+use oxgraph_snapshot::{Snapshot, SnapshotError, SnapshotWriter};
 
 /// `u32` CSR offsets section kind derived from the base-plus-width scheme.
 const SNAPSHOT_KIND_CSR_OFFSETS_U32: u32 = <u32 as CsrSnapshotIndex>::OFFSETS_KIND;
@@ -56,16 +56,19 @@ fn main() -> Result<(), DemoError> {
     let offsets_bytes: Vec<u8> = offsets.iter().flat_map(|word| word.to_le_bytes()).collect();
     let targets_bytes: Vec<u8> = targets.iter().flat_map(|word| word.to_le_bytes()).collect();
 
-    let mut builder = SnapshotBuilder::new(crc32c_append);
-    if let Err(error) = builder.add_section(SNAPSHOT_KIND_CSR_OFFSETS_U32, 0, 2, offsets_bytes) {
+    let mut writer = match SnapshotWriter::new(2, crc32c_append) {
+        Ok(value) => value,
+        Err(error) => panic!("writer: {error:?}"),
+    };
+    if let Err(error) = writer.section_bytes(SNAPSHOT_KIND_CSR_OFFSETS_U32, 0, 2, &offsets_bytes) {
         panic!("offsets section: {error:?}");
     }
-    if let Err(error) = builder.add_section(SNAPSHOT_KIND_CSR_TARGETS_U32, 0, 2, targets_bytes) {
+    if let Err(error) = writer.section_bytes(SNAPSHOT_KIND_CSR_TARGETS_U32, 0, 2, &targets_bytes) {
         panic!("targets section: {error:?}");
     }
-    let bytes = match builder.finish() {
+    let bytes = match writer.finish() {
         Ok(value) => value,
-        Err(error) => panic!("builder finish: {error:?}"),
+        Err(error) => panic!("writer finish: {error:?}"),
     };
     println!("encoded snapshot: {} bytes", bytes.len());
 

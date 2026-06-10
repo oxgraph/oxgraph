@@ -18,16 +18,19 @@
 use oxgraph_layout_util::crc32c_append;
 use oxgraph_snapshot::{
     CRC32C_CHECK_INPUT, CRC32C_CHECK_VALUE, FORMAT_MAGIC, FORMAT_MAJOR, FORMAT_MINOR, HEADER_SIZE,
-    SECTION_ENTRY_SIZE, SnapshotBuilder,
+    SECTION_ENTRY_SIZE, SnapshotWriter,
 };
 
 /// An empty snapshot is exactly `HEADER_SIZE` bytes.
 #[test]
 fn empty_snapshot_is_exactly_header_size() {
-    let builder = SnapshotBuilder::new(crc32c_append);
-    let bytes = match builder.finish() {
+    let writer = match SnapshotWriter::new(0, crc32c_append) {
         Ok(value) => value,
-        Err(error) => panic!("empty builder finish: {error:?}"),
+        Err(error) => panic!("empty writer: {error:?}"),
+    };
+    let bytes = match writer.finish() {
+        Ok(value) => value,
+        Err(error) => panic!("empty writer finish: {error:?}"),
     };
     assert_eq!(bytes.len(), HEADER_SIZE);
 }
@@ -35,10 +38,13 @@ fn empty_snapshot_is_exactly_header_size() {
 /// The first eight bytes of any valid snapshot equal `FORMAT_MAGIC`.
 #[test]
 fn snapshot_magic_is_at_offset_zero() {
-    let builder = SnapshotBuilder::new(crc32c_append);
-    let bytes = match builder.finish() {
+    let writer = match SnapshotWriter::new(0, crc32c_append) {
         Ok(value) => value,
-        Err(error) => panic!("empty builder finish: {error:?}"),
+        Err(error) => panic!("empty writer: {error:?}"),
+    };
+    let bytes = match writer.finish() {
+        Ok(value) => value,
+        Err(error) => panic!("empty writer finish: {error:?}"),
     };
     assert!(bytes.len() >= FORMAT_MAGIC.len());
     assert_eq!(&bytes[..FORMAT_MAGIC.len()], &FORMAT_MAGIC[..]);
@@ -85,14 +91,17 @@ fn crc32c_check_vector_is_pinned() {
 /// payloads are tightly packed.
 #[test]
 fn one_section_is_header_plus_entry_plus_payload() {
-    let mut builder = SnapshotBuilder::new(crc32c_append);
-    let payload = vec![0xABu8; 17];
-    if let Err(error) = builder.add_section(0x1234, 0, 0, payload.clone()) {
-        panic!("add_section: {error:?}");
-    }
-    let bytes = match builder.finish() {
+    let mut writer = match SnapshotWriter::new(1, crc32c_append) {
         Ok(value) => value,
-        Err(error) => panic!("builder finish: {error:?}"),
+        Err(error) => panic!("writer: {error:?}"),
+    };
+    let payload = vec![0xABu8; 17];
+    if let Err(error) = writer.section_bytes(0x1234, 0, 0, &payload) {
+        panic!("section_bytes: {error:?}");
+    }
+    let bytes = match writer.finish() {
+        Ok(value) => value,
+        Err(error) => panic!("writer finish: {error:?}"),
     };
     assert_eq!(
         bytes.len(),
@@ -106,13 +115,16 @@ fn one_section_is_header_plus_entry_plus_payload() {
 #[test]
 fn checksum_words_are_at_pinned_offsets() {
     let payload = vec![0xABu8; 17];
-    let mut builder = SnapshotBuilder::new(crc32c_append);
-    if let Err(error) = builder.add_section(0x1234, 0, 0, payload.clone()) {
-        panic!("add_section: {error:?}");
-    }
-    let bytes = match builder.finish() {
+    let mut writer = match SnapshotWriter::new(1, crc32c_append) {
         Ok(value) => value,
-        Err(error) => panic!("builder finish: {error:?}"),
+        Err(error) => panic!("writer: {error:?}"),
+    };
+    if let Err(error) = writer.section_bytes(0x1234, 0, 0, &payload) {
+        panic!("section_bytes: {error:?}");
+    }
+    let bytes = match writer.finish() {
+        Ok(value) => value,
+        Err(error) => panic!("writer finish: {error:?}"),
     };
 
     let entry_crc_offset = HEADER_SIZE + 24;
@@ -132,20 +144,23 @@ fn checksum_words_are_at_pinned_offsets() {
 /// With three unpadded sections, the formula extends linearly.
 #[test]
 fn three_sections_is_header_plus_three_entries_plus_payloads() {
-    let mut builder = SnapshotBuilder::new(crc32c_append);
+    let mut writer = match SnapshotWriter::new(3, crc32c_append) {
+        Ok(value) => value,
+        Err(error) => panic!("writer: {error:?}"),
+    };
     let payloads: [Vec<u8>; 3] = [vec![1u8; 4], vec![2u8; 8], vec![3u8; 12]];
     for (kind, payload) in payloads.iter().enumerate() {
         let kind = match u32::try_from(kind) {
             Ok(value) => value,
             Err(error) => panic!("kind index out of u32 range: {error:?}"),
         };
-        if let Err(error) = builder.add_section(kind, 0, 0, payload.clone()) {
-            panic!("add_section({kind}): {error:?}");
+        if let Err(error) = writer.section_bytes(kind, 0, 0, payload) {
+            panic!("section_bytes({kind}): {error:?}");
         }
     }
-    let bytes = match builder.finish() {
+    let bytes = match writer.finish() {
         Ok(value) => value,
-        Err(error) => panic!("builder finish: {error:?}"),
+        Err(error) => panic!("writer finish: {error:?}"),
     };
     let payload_total: usize = payloads.iter().map(Vec::len).sum();
     assert_eq!(

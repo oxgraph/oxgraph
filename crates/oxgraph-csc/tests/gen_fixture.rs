@@ -35,7 +35,7 @@ fn write_tiny_dual_fixture() -> Result<(), Box<dyn std::error::Error>> {
     // sections into the Postgres inbound kinds the proof reads.
     let csr_bytes = export_csr_snapshot(&inbound)?;
     let csr = Snapshot::open(&csr_bytes)?;
-    let mut out = oxgraph_snapshot::SnapshotBuilder::new(crc32c_append);
+    let mut out = oxgraph_snapshot::SnapshotWriter::new(csr.section_count(), crc32c_append)?;
     for section in csr.sections() {
         let dest_kind = match section.kind() {
             kind if kind == <u32 as CsrSnapshotIndex>::OFFSETS_KIND => INBOUND_OFFSETS_KIND,
@@ -48,11 +48,11 @@ fn write_tiny_dual_fixture() -> Result<(), Box<dyn std::error::Error>> {
         } else {
             u8::try_from(alignment.trailing_zeros())?
         };
-        out.add_section(
+        out.section_bytes(
             dest_kind,
             section.version(),
             alignment_log2,
-            section.bytes().to_vec(),
+            section.bytes(),
         )?;
     }
     let bytes = out.finish()?;

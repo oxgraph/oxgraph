@@ -16,9 +16,9 @@ arrow-array = { workspace = true }
 arrow-ipc = { workspace = true }
 arrow-schema = { workspace = true }
 arrow-select = { workspace = true }
-oxgraph-layout-util = { version = "0.3.2", path = "../oxgraph-layout-util", default-features = false }
-oxgraph-snapshot = { version = "0.3.2", path = "../oxgraph-snapshot", features = ["alloc"] }
-oxgraph-topology = { version = "0.3.2", path = "../oxgraph-topology" }
+oxgraph-layout-util = { version = "0.4.0", path = "../oxgraph-layout-util", default-features = false }
+oxgraph-snapshot = { version = "0.4.0", path = "../oxgraph-snapshot", features = ["alloc"] }
+oxgraph-topology = { version = "0.4.0", path = "../oxgraph-topology" }
 zerocopy = { workspace = true }
 
 [dev-dependencies]

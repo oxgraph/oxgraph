@@ -6,7 +6,7 @@ use oxgraph_hyper_bcsr::{
     BcsrSnapshotIndex, BcsrVertexId,
 };
 use oxgraph_layout_util::crc32c_append;
-use oxgraph_snapshot::{Snapshot, SnapshotBuilder, SnapshotError};
+use oxgraph_snapshot::{Snapshot, SnapshotError, SnapshotWriter};
 
 /// `u32` head offsets section kind derived from the base-plus-width scheme.
 const SNAPSHOT_KIND_BCSR_HEAD_OFFSETS_U32: u32 = <u32 as BcsrSnapshotIndex>::HEAD_OFFSETS_KIND;
@@ -115,7 +115,6 @@ impl Fixture {
 
 /// Builds a snapshot from a [`Fixture`] using the eight bipartite-CSR section kinds.
 fn build_snapshot(fixture: &Fixture) -> Vec<u8> {
-    let mut builder = SnapshotBuilder::new(crc32c_append);
     let entries: [(u32, &[u32]); 8] = [
         (SNAPSHOT_KIND_BCSR_HEAD_OFFSETS_U32, &fixture.head_offsets),
         (
@@ -144,19 +143,23 @@ fn build_snapshot(fixture: &Fixture) -> Vec<u8> {
             &fixture.vertex_incoming_hyperedges,
         ),
     ];
+    let mut writer = match SnapshotWriter::new(entries.len(), crc32c_append) {
+        Ok(value) => value,
+        Err(error) => panic!("writer: {error:?}"),
+    };
     for (kind, words) in entries {
-        if let Err(error) = builder.add_section(
+        if let Err(error) = writer.section_bytes(
             kind,
             oxgraph_hyper_bcsr::SNAPSHOT_BCSR_SECTION_VERSION,
             2,
-            words_to_bytes(words),
+            &words_to_bytes(words),
         ) {
             panic!("section 0x{kind:04x}: {error:?}");
         }
     }
-    match builder.finish() {
+    match writer.finish() {
         Ok(bytes) => bytes,
-        Err(error) => panic!("builder finish: {error:?}"),
+        Err(error) => panic!("writer finish: {error:?}"),
     }
 }
 
@@ -206,7 +209,6 @@ fn opens_mixed_u32_vertices_relations_u64_incidences() -> Result<(), FixtureErro
         .map(u64::from)
         .collect();
 
-    let mut builder = SnapshotBuilder::new(crc32c_append);
     // The v2 container mandates ascending kinds, so the u64 offset sections
     // and u32 value sections are interleaved in kind order.
     let entries: [(u32, Vec<u8>, u8); 8] = [
@@ -251,19 +253,23 @@ fn opens_mixed_u32_vertices_relations_u64_incidences() -> Result<(), FixtureErro
             2,
         ),
     ];
+    let mut writer = match SnapshotWriter::new(entries.len(), crc32c_append) {
+        Ok(value) => value,
+        Err(error) => panic!("writer: {error:?}"),
+    };
     for (kind, bytes, alignment_log2) in entries {
-        if let Err(error) = builder.add_section(
+        if let Err(error) = writer.section_bytes(
             kind,
             oxgraph_hyper_bcsr::SNAPSHOT_BCSR_SECTION_VERSION,
             alignment_log2,
-            bytes,
+            &bytes,
         ) {
             panic!("section 0x{kind:04x}: {error:?}");
         }
     }
-    let bytes = match builder.finish() {
+    let bytes = match writer.finish() {
         Ok(value) => value,
-        Err(error) => panic!("builder finish: {error:?}"),
+        Err(error) => panic!("writer finish: {error:?}"),
     };
     let snapshot = Snapshot::open(&bytes)?;
     let view = BcsrSnapshotHypergraph::<u32, u32, u64>::from_snapshot(&snapshot)?;
@@ -281,7 +287,6 @@ fn opens_mixed_u32_vertices_relations_u64_incidences() -> Result<(), FixtureErro
 #[test]
 fn rejects_missing_head_offsets_section() -> Result<(), FixtureError> {
     let fixture = Fixture::canonical();
-    let mut builder = SnapshotBuilder::new(crc32c_append);
     let entries: [(u32, &[u32]); 7] = [
         (
             SNAPSHOT_KIND_BCSR_HEAD_PARTICIPANTS_U32,
@@ -309,19 +314,23 @@ fn rejects_missing_head_offsets_section() -> Result<(), FixtureError> {
             &fixture.vertex_incoming_hyperedges,
         ),
     ];
+    let mut writer = match SnapshotWriter::new(entries.len(), crc32c_append) {
+        Ok(value) => value,
+        Err(error) => panic!("writer: {error:?}"),
+    };
     for (kind, words) in entries {
-        if let Err(error) = builder.add_section(
+        if let Err(error) = writer.section_bytes(
             kind,
             oxgraph_hyper_bcsr::SNAPSHOT_BCSR_SECTION_VERSION,
             2,
-            words_to_bytes(words),
+            &words_to_bytes(words),
         ) {
             panic!("section 0x{kind:04x}: {error:?}");
         }
     }
-    let bytes = match builder.finish() {
+    let bytes = match writer.finish() {
         Ok(value) => value,
-        Err(error) => panic!("builder finish: {error:?}"),
+        Err(error) => panic!("writer finish: {error:?}"),
     };
     let snapshot = Snapshot::open(&bytes)?;
     let result = BcsrSnapshotHypergraph::<u32, u32, u32>::from_snapshot(&snapshot);
@@ -350,7 +359,6 @@ fn rejects_wrong_offset_width() -> Result<(), FixtureError> {
 #[test]
 fn rejects_wrong_participant_width() -> Result<(), FixtureError> {
     let fixture = Fixture::canonical();
-    let mut builder = SnapshotBuilder::new(crc32c_append);
     let entries: [(u32, &[u32]); 8] = [
         (SNAPSHOT_KIND_BCSR_HEAD_OFFSETS_U32, &fixture.head_offsets),
         (
@@ -379,19 +387,23 @@ fn rejects_wrong_participant_width() -> Result<(), FixtureError> {
             &fixture.vertex_incoming_hyperedges,
         ),
     ];
+    let mut writer = match SnapshotWriter::new(entries.len(), crc32c_append) {
+        Ok(value) => value,
+        Err(error) => panic!("writer: {error:?}"),
+    };
     for (kind, words) in entries {
-        if let Err(error) = builder.add_section(
+        if let Err(error) = writer.section_bytes(
             kind,
             oxgraph_hyper_bcsr::SNAPSHOT_BCSR_SECTION_VERSION,
             2,
-            words_to_bytes(words),
+            &words_to_bytes(words),
         ) {
             panic!("section 0x{kind:04x}: {error:?}");
         }
     }
-    let bytes = match builder.finish() {
+    let bytes = match writer.finish() {
         Ok(value) => value,
-        Err(error) => panic!("builder finish: {error:?}"),
+        Err(error) => panic!("writer finish: {error:?}"),
     };
     let snapshot = Snapshot::open(&bytes)?;
     let result = BcsrSnapshotHypergraph::<u32, u32, u32>::from_snapshot(&snapshot);

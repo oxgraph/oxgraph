@@ -10,7 +10,7 @@
 //! the mechanics live here once.
 
 use oxgraph_layout_util::SnapshotWidth;
-use oxgraph_snapshot::{PlanError, SnapshotBuilder};
+use oxgraph_snapshot::{PlanError, SnapshotWriter};
 
 use crate::{
     EncodedPropertySnapshot, IdFamily, IdentityModeRecord, PropertyIndex, PropertyLayer,
@@ -95,33 +95,33 @@ where
 ///
 /// This function is `O(identity map len + encoded property bytes)`.
 pub fn append_identity_and_property_sections<W, MapW>(
-    builder: &mut SnapshotBuilder,
+    writer: &mut SnapshotWriter,
     identity_modes: &[IdentityModeRecord<W>],
     identity_map_kind: u32,
     identity_map: &[MapW],
-    encoded: EncodedPropertySnapshot,
+    encoded: &EncodedPropertySnapshot,
 ) -> Result<(), PlanError>
 where
     W: PropertySnapshotMetaWord,
     MapW: SnapshotWidth,
 {
-    builder.add_section(
+    writer.section_bytes(
         W::PROPERTY_DESCRIPTORS_KIND,
         SNAPSHOT_PROPERTY_VERSION,
         0,
-        encoded.descriptors,
+        &encoded.descriptors,
     )?;
-    builder.add_section(
+    writer.section_bytes(
         W::PROPERTY_DATA_KIND,
         SNAPSHOT_PROPERTY_VERSION,
         0,
-        encoded.data,
+        &encoded.data,
     )?;
-    builder.add_section_little_endian(
+    writer.section_little_endian(
         W::IDENTITY_MODES_KIND,
         SNAPSHOT_PROPERTY_VERSION,
         identity_modes,
     )?;
-    builder.add_section_widths(identity_map_kind, SNAPSHOT_PROPERTY_VERSION, identity_map)?;
+    writer.section_widths(identity_map_kind, SNAPSHOT_PROPERTY_VERSION, identity_map)?;
     Ok(())
 }

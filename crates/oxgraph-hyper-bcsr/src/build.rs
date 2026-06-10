@@ -40,7 +40,7 @@ use oxgraph_property::{
     EncodedPropertySnapshot, HyperPropertyLayers, IdFamily, IdentityModeRecord, PropertyError,
     PropertyLayer, PropertySnapshotMetaWord, encode_hyper_property_snapshot, rekey_layer_to_local,
 };
-use oxgraph_snapshot::{PlanError, SnapshotBuilder};
+use oxgraph_snapshot::{PlanError, SnapshotWriter};
 
 use crate::{
     BcsrChainedHyperedges, BcsrChainedParticipants, BcsrChainedRelationIncidences,
@@ -1658,7 +1658,7 @@ where
     Id: Clone + Copy + Into<u64> + Ord + TryInto<IncidenceIndex>,
 {
     let property = encode_hyper_properties(&graph.topology, layers)?;
-    export_topology_property_snapshot(&graph.topology, property)
+    export_topology_property_snapshot(&graph.topology, &property)
 }
 
 /// Exports a frozen weighted hypergraph with external property layers.
@@ -1691,7 +1691,7 @@ where
     Id: Clone + Copy + Into<u64> + Ord + TryInto<IncidenceIndex>,
 {
     let property = encode_hyper_properties(&graph.topology, layers)?;
-    export_topology_property_snapshot(&graph.topology, property)
+    export_topology_property_snapshot(&graph.topology, &property)
 }
 
 #[derive(Clone, Debug, Default)]
@@ -1877,17 +1877,17 @@ where
     RelationIndex: LayoutIndex + BcsrSnapshotIndex,
     IncidenceIndex: LayoutIndex + BcsrSnapshotIndex,
 {
-    let mut builder = SnapshotBuilder::new(crc32c_append);
-    add_topology_sections::<VertexIndex, RelationIndex, IncidenceIndex>(&mut builder, topology)?;
-    builder.finish().map_err(HyperBuildError::from)
+    let mut writer = SnapshotWriter::new(8, crc32c_append)?;
+    add_topology_sections::<VertexIndex, RelationIndex, IncidenceIndex>(&mut writer, topology)?;
+    writer.finish().map_err(HyperBuildError::from)
 }
 
-/// Appends the eight little-endian bipartite-CSR topology sections to `builder`.
+/// Appends the eight little-endian bipartite-CSR topology sections to `writer`.
 ///
 /// Each native width slice is lowered to its little-endian storage words by
-/// [`SnapshotBuilder::add_section_widths`].
+/// [`SnapshotWriter::section_widths`].
 fn add_topology_sections<VertexIndex, RelationIndex, IncidenceIndex>(
-    builder: &mut SnapshotBuilder,
+    writer: &mut SnapshotWriter,
     topology: &FrozenTopology<VertexIndex, RelationIndex, IncidenceIndex>,
 ) -> Result<(), HyperBuildError<VertexIndex, RelationIndex, IncidenceIndex>>
 where
@@ -1895,42 +1895,42 @@ where
     RelationIndex: LayoutIndex + BcsrSnapshotIndex,
     IncidenceIndex: LayoutIndex + BcsrSnapshotIndex,
 {
-    builder.add_section_widths(
+    writer.section_widths(
         IncidenceIndex::HEAD_OFFSETS_KIND,
         IncidenceIndex::SECTION_VERSION,
         &topology.head_offsets,
     )?;
-    builder.add_section_widths(
+    writer.section_widths(
         VertexIndex::HEAD_PARTICIPANTS_KIND,
         VertexIndex::SECTION_VERSION,
         &topology.head_participants,
     )?;
-    builder.add_section_widths(
+    writer.section_widths(
         IncidenceIndex::TAIL_OFFSETS_KIND,
         IncidenceIndex::SECTION_VERSION,
         &topology.tail_offsets,
     )?;
-    builder.add_section_widths(
+    writer.section_widths(
         VertexIndex::TAIL_PARTICIPANTS_KIND,
         VertexIndex::SECTION_VERSION,
         &topology.tail_participants,
     )?;
-    builder.add_section_widths(
+    writer.section_widths(
         IncidenceIndex::VERTEX_OUTGOING_OFFSETS_KIND,
         IncidenceIndex::SECTION_VERSION,
         &topology.vertex_outgoing_offsets,
     )?;
-    builder.add_section_widths(
+    writer.section_widths(
         RelationIndex::VERTEX_OUTGOING_HYPEREDGES_KIND,
         RelationIndex::SECTION_VERSION,
         &topology.vertex_outgoing_hyperedges,
     )?;
-    builder.add_section_widths(
+    writer.section_widths(
         IncidenceIndex::VERTEX_INCOMING_OFFSETS_KIND,
         IncidenceIndex::SECTION_VERSION,
         &topology.vertex_incoming_offsets,
     )?;
-    builder.add_section_widths(
+    writer.section_widths(
         RelationIndex::VERTEX_INCOMING_HYPEREDGES_KIND,
         RelationIndex::SECTION_VERSION,
         &topology.vertex_incoming_hyperedges,
@@ -2005,7 +2005,7 @@ where
 #[cfg(feature = "build-property-arrow")]
 fn export_topology_property_snapshot<VertexIndex, RelationIndex, IncidenceIndex>(
     topology: &FrozenTopology<VertexIndex, RelationIndex, IncidenceIndex>,
-    property: EncodedPropertySnapshot,
+    property: &EncodedPropertySnapshot,
 ) -> Result<Vec<u8>, HyperBuildError<VertexIndex, RelationIndex, IncidenceIndex>>
 where
     VertexIndex: LayoutIndex + BcsrSnapshotIndex,
@@ -2027,16 +2027,16 @@ where
             incidence_map.len(),
         )?,
     ];
-    let mut builder = SnapshotBuilder::new(crc32c_append);
-    add_topology_sections::<VertexIndex, RelationIndex, IncidenceIndex>(&mut builder, topology)?;
+    let mut writer = SnapshotWriter::new(12, crc32c_append)?;
+    add_topology_sections::<VertexIndex, RelationIndex, IncidenceIndex>(&mut writer, topology)?;
     oxgraph_property::export::append_identity_and_property_sections(
-        &mut builder,
+        &mut writer,
         &identity_modes,
         IncidenceIndex::INCIDENCE_IDENTITY_MAP_KIND,
         &incidence_map,
         property,
     )?;
-    builder.finish().map_err(HyperBuildError::from)
+    writer.finish().map_err(HyperBuildError::from)
 }
 
 /// Returns the build-path local-incidence-to-canonical map.

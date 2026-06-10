@@ -1,7 +1,7 @@
-//! Builder/reader roundtrip property test.
+//! Writer/reader roundtrip property test.
 
 use oxgraph_layout_util::crc32c_append;
-use oxgraph_snapshot::{MAX_ALIGNMENT_LOG2, Snapshot, SnapshotBuilder};
+use oxgraph_snapshot::{MAX_ALIGNMENT_LOG2, Snapshot, SnapshotWriter};
 use proptest::prelude::*;
 
 prop_compose! {
@@ -22,10 +22,10 @@ proptest! {
         ..ProptestConfig::default()
     })]
 
-    /// A builder followed by a reader must yield identical section payloads.
-    /// Sections are added in ascending kind order (the v2 mandate).
+    /// A writer followed by a reader must yield identical section payloads.
+    /// Sections are written in ascending kind order (the v2 mandate).
     #[test]
-    fn builder_reader_roundtrip(
+    fn writer_reader_roundtrip(
         mut sections in proptest::collection::vec(arb_section(), 0..16)
             .prop_filter(
                 "kinds must be unique",
@@ -36,23 +36,25 @@ proptest! {
             )
     ) {
         sections.sort_by_key(|(kind, _, _, _)| *kind);
-        let mut builder = SnapshotBuilder::new(crc32c_append);
+        let mut writer = match SnapshotWriter::new(sections.len(), crc32c_append) {
+            Ok(value) => value,
+            Err(error) => panic!("writer rejected validated reservation: {error:?}"),
+        };
         for (kind, version, alignment_log2, payload) in &sections {
-            match builder.add_section(*kind, *version, *alignment_log2, payload.clone()) {
-                Ok(_) => {}
-                Err(error) => panic!("builder rejected validated section: {error:?}"),
+            if let Err(error) = writer.section_bytes(*kind, *version, *alignment_log2, payload) {
+                panic!("writer rejected validated section: {error:?}");
             }
         }
-        let bytes = match builder.finish() {
+        let bytes = match writer.finish() {
             Ok(value) => value,
-            Err(error) => panic!("builder finish failed on validated input: {error:?}"),
+            Err(error) => panic!("writer finish failed on validated input: {error:?}"),
         };
         let snapshot = match Snapshot::open_checked(&bytes, crc32c_append) {
             Ok(value) => value,
             Err(error) => panic!("snapshot did not open: {error:?}"),
         };
         if let Err(error) = snapshot.verify_all(crc32c_append) {
-            panic!("freshly built snapshot failed payload verification: {error:?}");
+            panic!("freshly written snapshot failed payload verification: {error:?}");
         }
 
         prop_assert_eq!(snapshot.section_count(), sections.len());

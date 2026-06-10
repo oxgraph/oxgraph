@@ -1,7 +1,7 @@
-//! Builder determinism property test: equal logical input → byte-equal output.
+//! Writer determinism property test: equal logical input → byte-equal output.
 
 use oxgraph_layout_util::crc32c_append;
-use oxgraph_snapshot::{MAX_ALIGNMENT_LOG2, SnapshotBuilder};
+use oxgraph_snapshot::{MAX_ALIGNMENT_LOG2, SnapshotWriter};
 use proptest::prelude::*;
 
 prop_compose! {
@@ -15,17 +15,19 @@ prop_compose! {
     }
 }
 
-fn build_once(sections: &[(u32, u32, u8, Vec<u8>)]) -> Vec<u8> {
-    let mut builder = SnapshotBuilder::new(crc32c_append);
+fn write_once(sections: &[(u32, u32, u8, Vec<u8>)]) -> Vec<u8> {
+    let mut writer = match SnapshotWriter::new(sections.len(), crc32c_append) {
+        Ok(writer) => writer,
+        Err(error) => panic!("writer rejected validated reservation: {error:?}"),
+    };
     for (kind, version, alignment_log2, payload) in sections {
-        match builder.add_section(*kind, *version, *alignment_log2, payload.clone()) {
-            Ok(_) => {}
-            Err(error) => panic!("builder rejected validated section: {error:?}"),
+        if let Err(error) = writer.section_bytes(*kind, *version, *alignment_log2, payload) {
+            panic!("writer rejected validated section: {error:?}");
         }
     }
-    match builder.finish() {
+    match writer.finish() {
         Ok(bytes) => bytes,
-        Err(error) => panic!("builder finish failed on validated input: {error:?}"),
+        Err(error) => panic!("writer finish failed on validated input: {error:?}"),
     }
 }
 
@@ -37,7 +39,7 @@ proptest! {
     })]
 
     #[test]
-    fn builder_is_deterministic(
+    fn writer_is_deterministic(
         mut sections in proptest::collection::vec(arb_section(), 0..16)
             .prop_filter(
                 "kinds must be unique",
@@ -48,8 +50,8 @@ proptest! {
             )
     ) {
         sections.sort_by_key(|(kind, _, _, _)| *kind);
-        let first = build_once(&sections);
-        let second = build_once(&sections);
+        let first = write_once(&sections);
+        let second = write_once(&sections);
         prop_assert_eq!(first, second);
     }
 }

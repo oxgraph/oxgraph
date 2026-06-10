@@ -141,14 +141,14 @@ pub mod hyper_bcsr {
 /// `perf: unspecified`; this module re-exports another crate.
 #[cfg(feature = "snapshot")]
 pub mod snapshot {
-    #[cfg(feature = "snapshot-alloc")]
-    pub use oxgraph_snapshot::SnapshotBuilder;
     pub use oxgraph_snapshot::{
         Checksum32, FORMAT_MAGIC, FORMAT_MAJOR, FORMAT_MINOR, HEADER_SIZE, HeaderOnlySnapshot,
         MAX_ALIGNMENT_LOG2, MAX_SECTION_COUNT, MAX_SUPPORTED_MINOR, PendingSection, PlanError,
         SECTION_ENTRY_SIZE, Section, SectionIter, SectionViewError, Snapshot, SnapshotError,
         SnapshotPlan, ValidationLevel,
     };
+    #[cfg(feature = "snapshot-alloc")]
+    pub use oxgraph_snapshot::{SectionSink, SnapshotWriter};
 }
 
 /// Substrate-agnostic algorithms.

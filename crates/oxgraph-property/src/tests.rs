@@ -8,7 +8,7 @@ use arrow_array::{
 };
 use arrow_schema::{DataType, Field};
 use oxgraph_layout_util::crc32c_append;
-use oxgraph_snapshot::{Snapshot, SnapshotBuilder};
+use oxgraph_snapshot::{Snapshot, SnapshotWriter};
 use oxgraph_topology::{DenseRelationIndex, RelationWeight, TopologyBase};
 use zerocopy::byteorder::{LE, U16, U32, U64};
 
@@ -285,20 +285,20 @@ fn property_snapshot_sections_validate() -> Result<(), Box<dyn Error>> {
         Some(Arc::new(Float32Array::from(vec![1.0_f32]))),
     )?;
     let encoded = encode_property_snapshot::<u32, u32, u32>(&[dense, sparse])?;
-    let mut builder = SnapshotBuilder::new(crc32c_append);
-    builder.add_section(
+    let mut writer = SnapshotWriter::new(2, crc32c_append)?;
+    writer.section_bytes(
         SNAPSHOT_KIND_PROPERTY_DESCRIPTORS_U32,
         SNAPSHOT_PROPERTY_VERSION,
         0,
-        encoded.descriptors,
+        &encoded.descriptors,
     )?;
-    builder.add_section(
+    writer.section_bytes(
         SNAPSHOT_KIND_PROPERTY_DATA_U32,
         SNAPSHOT_PROPERTY_VERSION,
         0,
-        encoded.data,
+        &encoded.data,
     )?;
-    let bytes = builder.finish()?;
+    let bytes = writer.finish()?;
     let snapshot = Snapshot::open(&bytes)?;
     let summary = validate_property_snapshot::<u32>(&snapshot)?;
     assert_eq!(summary.layer_count, 2);
@@ -571,18 +571,18 @@ fn identity_snapshot_sections_validate() -> Result<(), Box<dyn Error>> {
         IdentityModeRecord::<u32>::explicit_map(IdFamily::Relation, 2)?,
     ];
     let maps = [U32::<LE>::new(10), U32::<LE>::new(12)];
-    let mut builder = SnapshotBuilder::new(crc32c_append);
-    builder.add_section_typed(
+    let mut writer = SnapshotWriter::new(2, crc32c_append)?;
+    writer.section_typed(
         SNAPSHOT_KIND_IDENTITY_MODES_U32,
         SNAPSHOT_PROPERTY_VERSION,
         &modes,
     )?;
-    builder.add_section_typed(
+    writer.section_typed(
         SNAPSHOT_KIND_RELATION_IDENTITY_MAP_U32,
         SNAPSHOT_PROPERTY_VERSION,
         &maps,
     )?;
-    let bytes = builder.finish()?;
+    let bytes = writer.finish()?;
     let snapshot = Snapshot::open(&bytes)?;
     let summary = validate_identity_snapshot::<u32>(&snapshot)?;
     assert_eq!(summary.records.len(), 2);
@@ -597,18 +597,18 @@ fn identity_snapshot_sections_validate_u16_u32_and_u64() -> Result<(), Box<dyn E
         2,
     )?];
     let maps_u16 = [U16::<LE>::new(1), U16::<LE>::new(3)];
-    let mut builder = SnapshotBuilder::new(crc32c_append);
-    builder.add_section_typed(
+    let mut writer = SnapshotWriter::new(2, crc32c_append)?;
+    writer.section_typed(
         SNAPSHOT_KIND_IDENTITY_MODES_U16,
         SNAPSHOT_PROPERTY_VERSION,
         &modes_u16,
     )?;
-    builder.add_section_typed(
+    writer.section_typed(
         SNAPSHOT_KIND_ELEMENT_IDENTITY_MAP_U16,
         SNAPSHOT_PROPERTY_VERSION,
         &maps_u16,
     )?;
-    let bytes = builder.finish()?;
+    let bytes = writer.finish()?;
     let snapshot = Snapshot::open(&bytes)?;
     assert_eq!(
         validate_identity_snapshot::<u16>(&snapshot)?.records.len(),
@@ -620,18 +620,18 @@ fn identity_snapshot_sections_validate_u16_u32_and_u64() -> Result<(), Box<dyn E
         2,
     )?];
     let maps_u64 = [U64::<LE>::new(10), U64::<LE>::new(12)];
-    let mut builder = SnapshotBuilder::new(crc32c_append);
-    builder.add_section_typed(
+    let mut writer = SnapshotWriter::new(2, crc32c_append)?;
+    writer.section_typed(
         SNAPSHOT_KIND_IDENTITY_MODES_U64,
         SNAPSHOT_PROPERTY_VERSION,
         &modes_u64,
     )?;
-    builder.add_section_typed(
+    writer.section_typed(
         SNAPSHOT_KIND_INCIDENCE_IDENTITY_MAP_U64,
         SNAPSHOT_PROPERTY_VERSION,
         &maps_u64,
     )?;
-    let bytes = builder.finish()?;
+    let bytes = writer.finish()?;
     let snapshot = Snapshot::open(&bytes)?;
     assert_eq!(
         validate_identity_snapshot::<u64>(&snapshot)?.records.len(),

@@ -398,7 +398,7 @@ impl core::error::Error for SectionBindError {}
 ///
 /// Returned by [`SnapshotPlan::new`](crate::SnapshotPlan::new),
 /// [`SnapshotPlan::write_into`](crate::SnapshotPlan::write_into), and the
-/// alloc-gated [`SnapshotBuilder`](crate::SnapshotBuilder) methods.
+/// alloc-gated [`SnapshotWriter`](crate::SnapshotWriter) methods.
 ///
 /// # Performance
 ///

@@ -1,7 +1,7 @@
-//! Tests for explicit little-endian section builder helpers.
+//! Tests for explicit little-endian section writer helpers.
 
 use oxgraph_layout_util::crc32c_append;
-use oxgraph_snapshot::{Snapshot, SnapshotBuilder};
+use oxgraph_snapshot::{Snapshot, SnapshotWriter};
 use zerocopy::byteorder::{LE, U16, U32, U64};
 
 #[test]
@@ -11,11 +11,14 @@ fn little_endian_helper_writes_portable_word_bytes() {
         U16::<LE>::new(0x0304),
         U16::<LE>::new(0x0506),
     ];
-    let mut builder = SnapshotBuilder::new(crc32c_append);
-    if let Err(error) = builder.add_section_little_endian(0xCAFE, 7, &payload) {
+    let mut writer = match SnapshotWriter::new(1, crc32c_append) {
+        Ok(writer) => writer,
+        Err(error) => panic!("writer construction failed: {error:?}"),
+    };
+    if let Err(error) = writer.section_little_endian(0xCAFE, 7, &payload) {
         panic!("little-endian section rejected: {error:?}");
     }
-    let bytes = match builder.finish() {
+    let bytes = match writer.finish() {
         Ok(bytes) => bytes,
         Err(error) => panic!("snapshot finish failed: {error:?}"),
     };
@@ -34,14 +37,17 @@ fn little_endian_helper_writes_portable_word_bytes() {
 fn little_endian_helper_supports_multiple_word_widths() {
     let words32 = [U32::<LE>::new(0x0102_0304)];
     let words64 = [U64::<LE>::new(0x0102_0304_0506_0708)];
-    let mut builder = SnapshotBuilder::new(crc32c_append);
-    if let Err(error) = builder.add_section_little_endian(1, 0, &words32) {
+    let mut writer = match SnapshotWriter::new(2, crc32c_append) {
+        Ok(writer) => writer,
+        Err(error) => panic!("writer construction failed: {error:?}"),
+    };
+    if let Err(error) = writer.section_little_endian(1, 0, &words32) {
         panic!("u32 little-endian section rejected: {error:?}");
     }
-    if let Err(error) = builder.add_section_little_endian(2, 0, &words64) {
+    if let Err(error) = writer.section_little_endian(2, 0, &words64) {
         panic!("u64 little-endian section rejected: {error:?}");
     }
-    let bytes = match builder.finish() {
+    let bytes = match writer.finish() {
         Ok(bytes) => bytes,
         Err(error) => panic!("snapshot finish failed: {error:?}"),
     };
