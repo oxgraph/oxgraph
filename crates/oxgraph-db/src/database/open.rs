@@ -92,7 +92,10 @@ impl Db {
     ///
     /// # Performance
     ///
-    /// This function is `O(base bytes + log bytes)`.
+    /// This function is `O(base bytes + log bytes)`. Base integrity is fused
+    /// into the bind pass: the container's table checksum is verified once,
+    /// then each bound section's payload CRC-32C is verified as the section is
+    /// borrowed — there is no separate whole-base CRC scan.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, DbError> {
         let root = path.as_ref().to_path_buf();
         let superblock = wal::read_superblock(&root)?;
