@@ -496,6 +496,30 @@ where
         })
     }
 
+    /// Builds a view over already-validated parts, skipping re-validation.
+    ///
+    /// The frozen builder's arrays are monotonic and in-range by
+    /// construction, so the `O(n + m)` [`Self::validate`] walk is redundant
+    /// for them; this constructor is crate-internal so every external input
+    /// still validates.
+    ///
+    /// # Performance
+    ///
+    /// This function is `O(1)`.
+    pub(crate) const fn from_validated_parts(
+        node_count: NodeIndex,
+        node_bound: usize,
+        offsets: &'view [OffsetWord],
+        targets: &'view [TargetWord],
+    ) -> Self {
+        Self {
+            node_count,
+            node_bound,
+            offsets,
+            targets,
+        }
+    }
+
     /// Returns the borrowed CSR offset slice.
     ///
     /// # Performance
