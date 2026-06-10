@@ -6,9 +6,12 @@ use oxgraph_hyper::{
     IncidenceRelation, IncidenceRole, IncidentHyperedges,
 };
 use oxgraph_hyper_bcsr::{
-    BcsrError, BcsrHyperedgeId, BcsrHypergraph, BcsrParticipantId, BcsrRole, BcsrSection,
+    BcsrError, BcsrHyperedgeId, BcsrNativeHypergraph, BcsrParticipantId, BcsrRole, BcsrSection,
     BcsrSections, BcsrValidation, BcsrVertexId,
 };
+
+/// Native `u32`-indexed view used by every test in this file.
+type NativeView<'view> = BcsrNativeHypergraph<'view, u32, u32, u32>;
 
 /// Hand-built three-vertex, two-hyperedge fixture:
 ///
@@ -39,7 +42,7 @@ fn canonical_sections() -> BcsrSections<'static, u32, u32, u32> {
 
 #[test]
 fn canonical_fixture_validates_at_layout() -> Result<(), BcsrError> {
-    let view = BcsrHypergraph::open(canonical_sections())?;
+    let view = NativeView::open(canonical_sections())?;
     assert_eq!(view.vertex_count(), 3);
     assert_eq!(view.hyperedge_count(), 2);
     assert_eq!(view.outgoing_incidence_count(), 2);
@@ -58,7 +61,7 @@ fn validates_mixed_u32_vertices_relations_u64_incidences() -> Result<(), BcsrErr
     static VERTEX_INCOMING_OFFSETS: &[u64] = &[0, 0, 1, 3];
     static VERTEX_INCOMING_HYPEREDGES: &[u32] = &[0, 0, 1];
 
-    let view = BcsrHypergraph::open(BcsrSections {
+    let view = BcsrNativeHypergraph::<u32, u32, u64>::open(BcsrSections {
         head_offsets: HEAD_OFFSETS,
         head_participants: HEAD_PARTICIPANTS,
         tail_offsets: TAIL_OFFSETS,
@@ -78,7 +81,7 @@ fn validates_mixed_u32_vertices_relations_u64_incidences() -> Result<(), BcsrErr
 
 #[test]
 fn directed_hyperedge_participants_split_head_and_tail() -> Result<(), BcsrError> {
-    let view = BcsrHypergraph::open(canonical_sections())?;
+    let view = NativeView::open(canonical_sections())?;
     let h0_heads: Vec<_> = view.source_participants(BcsrHyperedgeId::new(0)).collect();
     let h0_tails: Vec<_> = view.target_participants(BcsrHyperedgeId::new(0)).collect();
     assert_eq!(h0_heads, vec![BcsrVertexId::new(0)]);
@@ -93,7 +96,7 @@ fn directed_hyperedge_participants_split_head_and_tail() -> Result<(), BcsrError
 
 #[test]
 fn hyperedge_participants_concatenates_head_then_tail() -> Result<(), BcsrError> {
-    let view = BcsrHypergraph::open(canonical_sections())?;
+    let view = NativeView::open(canonical_sections())?;
     let h0: Vec<_> = view
         .hyperedge_participants(BcsrHyperedgeId::new(0))
         .collect();
@@ -110,7 +113,7 @@ fn hyperedge_participants_concatenates_head_then_tail() -> Result<(), BcsrError>
 
 #[test]
 fn incident_hyperedges_yields_outgoing_then_incoming() -> Result<(), BcsrError> {
-    let view = BcsrHypergraph::open(canonical_sections())?;
+    let view = NativeView::open(canonical_sections())?;
     let v0: Vec<_> = view.incident_hyperedges(BcsrVertexId::new(0)).collect();
     assert_eq!(v0, vec![BcsrHyperedgeId::new(0)]);
 
@@ -124,7 +127,7 @@ fn incident_hyperedges_yields_outgoing_then_incoming() -> Result<(), BcsrError> 
 
 #[test]
 fn directed_successors_expand_through_tail_sets() -> Result<(), BcsrError> {
-    let view = BcsrHypergraph::open(canonical_sections())?;
+    let view = NativeView::open(canonical_sections())?;
     let from_v0: Vec<_> = view.successor_vertices(BcsrVertexId::new(0)).collect();
     assert_eq!(from_v0, vec![BcsrVertexId::new(1), BcsrVertexId::new(2)]);
 
@@ -141,7 +144,7 @@ fn directed_successors_expand_through_tail_sets() -> Result<(), BcsrError> {
 
 #[test]
 fn directed_predecessors_expand_through_head_sets() -> Result<(), BcsrError> {
-    let view = BcsrHypergraph::open(canonical_sections())?;
+    let view = NativeView::open(canonical_sections())?;
     let to_v2: Vec<_> = view.predecessor_vertices(BcsrVertexId::new(2)).collect();
     assert_eq!(to_v2, vec![BcsrVertexId::new(0), BcsrVertexId::new(1)]);
 
@@ -155,7 +158,7 @@ fn directed_predecessors_expand_through_head_sets() -> Result<(), BcsrError> {
 
 #[test]
 fn incidence_resolution_round_trips() -> Result<(), BcsrError> {
-    let view = BcsrHypergraph::open(canonical_sections())?;
+    let view = NativeView::open(canonical_sections())?;
 
     let i0 = BcsrParticipantId::new(0);
     assert_eq!(view.incidence_element(i0), BcsrVertexId::new(0));
@@ -177,7 +180,7 @@ fn incidence_resolution_round_trips() -> Result<(), BcsrError> {
 
 #[test]
 fn containment_reports_in_range_ids() -> Result<(), BcsrError> {
-    let view = BcsrHypergraph::open(canonical_sections())?;
+    let view = NativeView::open(canonical_sections())?;
     assert!(view.contains_element(BcsrVertexId::new(0)));
     assert!(view.contains_element(BcsrVertexId::new(2)));
     assert!(!view.contains_element(BcsrVertexId::new(3)));
@@ -198,7 +201,7 @@ fn empty_hypergraph_validates() -> Result<(), BcsrError> {
     let vertex_outgoing_hyperedges: [u32; 0] = [];
     let vertex_incoming_offsets: [u32; 1] = [0];
     let vertex_incoming_hyperedges: [u32; 0] = [];
-    let view = BcsrHypergraph::open(BcsrSections {
+    let view = NativeView::open(BcsrSections {
         head_offsets: &head_offsets,
         head_participants: &head_participants,
         tail_offsets: &tail_offsets,
@@ -231,7 +234,7 @@ static TAMPERED_OUTGOING_HYPEREDGES: &[u32] = &[1, 1];
 fn rejects_offset_length_mismatch() {
     let mut sections = canonical_sections();
     sections.head_offsets = SHORT_HEAD_OFFSETS;
-    let result = BcsrHypergraph::open(sections);
+    let result = NativeView::open(sections);
     let Err(BcsrError::HyperedgeOffsetLengthMismatch { .. }) = result else {
         panic!("expected HyperedgeOffsetLengthMismatch, got {result:?}");
     };
@@ -241,7 +244,7 @@ fn rejects_offset_length_mismatch() {
 fn rejects_non_monotonic_offsets() {
     let mut sections = canonical_sections();
     sections.head_offsets = BAD_HEAD_OFFSETS;
-    let result = BcsrHypergraph::open(sections);
+    let result = NativeView::open(sections);
     let Err(BcsrError::NonMonotonicOffset { section, .. }) = result else {
         panic!("expected NonMonotonicOffset rejection, got {result:?}");
     };
@@ -252,7 +255,7 @@ fn rejects_non_monotonic_offsets() {
 fn rejects_vertex_out_of_range() {
     let mut sections = canonical_sections();
     sections.head_participants = BAD_HEAD_PARTICIPANTS;
-    let result = BcsrHypergraph::open(sections);
+    let result = NativeView::open(sections);
     let Err(BcsrError::VertexOutOfRange { vertex, .. }) = result else {
         panic!("expected VertexOutOfRange, got {result:?}");
     };
@@ -263,8 +266,8 @@ fn rejects_vertex_out_of_range() {
 fn strict_validation_catches_cross_direction_mismatch() -> Result<(), BcsrError> {
     let mut sections = canonical_sections();
     sections.vertex_outgoing_hyperedges = TAMPERED_OUTGOING_HYPEREDGES;
-    BcsrHypergraph::open(sections)?;
-    let result = BcsrHypergraph::open_with(sections, BcsrValidation::Strict);
+    NativeView::open(sections)?;
+    let result = NativeView::open_with(sections, BcsrValidation::Strict);
     let Err(BcsrError::CrossDirectionMismatch { .. }) = result else {
         panic!("expected CrossDirectionMismatch, got {result:?}");
     };

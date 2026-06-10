@@ -22,11 +22,8 @@ use crate::{
         validation::{index_to_usize_validated, usize_to_index_validated},
         view::BcsrHypergraph,
     },
-    word::{LayoutIndex, LayoutWord},
+    word::{BcsrWords, LayoutIndex, LayoutWord},
 };
-
-/// Private shorthand for the generic BCSR view.
-type View<'a, V, R, I, O, VW, RW> = BcsrHypergraph<'a, V, R, I, O, VW, RW>;
 
 /// By-value traversal constructors whose returned iterators borrow the
 /// underlying sections (`'view`), not the view value itself.
@@ -35,15 +32,7 @@ type View<'a, V, R, I, O, VW, RW> = BcsrHypergraph<'a, V, R, I, O, VW, RW>;
 /// frozen build wrappers delegating through `as_view` — can hand the returned
 /// iterators out for the full section lifetime. The borrowed-view trait impls
 /// below delegate here so each traversal is implemented once.
-impl<'view, V, R, I, O, VW, RW> View<'view, V, R, I, O, VW, RW>
-where
-    V: LayoutIndex,
-    R: LayoutIndex,
-    I: LayoutIndex,
-    O: LayoutWord<Index = I>,
-    VW: LayoutWord<Index = V>,
-    RW: LayoutWord<Index = R>,
-{
+impl<'view, W: BcsrWords> BcsrHypergraph<'view, W> {
     /// By-value variant of [`ElementIncidences::element_incidences`].
     ///
     /// # Performance
@@ -52,8 +41,8 @@ where
     /// item for maximum hyperedge participant-set size `d_h`.
     pub(crate) fn detached_element_incidences(
         self,
-        element: BcsrVertexId<V>,
-    ) -> BcsrElementIncidences<'view, O, VW, RW> {
+        element: BcsrVertexId<W::VertexIndex>,
+    ) -> BcsrElementIncidences<'view, W::OffsetWord, W::VertexWord, W::RelationWord> {
         let sections = self.sections();
         let counts = self.counts();
         let v_index = index_to_usize_validated(element.get());
@@ -77,8 +66,8 @@ where
     /// Construction is `O(1)`; advancing the iterator is `O(1)`.
     pub(crate) fn detached_hyperedge_participants(
         self,
-        hyperedge: BcsrHyperedgeId<R>,
-    ) -> BcsrChainedParticipants<'view, VW> {
+        hyperedge: BcsrHyperedgeId<W::RelationIndex>,
+    ) -> BcsrChainedParticipants<'view, W::VertexWord> {
         let sections = self.sections();
         let h_index = index_to_usize_validated(hyperedge.get());
         let head = vertex_bucket(sections.head_offsets, sections.head_participants, h_index);
@@ -93,8 +82,8 @@ where
     /// Construction is `O(1)`; advancing the iterator is `O(1)`.
     pub(crate) fn detached_incident_hyperedges(
         self,
-        vertex: BcsrVertexId<V>,
-    ) -> BcsrChainedHyperedges<'view, RW> {
+        vertex: BcsrVertexId<W::VertexIndex>,
+    ) -> BcsrChainedHyperedges<'view, W::RelationWord> {
         let sections = self.sections();
         let v_index = index_to_usize_validated(vertex.get());
         let outgoing = vertex_bucket(
@@ -117,8 +106,8 @@ where
     /// Construction is `O(1)`; advancing the iterator is `O(1)`.
     pub(crate) fn detached_source_participants(
         self,
-        hyperedge: BcsrHyperedgeId<R>,
-    ) -> BcsrVertexSlice<'view, VW> {
+        hyperedge: BcsrHyperedgeId<W::RelationIndex>,
+    ) -> BcsrVertexSlice<'view, W::VertexWord> {
         let sections = self.sections();
         let h_index = index_to_usize_validated(hyperedge.get());
         let head = vertex_bucket(sections.head_offsets, sections.head_participants, h_index);
@@ -132,8 +121,8 @@ where
     /// Construction is `O(1)`; advancing the iterator is `O(1)`.
     pub(crate) fn detached_target_participants(
         self,
-        hyperedge: BcsrHyperedgeId<R>,
-    ) -> BcsrVertexSlice<'view, VW> {
+        hyperedge: BcsrHyperedgeId<W::RelationIndex>,
+    ) -> BcsrVertexSlice<'view, W::VertexWord> {
         let sections = self.sections();
         let h_index = index_to_usize_validated(hyperedge.get());
         let tail = vertex_bucket(sections.tail_offsets, sections.tail_participants, h_index);
@@ -147,8 +136,8 @@ where
     /// Construction is `O(1)`; advancing the iterator is `O(1)`.
     pub(crate) fn detached_outgoing_hyperedges(
         self,
-        vertex: BcsrVertexId<V>,
-    ) -> BcsrHyperedgeSlice<'view, RW> {
+        vertex: BcsrVertexId<W::VertexIndex>,
+    ) -> BcsrHyperedgeSlice<'view, W::RelationWord> {
         let sections = self.sections();
         let v_index = index_to_usize_validated(vertex.get());
         let outgoing = vertex_bucket(
@@ -166,8 +155,8 @@ where
     /// Construction is `O(1)`; advancing the iterator is `O(1)`.
     pub(crate) fn detached_incoming_hyperedges(
         self,
-        vertex: BcsrVertexId<V>,
-    ) -> BcsrHyperedgeSlice<'view, RW> {
+        vertex: BcsrVertexId<W::VertexIndex>,
+    ) -> BcsrHyperedgeSlice<'view, W::RelationWord> {
         let sections = self.sections();
         let v_index = index_to_usize_validated(vertex.get());
         let incoming = vertex_bucket(
@@ -185,8 +174,8 @@ where
     /// Construction is `O(1)`; advancing the iterator is `O(1)` amortised.
     pub(crate) fn detached_element_successors(
         self,
-        vertex: BcsrVertexId<V>,
-    ) -> BcsrSuccessorVertices<'view, RW, O, VW> {
+        vertex: BcsrVertexId<W::VertexIndex>,
+    ) -> BcsrSuccessorVertices<'view, W::RelationWord, W::OffsetWord, W::VertexWord> {
         let sections = self.sections();
         let v_index = index_to_usize_validated(vertex.get());
         let outgoing = vertex_bucket(
@@ -204,8 +193,8 @@ where
     /// Construction is `O(1)`; advancing the iterator is `O(1)` amortised.
     pub(crate) fn detached_element_predecessors(
         self,
-        vertex: BcsrVertexId<V>,
-    ) -> BcsrPredecessorVertices<'view, RW, O, VW> {
+        vertex: BcsrVertexId<W::VertexIndex>,
+    ) -> BcsrPredecessorVertices<'view, W::RelationWord, W::OffsetWord, W::VertexWord> {
         let sections = self.sections();
         let v_index = index_to_usize_validated(vertex.get());
         let incoming = vertex_bucket(
@@ -217,41 +206,17 @@ where
     }
 }
 
-impl<V, R, I, O, VW, RW> TopologyBase for View<'_, V, R, I, O, VW, RW>
-where
-    V: LayoutIndex,
-    R: LayoutIndex,
-    I: LayoutIndex,
-    O: LayoutWord<Index = I>,
-    VW: LayoutWord<Index = V>,
-    RW: LayoutWord<Index = R>,
-{
-    type ElementId = BcsrVertexId<V>;
-    type RelationId = BcsrHyperedgeId<R>;
+impl<W: BcsrWords> TopologyBase for BcsrHypergraph<'_, W> {
+    type ElementId = BcsrVertexId<W::VertexIndex>;
+    type RelationId = BcsrHyperedgeId<W::RelationIndex>;
 }
 
-impl<V, R, I, O, VW, RW> IncidenceBase for View<'_, V, R, I, O, VW, RW>
-where
-    V: LayoutIndex,
-    R: LayoutIndex,
-    I: LayoutIndex,
-    O: LayoutWord<Index = I>,
-    VW: LayoutWord<Index = V>,
-    RW: LayoutWord<Index = R>,
-{
-    type IncidenceId = BcsrParticipantId<I>;
+impl<W: BcsrWords> IncidenceBase for BcsrHypergraph<'_, W> {
+    type IncidenceId = BcsrParticipantId<W::IncidenceIndex>;
     type Role = BcsrRole;
 }
 
-impl<V, R, I, O, VW, RW> TopologyCounts for View<'_, V, R, I, O, VW, RW>
-where
-    V: LayoutIndex,
-    R: LayoutIndex,
-    I: LayoutIndex,
-    O: LayoutWord<Index = I>,
-    VW: LayoutWord<Index = V>,
-    RW: LayoutWord<Index = R>,
-{
+impl<W: BcsrWords> TopologyCounts for BcsrHypergraph<'_, W> {
     fn element_count(&self) -> usize {
         self.vertex_count()
     }
@@ -261,137 +226,67 @@ where
     }
 }
 
-impl<V, R, I, O, VW, RW> IncidenceCounts for View<'_, V, R, I, O, VW, RW>
-where
-    V: LayoutIndex,
-    R: LayoutIndex,
-    I: LayoutIndex,
-    O: LayoutWord<Index = I>,
-    VW: LayoutWord<Index = V>,
-    RW: LayoutWord<Index = R>,
-{
+impl<W: BcsrWords> IncidenceCounts for BcsrHypergraph<'_, W> {
     fn incidence_count(&self) -> usize {
         self.counts().total_incidences
     }
 }
 
-impl<V, R, I, O, VW, RW> HypergraphCounts for View<'_, V, R, I, O, VW, RW>
-where
-    V: LayoutIndex,
-    R: LayoutIndex,
-    I: LayoutIndex,
-    O: LayoutWord<Index = I>,
-    VW: LayoutWord<Index = V>,
-    RW: LayoutWord<Index = R>,
-{
-}
+impl<W: BcsrWords> HypergraphCounts for BcsrHypergraph<'_, W> {}
 
-impl<V, R, I, O, VW, RW> ElementIndex for View<'_, V, R, I, O, VW, RW>
-where
-    V: LayoutIndex,
-    R: LayoutIndex,
-    I: LayoutIndex,
-    O: LayoutWord<Index = I>,
-    VW: LayoutWord<Index = V>,
-    RW: LayoutWord<Index = R>,
-{
+impl<W: BcsrWords> ElementIndex for BcsrHypergraph<'_, W> {
     fn element_bound(&self) -> usize {
         self.vertex_count()
     }
 
-    fn element_index(&self, element: BcsrVertexId<V>) -> usize {
+    fn element_index(&self, element: BcsrVertexId<W::VertexIndex>) -> usize {
         index_to_usize_validated(element.get())
     }
 }
 
-impl<V, R, I, O, VW, RW> RelationIndex for View<'_, V, R, I, O, VW, RW>
-where
-    V: LayoutIndex,
-    R: LayoutIndex,
-    I: LayoutIndex,
-    O: LayoutWord<Index = I>,
-    VW: LayoutWord<Index = V>,
-    RW: LayoutWord<Index = R>,
-{
+impl<W: BcsrWords> RelationIndex for BcsrHypergraph<'_, W> {
     fn relation_bound(&self) -> usize {
         self.hyperedge_count()
     }
 
-    fn relation_index(&self, relation: BcsrHyperedgeId<R>) -> usize {
+    fn relation_index(&self, relation: BcsrHyperedgeId<W::RelationIndex>) -> usize {
         index_to_usize_validated(relation.get())
     }
 }
 
-impl<V, R, I, O, VW, RW> IncidenceIndex for View<'_, V, R, I, O, VW, RW>
-where
-    V: LayoutIndex,
-    R: LayoutIndex,
-    I: LayoutIndex,
-    O: LayoutWord<Index = I>,
-    VW: LayoutWord<Index = V>,
-    RW: LayoutWord<Index = R>,
-{
+impl<W: BcsrWords> IncidenceIndex for BcsrHypergraph<'_, W> {
     fn incidence_bound(&self) -> usize {
         self.counts().total_incidences
     }
 
-    fn incidence_index(&self, incidence: BcsrParticipantId<I>) -> usize {
+    fn incidence_index(&self, incidence: BcsrParticipantId<W::IncidenceIndex>) -> usize {
         index_to_usize_validated(incidence.get())
     }
 }
 
-impl<V, R, I, O, VW, RW> ContainsElement for View<'_, V, R, I, O, VW, RW>
-where
-    V: LayoutIndex,
-    R: LayoutIndex,
-    I: LayoutIndex,
-    O: LayoutWord<Index = I>,
-    VW: LayoutWord<Index = V>,
-    RW: LayoutWord<Index = R>,
-{
-    fn contains_element(&self, element: BcsrVertexId<V>) -> bool {
+impl<W: BcsrWords> ContainsElement for BcsrHypergraph<'_, W> {
+    fn contains_element(&self, element: BcsrVertexId<W::VertexIndex>) -> bool {
         index_to_usize_validated(element.get()) < self.counts().vertex_count
     }
 }
 
-impl<V, R, I, O, VW, RW> ContainsRelation for View<'_, V, R, I, O, VW, RW>
-where
-    V: LayoutIndex,
-    R: LayoutIndex,
-    I: LayoutIndex,
-    O: LayoutWord<Index = I>,
-    VW: LayoutWord<Index = V>,
-    RW: LayoutWord<Index = R>,
-{
-    fn contains_relation(&self, relation: BcsrHyperedgeId<R>) -> bool {
+impl<W: BcsrWords> ContainsRelation for BcsrHypergraph<'_, W> {
+    fn contains_relation(&self, relation: BcsrHyperedgeId<W::RelationIndex>) -> bool {
         index_to_usize_validated(relation.get()) < self.counts().hyperedge_count
     }
 }
 
-impl<V, R, I, O, VW, RW> ContainsIncidence for View<'_, V, R, I, O, VW, RW>
-where
-    V: LayoutIndex,
-    R: LayoutIndex,
-    I: LayoutIndex,
-    O: LayoutWord<Index = I>,
-    VW: LayoutWord<Index = V>,
-    RW: LayoutWord<Index = R>,
-{
-    fn contains_incidence(&self, incidence: BcsrParticipantId<I>) -> bool {
+impl<W: BcsrWords> ContainsIncidence for BcsrHypergraph<'_, W> {
+    fn contains_incidence(&self, incidence: BcsrParticipantId<W::IncidenceIndex>) -> bool {
         index_to_usize_validated(incidence.get()) < self.counts().total_incidences
     }
 }
 
-impl<V, R, I, O, VW, RW> IncidenceElement for View<'_, V, R, I, O, VW, RW>
-where
-    V: LayoutIndex,
-    R: LayoutIndex,
-    I: LayoutIndex,
-    O: LayoutWord<Index = I>,
-    VW: LayoutWord<Index = V>,
-    RW: LayoutWord<Index = R>,
-{
-    fn incidence_element(&self, incidence: BcsrParticipantId<I>) -> BcsrVertexId<V> {
+impl<W: BcsrWords> IncidenceElement for BcsrHypergraph<'_, W> {
+    fn incidence_element(
+        &self,
+        incidence: BcsrParticipantId<W::IncidenceIndex>,
+    ) -> BcsrVertexId<W::VertexIndex> {
         let incidence_index = index_to_usize_validated(incidence.get());
         let counts = self.counts();
         let sections = self.sections();
@@ -404,16 +299,11 @@ where
     }
 }
 
-impl<V, R, I, O, VW, RW> IncidenceRelation for View<'_, V, R, I, O, VW, RW>
-where
-    V: LayoutIndex,
-    R: LayoutIndex,
-    I: LayoutIndex,
-    O: LayoutWord<Index = I>,
-    VW: LayoutWord<Index = V>,
-    RW: LayoutWord<Index = R>,
-{
-    fn incidence_relation(&self, incidence: BcsrParticipantId<I>) -> BcsrHyperedgeId<R> {
+impl<W: BcsrWords> IncidenceRelation for BcsrHypergraph<'_, W> {
+    fn incidence_relation(
+        &self,
+        incidence: BcsrParticipantId<W::IncidenceIndex>,
+    ) -> BcsrHyperedgeId<W::RelationIndex> {
         let incidence_index = index_to_usize_validated(incidence.get());
         let counts = self.counts();
         let sections = self.sections();
@@ -426,16 +316,8 @@ where
     }
 }
 
-impl<V, R, I, O, VW, RW> IncidenceRole for View<'_, V, R, I, O, VW, RW>
-where
-    V: LayoutIndex,
-    R: LayoutIndex,
-    I: LayoutIndex,
-    O: LayoutWord<Index = I>,
-    VW: LayoutWord<Index = V>,
-    RW: LayoutWord<Index = R>,
-{
-    fn incidence_role(&self, incidence: BcsrParticipantId<I>) -> BcsrRole {
+impl<W: BcsrWords> IncidenceRole for BcsrHypergraph<'_, W> {
+    fn incidence_role(&self, incidence: BcsrParticipantId<W::IncidenceIndex>) -> BcsrRole {
         if index_to_usize_validated(incidence.get()) < self.counts().p_outgoing {
             BcsrRole::Head
         } else {
@@ -444,21 +326,16 @@ where
     }
 }
 
-impl<V, R, I, O, VW, RW> RelationIncidences for View<'_, V, R, I, O, VW, RW>
-where
-    V: LayoutIndex,
-    R: LayoutIndex,
-    I: LayoutIndex,
-    O: LayoutWord<Index = I>,
-    VW: LayoutWord<Index = V>,
-    RW: LayoutWord<Index = R>,
-{
+impl<W: BcsrWords> RelationIncidences for BcsrHypergraph<'_, W> {
     type Incidences<'view>
-        = BcsrChainedRelationIncidences<I>
+        = BcsrChainedRelationIncidences<W::IncidenceIndex>
     where
         Self: 'view;
 
-    fn relation_incidences(&self, relation: BcsrHyperedgeId<R>) -> Self::Incidences<'_> {
+    fn relation_incidences(
+        &self,
+        relation: BcsrHyperedgeId<W::RelationIndex>,
+    ) -> Self::Incidences<'_> {
         let sections = self.sections();
         let p_outgoing = self.counts().p_outgoing;
         let h_index = index_to_usize_validated(relation.get());
@@ -471,35 +348,19 @@ where
     }
 }
 
-impl<V, R, I, O, VW, RW> ElementIncidences for View<'_, V, R, I, O, VW, RW>
-where
-    V: LayoutIndex,
-    R: LayoutIndex,
-    I: LayoutIndex,
-    O: LayoutWord<Index = I>,
-    VW: LayoutWord<Index = V>,
-    RW: LayoutWord<Index = R>,
-{
+impl<W: BcsrWords> ElementIncidences for BcsrHypergraph<'_, W> {
     type Incidences<'view>
-        = BcsrElementIncidences<'view, O, VW, RW>
+        = BcsrElementIncidences<'view, W::OffsetWord, W::VertexWord, W::RelationWord>
     where
         Self: 'view;
 
-    fn element_incidences(&self, element: BcsrVertexId<V>) -> Self::Incidences<'_> {
+    fn element_incidences(&self, element: BcsrVertexId<W::VertexIndex>) -> Self::Incidences<'_> {
         self.detached_element_incidences(element)
     }
 }
 
-impl<V, R, I, O, VW, RW> RelationIncidenceCount for View<'_, V, R, I, O, VW, RW>
-where
-    V: LayoutIndex,
-    R: LayoutIndex,
-    I: LayoutIndex,
-    O: LayoutWord<Index = I>,
-    VW: LayoutWord<Index = V>,
-    RW: LayoutWord<Index = R>,
-{
-    fn relation_incidence_count(&self, relation: BcsrHyperedgeId<R>) -> usize {
+impl<W: BcsrWords> RelationIncidenceCount for BcsrHypergraph<'_, W> {
+    fn relation_incidence_count(&self, relation: BcsrHyperedgeId<W::RelationIndex>) -> usize {
         let sections = self.sections();
         let h_index = index_to_usize_validated(relation.get());
         let head_size = index_to_usize_validated(sections.head_offsets[h_index + 1].get())
@@ -510,16 +371,8 @@ where
     }
 }
 
-impl<V, R, I, O, VW, RW> ElementIncidenceCount for View<'_, V, R, I, O, VW, RW>
-where
-    V: LayoutIndex,
-    R: LayoutIndex,
-    I: LayoutIndex,
-    O: LayoutWord<Index = I>,
-    VW: LayoutWord<Index = V>,
-    RW: LayoutWord<Index = R>,
-{
-    fn element_incidence_count(&self, element: BcsrVertexId<V>) -> usize {
+impl<W: BcsrWords> ElementIncidenceCount for BcsrHypergraph<'_, W> {
+    fn element_incidence_count(&self, element: BcsrVertexId<W::VertexIndex>) -> usize {
         let sections = self.sections();
         let v_index = index_to_usize_validated(element.get());
         let out_size =
@@ -535,92 +388,75 @@ where
 // by the blanket impls in `oxgraph-hyper` over `RelationIncidenceCount` /
 // `ElementIncidenceCount`, which this view implements above.
 
-impl<V, R, I, O, VW, RW> HyperedgeParticipants for View<'_, V, R, I, O, VW, RW>
-where
-    V: LayoutIndex,
-    R: LayoutIndex,
-    I: LayoutIndex,
-    O: LayoutWord<Index = I>,
-    VW: LayoutWord<Index = V>,
-    RW: LayoutWord<Index = R>,
-{
+impl<W: BcsrWords> HyperedgeParticipants for BcsrHypergraph<'_, W> {
     type Participants<'view>
-        = BcsrChainedParticipants<'view, VW>
+        = BcsrChainedParticipants<'view, W::VertexWord>
     where
         Self: 'view;
 
-    fn hyperedge_participants(&self, hyperedge: BcsrHyperedgeId<R>) -> Self::Participants<'_> {
+    fn hyperedge_participants(
+        &self,
+        hyperedge: BcsrHyperedgeId<W::RelationIndex>,
+    ) -> Self::Participants<'_> {
         self.detached_hyperedge_participants(hyperedge)
     }
 }
 
-impl<V, R, I, O, VW, RW> IncidentHyperedges for View<'_, V, R, I, O, VW, RW>
-where
-    V: LayoutIndex,
-    R: LayoutIndex,
-    I: LayoutIndex,
-    O: LayoutWord<Index = I>,
-    VW: LayoutWord<Index = V>,
-    RW: LayoutWord<Index = R>,
-{
+impl<W: BcsrWords> IncidentHyperedges for BcsrHypergraph<'_, W> {
     type IncidentHyperedges<'view>
-        = BcsrChainedHyperedges<'view, RW>
+        = BcsrChainedHyperedges<'view, W::RelationWord>
     where
         Self: 'view;
 
-    fn incident_hyperedges(&self, vertex: BcsrVertexId<V>) -> Self::IncidentHyperedges<'_> {
+    fn incident_hyperedges(
+        &self,
+        vertex: BcsrVertexId<W::VertexIndex>,
+    ) -> Self::IncidentHyperedges<'_> {
         self.detached_incident_hyperedges(vertex)
     }
 }
 
-impl<V, R, I, O, VW, RW> DirectedHyperedgeParticipants for View<'_, V, R, I, O, VW, RW>
-where
-    V: LayoutIndex,
-    R: LayoutIndex,
-    I: LayoutIndex,
-    O: LayoutWord<Index = I>,
-    VW: LayoutWord<Index = V>,
-    RW: LayoutWord<Index = R>,
-{
+impl<W: BcsrWords> DirectedHyperedgeParticipants for BcsrHypergraph<'_, W> {
     type SourceParticipants<'view>
-        = BcsrVertexSlice<'view, VW>
+        = BcsrVertexSlice<'view, W::VertexWord>
     where
         Self: 'view;
 
     type TargetParticipants<'view>
-        = BcsrVertexSlice<'view, VW>
+        = BcsrVertexSlice<'view, W::VertexWord>
     where
         Self: 'view;
 
-    fn source_participants(&self, hyperedge: BcsrHyperedgeId<R>) -> Self::SourceParticipants<'_> {
+    fn source_participants(
+        &self,
+        hyperedge: BcsrHyperedgeId<W::RelationIndex>,
+    ) -> Self::SourceParticipants<'_> {
         self.detached_source_participants(hyperedge)
     }
 
-    fn target_participants(&self, hyperedge: BcsrHyperedgeId<R>) -> Self::TargetParticipants<'_> {
+    fn target_participants(
+        &self,
+        hyperedge: BcsrHyperedgeId<W::RelationIndex>,
+    ) -> Self::TargetParticipants<'_> {
         self.detached_target_participants(hyperedge)
     }
 }
 
-impl<V, R, I, O, VW, RW> DirectedHyperedgeIncidences for View<'_, V, R, I, O, VW, RW>
-where
-    V: LayoutIndex,
-    R: LayoutIndex,
-    I: LayoutIndex,
-    O: LayoutWord<Index = I>,
-    VW: LayoutWord<Index = V>,
-    RW: LayoutWord<Index = R>,
-{
+impl<W: BcsrWords> DirectedHyperedgeIncidences for BcsrHypergraph<'_, W> {
     type SourceIncidences<'view>
-        = BcsrParticipantSlice<I>
+        = BcsrParticipantSlice<W::IncidenceIndex>
     where
         Self: 'view;
 
     type TargetIncidences<'view>
-        = BcsrParticipantSlice<I>
+        = BcsrParticipantSlice<W::IncidenceIndex>
     where
         Self: 'view;
 
-    fn source_incidences(&self, hyperedge: BcsrHyperedgeId<R>) -> Self::SourceIncidences<'_> {
+    fn source_incidences(
+        &self,
+        hyperedge: BcsrHyperedgeId<W::RelationIndex>,
+    ) -> Self::SourceIncidences<'_> {
         let sections = self.sections();
         let h_index = index_to_usize_validated(hyperedge.get());
         let head_start = index_to_usize_validated(sections.head_offsets[h_index].get());
@@ -628,7 +464,10 @@ where
         BcsrParticipantSlice::new(head_start, head_end, 0)
     }
 
-    fn target_incidences(&self, hyperedge: BcsrHyperedgeId<R>) -> Self::TargetIncidences<'_> {
+    fn target_incidences(
+        &self,
+        hyperedge: BcsrHyperedgeId<W::RelationIndex>,
+    ) -> Self::TargetIncidences<'_> {
         let sections = self.sections();
         let h_index = index_to_usize_validated(hyperedge.get());
         let tail_start = index_to_usize_validated(sections.tail_offsets[h_index].get());
@@ -637,68 +476,50 @@ where
     }
 }
 
-impl<V, R, I, O, VW, RW> DirectedVertexHyperedges for View<'_, V, R, I, O, VW, RW>
-where
-    V: LayoutIndex,
-    R: LayoutIndex,
-    I: LayoutIndex,
-    O: LayoutWord<Index = I>,
-    VW: LayoutWord<Index = V>,
-    RW: LayoutWord<Index = R>,
-{
+impl<W: BcsrWords> DirectedVertexHyperedges for BcsrHypergraph<'_, W> {
     type OutgoingHyperedges<'view>
-        = BcsrHyperedgeSlice<'view, RW>
+        = BcsrHyperedgeSlice<'view, W::RelationWord>
     where
         Self: 'view;
 
     type IncomingHyperedges<'view>
-        = BcsrHyperedgeSlice<'view, RW>
+        = BcsrHyperedgeSlice<'view, W::RelationWord>
     where
         Self: 'view;
 
-    fn outgoing_hyperedges(&self, vertex: BcsrVertexId<V>) -> Self::OutgoingHyperedges<'_> {
+    fn outgoing_hyperedges(
+        &self,
+        vertex: BcsrVertexId<W::VertexIndex>,
+    ) -> Self::OutgoingHyperedges<'_> {
         self.detached_outgoing_hyperedges(vertex)
     }
 
-    fn incoming_hyperedges(&self, vertex: BcsrVertexId<V>) -> Self::IncomingHyperedges<'_> {
+    fn incoming_hyperedges(
+        &self,
+        vertex: BcsrVertexId<W::VertexIndex>,
+    ) -> Self::IncomingHyperedges<'_> {
         self.detached_incoming_hyperedges(vertex)
     }
 }
 
-impl<V, R, I, O, VW, RW> ElementSuccessors for View<'_, V, R, I, O, VW, RW>
-where
-    V: LayoutIndex,
-    R: LayoutIndex,
-    I: LayoutIndex,
-    O: LayoutWord<Index = I>,
-    VW: LayoutWord<Index = V>,
-    RW: LayoutWord<Index = R>,
-{
+impl<W: BcsrWords> ElementSuccessors for BcsrHypergraph<'_, W> {
     type Successors<'view>
-        = BcsrSuccessorVertices<'view, RW, O, VW>
+        = BcsrSuccessorVertices<'view, W::RelationWord, W::OffsetWord, W::VertexWord>
     where
         Self: 'view;
 
-    fn element_successors(&self, vertex: BcsrVertexId<V>) -> Self::Successors<'_> {
+    fn element_successors(&self, vertex: BcsrVertexId<W::VertexIndex>) -> Self::Successors<'_> {
         self.detached_element_successors(vertex)
     }
 }
 
-impl<V, R, I, O, VW, RW> ElementPredecessors for View<'_, V, R, I, O, VW, RW>
-where
-    V: LayoutIndex,
-    R: LayoutIndex,
-    I: LayoutIndex,
-    O: LayoutWord<Index = I>,
-    VW: LayoutWord<Index = V>,
-    RW: LayoutWord<Index = R>,
-{
+impl<W: BcsrWords> ElementPredecessors for BcsrHypergraph<'_, W> {
     type Predecessors<'view>
-        = BcsrPredecessorVertices<'view, RW, O, VW>
+        = BcsrPredecessorVertices<'view, W::RelationWord, W::OffsetWord, W::VertexWord>
     where
         Self: 'view;
 
-    fn element_predecessors(&self, vertex: BcsrVertexId<V>) -> Self::Predecessors<'_> {
+    fn element_predecessors(&self, vertex: BcsrVertexId<W::VertexIndex>) -> Self::Predecessors<'_> {
         self.detached_element_predecessors(vertex)
     }
 }

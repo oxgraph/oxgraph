@@ -5,7 +5,9 @@ use oxgraph_hyper::{
     DirectedHyperedgeParticipants, DirectedVertexSuccessors, HyperedgeParticipants,
     IncidentHyperedges,
 };
-use oxgraph_hyper_bcsr::{BcsrError, BcsrHyperedgeId, BcsrHypergraph, BcsrSections, BcsrVertexId};
+use oxgraph_hyper_bcsr::{
+    BcsrError, BcsrHyperedgeId, BcsrNativeHypergraph, BcsrSections, BcsrVertexId,
+};
 
 /// Runs the example and reports validation errors.
 fn main() -> Result<(), BcsrError> {
@@ -21,7 +23,7 @@ fn main() -> Result<(), BcsrError> {
     static VERTEX_INCOMING_OFFSETS: &[u32] = &[0, 0, 1, 3];
     static VERTEX_INCOMING_HYPEREDGES: &[u32] = &[0, 0, 1];
 
-    let view = BcsrHypergraph::open(BcsrSections {
+    let view = BcsrNativeHypergraph::<u32, u32, u32>::open(BcsrSections {
         head_offsets: HEAD_OFFSETS,
         head_participants: HEAD_PARTICIPANTS,
         tail_offsets: TAIL_OFFSETS,

@@ -8,8 +8,8 @@ use oxgraph_hyper::{
     IncidentHyperedges, RelationIncidenceCount, RelationIncidences, RelationIndex, TopologyBase,
 };
 use oxgraph_hyper_bcsr::{
-    BcsrError, BcsrHyperedgeId, BcsrHypergraph, BcsrNativeHypergraph, BcsrParticipantId, BcsrRole,
-    BcsrSections, BcsrVertexId,
+    BcsrError, BcsrHyperedgeId, BcsrNativeHypergraph, BcsrParticipantId, BcsrRole, BcsrSections,
+    BcsrVertexId,
 };
 
 /// Hand-built canonical fixture (same layout as `tests/bcsr.rs`).
@@ -164,7 +164,7 @@ where
 
 #[test]
 fn generic_consumers_use_oxgraph_hyper_traits() -> Result<(), BcsrError> {
-    let view = BcsrHypergraph::open(canonical_sections())?;
+    let view = BcsrNativeHypergraph::<u32, u32, u32>::open(canonical_sections())?;
 
     let h0 = BcsrHyperedgeId::new(0);
     assert_eq!(
@@ -201,7 +201,7 @@ fn generic_consumers_use_oxgraph_hyper_traits() -> Result<(), BcsrError> {
 
 #[test]
 fn generic_consumers_query_dense_indexes() -> Result<(), BcsrError> {
-    let view = BcsrHypergraph::open(canonical_sections())?;
+    let view = BcsrNativeHypergraph::<u32, u32, u32>::open(canonical_sections())?;
     check_element_index(&view, BcsrVertexId::new(2), 2);
     check_relation_index(&view, BcsrHyperedgeId::new(1), 1);
     check_incidence_index(&view, BcsrParticipantId::new(3), 3);
@@ -210,7 +210,7 @@ fn generic_consumers_query_dense_indexes() -> Result<(), BcsrError> {
 
 #[test]
 fn generic_consumers_use_count_traits() -> Result<(), BcsrError> {
-    let view = BcsrHypergraph::open(canonical_sections())?;
+    let view = BcsrNativeHypergraph::<u32, u32, u32>::open(canonical_sections())?;
     assert_eq!(vertex_count_via_trait(&view), 3);
     assert_eq!(hyperedge_count_via_trait(&view), 2);
     assert_eq!(relation_size_via_trait(&view, BcsrHyperedgeId::new(0)), 3);
@@ -225,7 +225,7 @@ fn generic_consumers_use_count_traits() -> Result<(), BcsrError> {
 
 #[test]
 fn generic_consumers_resolve_incidences() -> Result<(), BcsrError> {
-    let view = BcsrHypergraph::open(canonical_sections())?;
+    let view = BcsrNativeHypergraph::<u32, u32, u32>::open(canonical_sections())?;
     check_incidence_resolution(
         &view,
         BcsrParticipantId::new(0),
@@ -245,7 +245,7 @@ fn generic_consumers_resolve_incidences() -> Result<(), BcsrError> {
 
 #[test]
 fn generic_consumers_check_membership() -> Result<(), BcsrError> {
-    let view = BcsrHypergraph::open(canonical_sections())?;
+    let view = BcsrNativeHypergraph::<u32, u32, u32>::open(canonical_sections())?;
     assert_membership::<_, BcsrVertexId<u32>, BcsrHyperedgeId<u32>, BcsrParticipantId<u32>>(
         &view,
         BcsrVertexId::new(0),

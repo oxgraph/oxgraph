@@ -1,10 +1,12 @@
 //! Borrowed bipartite-CSR hypergraph view and its caller-facing borrowed
 //! section parameter struct.
 
+use core::fmt;
+
 use crate::{
     error::BcsrError,
     internal::validation::{BcsrValidation, DerivedCounts, validate_sections},
-    word::LayoutWord,
+    word::{BcsrWords, LayoutWord},
 };
 
 /// Borrowed input slices for a bipartite-CSR hypergraph view.
@@ -91,9 +93,12 @@ where
 /// Borrowed bipartite compressed-sparse-row hypergraph view.
 ///
 /// `BcsrHypergraph` borrows the eight section payloads supplied through
-/// [`BcsrSections`] without copying or allocating. Construction validates the
-/// borrowed slices according to the chosen [`BcsrValidation`] level. Once
-/// constructed, every traversal is `O(degree)` in either direction.
+/// [`BcsrSections`] without copying or allocating. The single [`BcsrWords`]
+/// parameter selects the word family — [`NativeWords`](crate::NativeWords)
+/// for host-order build-path views, [`LeWords`](crate::LeWords) for
+/// little-endian snapshot-backed views. Construction validates the borrowed
+/// slices according to the chosen [`BcsrValidation`] level. Once constructed,
+/// every traversal is `O(degree)` in either direction.
 ///
 /// # Performance
 ///
@@ -101,47 +106,39 @@ where
 /// [`BcsrValidation::Layout`]. [`BcsrValidation::Strict`] adds an
 /// `O((P_head + P_tail) · log d)` cross-direction walk where `d` is the
 /// maximum vertex outgoing or incoming degree.
-#[derive(Clone, Copy, Debug)]
-pub struct BcsrHypergraph<
-    'view,
-    VertexIndex,
-    RelationIndex,
-    IncidenceIndex,
-    OffsetWord,
-    VertexWord,
-    RelationWord,
-> where
-    OffsetWord: LayoutWord<Index = IncidenceIndex>,
-    VertexWord: LayoutWord<Index = VertexIndex>,
-    RelationWord: LayoutWord<Index = RelationIndex>,
-    VertexIndex: crate::word::LayoutIndex,
-    RelationIndex: crate::word::LayoutIndex,
-    IncidenceIndex: crate::word::LayoutIndex,
-{
+pub struct BcsrHypergraph<'view, W: BcsrWords> {
     /// Validated counts cached for `O(1)` access.
     counts: DerivedCounts,
     /// The eight borrowed sections backing this view.
-    sections: BcsrSections<'view, OffsetWord, VertexWord, RelationWord>,
+    sections: BcsrSections<'view, W::OffsetWord, W::VertexWord, W::RelationWord>,
 }
 
-impl<'view, VertexIndex, RelationIndex, IncidenceIndex, OffsetWord, VertexWord, RelationWord>
-    BcsrHypergraph<
-        'view,
-        VertexIndex,
-        RelationIndex,
-        IncidenceIndex,
-        OffsetWord,
-        VertexWord,
-        RelationWord,
-    >
+// Manual impls instead of derives: the word family `W` is a type-level
+// carrier that never appears as a value, so deriving would demand spurious
+// `W: Clone` / `W: Copy` / `W: Debug` bounds.
+impl<W: BcsrWords> Clone for BcsrHypergraph<'_, W> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<W: BcsrWords> Copy for BcsrHypergraph<'_, W> {}
+
+impl<W: BcsrWords> fmt::Debug for BcsrHypergraph<'_, W>
 where
-    OffsetWord: LayoutWord<Index = IncidenceIndex>,
-    VertexWord: LayoutWord<Index = VertexIndex>,
-    RelationWord: LayoutWord<Index = RelationIndex>,
-    VertexIndex: crate::word::LayoutIndex,
-    RelationIndex: crate::word::LayoutIndex,
-    IncidenceIndex: crate::word::LayoutIndex,
+    W::OffsetWord: fmt::Debug,
+    W::VertexWord: fmt::Debug,
+    W::RelationWord: fmt::Debug,
 {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("BcsrHypergraph")
+            .field("counts", &self.counts)
+            .field("sections", &self.sections)
+            .finish()
+    }
+}
+
+impl<'view, W: BcsrWords> BcsrHypergraph<'view, W> {
     /// Validates `sections` at [`BcsrValidation::Layout`] and returns a view.
     ///
     /// # Errors
@@ -153,7 +150,7 @@ where
     ///
     /// `O(P_head + P_tail + P_outgoing + P_incoming)`.
     pub fn open(
-        sections: BcsrSections<'view, OffsetWord, VertexWord, RelationWord>,
+        sections: BcsrSections<'view, W::OffsetWord, W::VertexWord, W::RelationWord>,
     ) -> Result<Self, BcsrError> {
         Self::open_with(sections, BcsrValidation::Layout)
     }
@@ -170,7 +167,7 @@ where
     /// [`BcsrValidation::Layout`]; adds `O((P_head + P_tail) · log d)` at
     /// [`BcsrValidation::Strict`].
     pub fn open_with(
-        sections: BcsrSections<'view, OffsetWord, VertexWord, RelationWord>,
+        sections: BcsrSections<'view, W::OffsetWord, W::VertexWord, W::RelationWord>,
         level: BcsrValidation,
     ) -> Result<Self, BcsrError> {
         let counts = validate_sections(&sections, level)?;
@@ -194,7 +191,7 @@ where
     ///
     /// This function is `O(1)`.
     pub(crate) const fn from_validated_sections(
-        sections: BcsrSections<'view, OffsetWord, VertexWord, RelationWord>,
+        sections: BcsrSections<'view, W::OffsetWord, W::VertexWord, W::RelationWord>,
     ) -> Self {
         let p_outgoing = sections.vertex_outgoing_hyperedges.len();
         let p_incoming = sections.vertex_incoming_hyperedges.len();
@@ -256,7 +253,7 @@ where
     /// Returns the borrowed sections.
     pub(in crate::internal) const fn sections(
         &self,
-    ) -> &BcsrSections<'view, OffsetWord, VertexWord, RelationWord> {
+    ) -> &BcsrSections<'view, W::OffsetWord, W::VertexWord, W::RelationWord> {
         &self.sections
     }
 }

@@ -12,7 +12,7 @@ use crate::{
         validation::BcsrValidation,
         view::{BcsrHypergraph, BcsrSections},
     },
-    word::BcsrSnapshotIndex,
+    word::{BcsrSnapshotIndex, LeWords},
 };
 
 /// Snapshot section bundle for the requested BCSR index widths.
@@ -24,15 +24,7 @@ type SnapshotSections<'view, VertexIndex, RelationIndex, IncidenceIndex> = BcsrS
 >;
 
 impl<'view, VertexIndex, RelationIndex, IncidenceIndex>
-    BcsrHypergraph<
-        'view,
-        VertexIndex,
-        RelationIndex,
-        IncidenceIndex,
-        <IncidenceIndex as SnapshotWidth>::LittleEndianWord,
-        <VertexIndex as SnapshotWidth>::LittleEndianWord,
-        <RelationIndex as SnapshotWidth>::LittleEndianWord,
-    >
+    BcsrHypergraph<'view, LeWords<VertexIndex, RelationIndex, IncidenceIndex>>
 where
     VertexIndex: BcsrSnapshotIndex,
     RelationIndex: BcsrSnapshotIndex,

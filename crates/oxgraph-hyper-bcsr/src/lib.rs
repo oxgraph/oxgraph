@@ -87,8 +87,8 @@ pub use crate::{
         SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_OFFSETS_U64,
     },
     word::{
-        BcsrSnapshotIndex, LayoutIndex, LayoutSnapshotWord, LayoutWord,
-        SNAPSHOT_BCSR_SECTION_VERSION,
+        BcsrSnapshotIndex, BcsrWords, LayoutIndex, LayoutSnapshotWord, LayoutWord, LeWords,
+        NativeWords, SNAPSHOT_BCSR_SECTION_VERSION,
     },
 };
 
@@ -97,27 +97,13 @@ pub use crate::{
 /// # Performance
 ///
 /// `perf: unspecified`; this alias carries no runtime cost.
-pub type BcsrNativeHypergraph<'view, VertexIndex, RelationIndex, IncidenceIndex> = BcsrHypergraph<
-    'view,
-    VertexIndex,
-    RelationIndex,
-    IncidenceIndex,
-    IncidenceIndex,
-    VertexIndex,
-    RelationIndex,
->;
+pub type BcsrNativeHypergraph<'view, VertexIndex, RelationIndex, IncidenceIndex> =
+    BcsrHypergraph<'view, NativeWords<VertexIndex, RelationIndex, IncidenceIndex>>;
 
 /// Snapshot-backed BCSR hypergraph alias.
 ///
 /// # Performance
 ///
 /// `perf: unspecified`; this alias carries no runtime cost.
-pub type BcsrSnapshotHypergraph<'view, VertexIndex, RelationIndex, IncidenceIndex> = BcsrHypergraph<
-    'view,
-    VertexIndex,
-    RelationIndex,
-    IncidenceIndex,
-    <IncidenceIndex as oxgraph_layout_util::SnapshotWidth>::LittleEndianWord,
-    <VertexIndex as oxgraph_layout_util::SnapshotWidth>::LittleEndianWord,
-    <RelationIndex as oxgraph_layout_util::SnapshotWidth>::LittleEndianWord,
->;
+pub type BcsrSnapshotHypergraph<'view, VertexIndex, RelationIndex, IncidenceIndex> =
+    BcsrHypergraph<'view, LeWords<VertexIndex, RelationIndex, IncidenceIndex>>;
