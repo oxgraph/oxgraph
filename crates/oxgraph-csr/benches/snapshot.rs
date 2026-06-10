@@ -13,11 +13,14 @@ use criterion::{
     BenchmarkGroup, BenchmarkId, Criterion, criterion_group, criterion_main, measurement::WallTime,
 };
 use oxgraph_algo::breadth_first_search;
-use oxgraph_csr::{
-    CsrNodeId, CsrSnapshotGraph, SNAPSHOT_KIND_CSR_OFFSETS_U32, SNAPSHOT_KIND_CSR_TARGETS_U32,
-};
+use oxgraph_csr::{CsrNodeId, CsrSnapshotGraph, CsrSnapshotIndex};
 use oxgraph_layout_util::crc32c_append;
 use oxgraph_snapshot::{Snapshot, SnapshotBuilder};
+
+/// `u32` CSR offsets section kind derived from the base-plus-width scheme.
+const SNAPSHOT_KIND_CSR_OFFSETS_U32: u32 = <u32 as CsrSnapshotIndex>::OFFSETS_KIND;
+/// `u32` CSR targets section kind derived from the base-plus-width scheme.
+const SNAPSHOT_KIND_CSR_TARGETS_U32: u32 = <u32 as CsrSnapshotIndex>::TARGETS_KIND;
 
 /// Builds a deterministic CSR ring graph of `node_count` nodes (each node
 /// points to the next) and emits it as snapshot bytes.

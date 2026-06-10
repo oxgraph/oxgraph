@@ -20,13 +20,15 @@
 //!
 //! # Snapshot section kinds
 //!
-//! | Constant family | Description |
-//! | --------------- | ----------- |
-//! | `PROPERTY_DESCRIPTORS_*` | Per-layer descriptor records (header + records + string table) |
-//! | `PROPERTY_DATA_*` | Concatenated Arrow IPC value and sparse-default streams |
+//! | Constant family | Base | Description |
+//! | --------------- | ---- | ----------- |
+//! | `PROPERTY_DESCRIPTORS` | [`SNAPSHOT_KIND_PROPERTY_DESCRIPTORS_BASE`] | Per-layer descriptor records (header + records + string table) |
+//! | `PROPERTY_DATA` | [`SNAPSHOT_KIND_PROPERTY_DATA_BASE`] | Concatenated Arrow IPC value and sparse-default streams |
 //!
-//! The `_U16` / `_U32` / `_U64` suffix selects the descriptor metadata word
-//! width. The payload format is owned by this crate and remains an
+//! Each persisted kind is `BASE | WIDTH_CODE`, where the two-bit width code
+//! (`0b00` = `u16`, `0b01` = `u32`, `0b10` = `u64`) selects the descriptor
+//! metadata word width; [`PropertySnapshotMetaWord`] derives the per-width
+//! kinds. The payload format is owned by this crate and remains an
 //! OxGraph-internal ABI candidate while snapshot v1 bytes are not stable. All
 //! section-kind constants are `perf: unspecified` — compile-time `u32` tags.
 // kani-skip: property layers depend on Arrow heap arrays and snapshot byte streams outside Kani's
@@ -54,15 +56,9 @@ pub use snapshot::{
 pub use weights::{DenseWeights, GraphPropertyLayers, HyperPropertyLayers, SparseWeights};
 pub use width::{
     AxisIndex, ElementAxis, IncidenceAxis, PropertyAxis, PropertyIndex, PropertySnapshotMetaWord,
-    RelationAxis, SNAPSHOT_KIND_ELEMENT_IDENTITY_MAP_U16, SNAPSHOT_KIND_ELEMENT_IDENTITY_MAP_U32,
-    SNAPSHOT_KIND_ELEMENT_IDENTITY_MAP_U64, SNAPSHOT_KIND_IDENTITY_MODES_U16,
-    SNAPSHOT_KIND_IDENTITY_MODES_U32, SNAPSHOT_KIND_IDENTITY_MODES_U64,
-    SNAPSHOT_KIND_INCIDENCE_IDENTITY_MAP_U16, SNAPSHOT_KIND_INCIDENCE_IDENTITY_MAP_U32,
-    SNAPSHOT_KIND_INCIDENCE_IDENTITY_MAP_U64, SNAPSHOT_KIND_PROPERTY_DATA_U16,
-    SNAPSHOT_KIND_PROPERTY_DATA_U32, SNAPSHOT_KIND_PROPERTY_DATA_U64,
-    SNAPSHOT_KIND_PROPERTY_DESCRIPTORS_U16, SNAPSHOT_KIND_PROPERTY_DESCRIPTORS_U32,
-    SNAPSHOT_KIND_PROPERTY_DESCRIPTORS_U64, SNAPSHOT_KIND_RELATION_IDENTITY_MAP_U16,
-    SNAPSHOT_KIND_RELATION_IDENTITY_MAP_U32, SNAPSHOT_KIND_RELATION_IDENTITY_MAP_U64,
+    RelationAxis, SNAPSHOT_KIND_ELEMENT_IDENTITY_MAP_BASE, SNAPSHOT_KIND_IDENTITY_MODES_BASE,
+    SNAPSHOT_KIND_INCIDENCE_IDENTITY_MAP_BASE, SNAPSHOT_KIND_PROPERTY_DATA_BASE,
+    SNAPSHOT_KIND_PROPERTY_DESCRIPTORS_BASE, SNAPSHOT_KIND_RELATION_IDENTITY_MAP_BASE,
     SNAPSHOT_PROPERTY_VERSION,
 };
 

@@ -6,10 +6,12 @@ use oxgraph_snapshot::Snapshot;
 
 use crate::CscSnapshotGraph;
 
-/// Inbound offsets section kind used by the proof fixture (Postgres band).
-const FIXTURE_OFFSETS_KIND: u32 = 0x0201;
-/// Inbound targets section kind used by the proof fixture (Postgres band).
-const FIXTURE_TARGETS_KIND: u32 = 0x0202;
+/// Inbound offsets section kind used by the proof fixture (Postgres band:
+/// `SNAPSHOT_KIND_PG_INBOUND_OFFSETS_BASE 0x0204 | u32 width code 0b01`).
+const FIXTURE_OFFSETS_KIND: u32 = 0x0205;
+/// Inbound targets section kind used by the proof fixture (Postgres band:
+/// `SNAPSHOT_KIND_PG_INBOUND_TARGETS_BASE 0x0208 | u32 width code 0b01`).
+const FIXTURE_TARGETS_KIND: u32 = 0x0209;
 /// CSR section version used by the proof fixture.
 const FIXTURE_VERSION: u32 = 1;
 

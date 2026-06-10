@@ -25,7 +25,8 @@ mod traverse;
 
 pub use artifact::{
     PostgresMetadata, PostgresSectionError, SNAPSHOT_KIND_PG_CATALOG,
-    SNAPSHOT_KIND_PG_INBOUND_OFFSETS_U32, SNAPSHOT_KIND_PG_INBOUND_TARGETS_U32,
+    SNAPSHOT_KIND_PG_INBOUND_OFFSETS_BASE, SNAPSHOT_KIND_PG_INBOUND_OFFSETS_U32,
+    SNAPSHOT_KIND_PG_INBOUND_TARGETS_BASE, SNAPSHOT_KIND_PG_INBOUND_TARGETS_U32,
     SNAPSHOT_KIND_PG_METADATA, attach_metadata, attach_postgres_sections, load_snapshot_bytes,
     read_metadata, validate_snapshot_bytes, write_snapshot_bytes,
 };

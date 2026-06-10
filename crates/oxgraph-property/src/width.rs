@@ -16,102 +16,54 @@ use zerocopy::{
 
 use crate::model::{IdFamily, PropertyError};
 
-/// Snapshot section kind reserved for `u16` property-layer descriptors.
-pub const SNAPSHOT_KIND_PROPERTY_DESCRIPTORS_U16: u32 = 0x0100;
-/// Snapshot section kind reserved for `u16` Arrow IPC property-layer payloads.
-pub const SNAPSHOT_KIND_PROPERTY_DATA_U16: u32 = 0x0101;
-/// Snapshot section kind reserved for `u32` property-layer descriptors.
-pub const SNAPSHOT_KIND_PROPERTY_DESCRIPTORS_U32: u32 = 0x0102;
-/// Snapshot section kind reserved for `u32` Arrow IPC property-layer payloads.
-pub const SNAPSHOT_KIND_PROPERTY_DATA_U32: u32 = 0x0103;
-/// Snapshot section kind reserved for `u64` property-layer descriptors.
-pub const SNAPSHOT_KIND_PROPERTY_DESCRIPTORS_U64: u32 = 0x0104;
-/// Snapshot section kind reserved for `u64` Arrow IPC property-layer payloads.
-pub const SNAPSHOT_KIND_PROPERTY_DATA_U64: u32 = 0x0105;
-
-/// Snapshot section kind for `u16` identity-mode metadata records.
+/// 4-aligned base section kind for property-layer descriptors; the persisted
+/// kind is `BASE | WIDTH_CODE` for the metadata width.
+///
+/// The six property-band bases ascend by at least 4 in the canonical export
+/// order (descriptors, data, identity modes, element/relation/incidence
+/// identity maps), so every derived kind of one role sorts below every derived
+/// kind of the next role for any metadata/map width mix — the
+/// strictly-ascending order the v2 container mandates.
 ///
 /// # Performance
 ///
 /// `perf: unspecified`; this is a compile-time constant.
-pub const SNAPSHOT_KIND_IDENTITY_MODES_U16: u32 = 0x0110;
+pub const SNAPSHOT_KIND_PROPERTY_DESCRIPTORS_BASE: u32 = 0x0100;
 
-/// Snapshot section kind for `u32` identity-mode metadata records.
+/// 4-aligned base section kind for Arrow IPC property-layer payloads.
 ///
 /// # Performance
 ///
 /// `perf: unspecified`; this is a compile-time constant.
-pub const SNAPSHOT_KIND_IDENTITY_MODES_U32: u32 = 0x0111;
+pub const SNAPSHOT_KIND_PROPERTY_DATA_BASE: u32 = 0x0104;
 
-/// Snapshot section kind for `u64` identity-mode metadata records.
+/// 4-aligned base section kind for identity-mode metadata records.
 ///
 /// # Performance
 ///
 /// `perf: unspecified`; this is a compile-time constant.
-pub const SNAPSHOT_KIND_IDENTITY_MODES_U64: u32 = 0x0112;
+pub const SNAPSHOT_KIND_IDENTITY_MODES_BASE: u32 = 0x0110;
 
-/// Snapshot section kind for element local-to-canonical `u16` maps.
+/// 4-aligned base section kind for element local-to-canonical maps.
 ///
 /// # Performance
 ///
 /// `perf: unspecified`; this is a compile-time constant.
-pub const SNAPSHOT_KIND_ELEMENT_IDENTITY_MAP_U16: u32 = 0x0113;
+pub const SNAPSHOT_KIND_ELEMENT_IDENTITY_MAP_BASE: u32 = 0x0114;
 
-/// Snapshot section kind for element local-to-canonical `u32` maps.
+/// 4-aligned base section kind for relation local-to-canonical maps.
 ///
 /// # Performance
 ///
 /// `perf: unspecified`; this is a compile-time constant.
-pub const SNAPSHOT_KIND_ELEMENT_IDENTITY_MAP_U32: u32 = 0x0114;
+pub const SNAPSHOT_KIND_RELATION_IDENTITY_MAP_BASE: u32 = 0x0118;
 
-/// Snapshot section kind for element local-to-canonical `u64` maps.
+/// 4-aligned base section kind for incidence local-to-canonical maps.
 ///
 /// # Performance
 ///
 /// `perf: unspecified`; this is a compile-time constant.
-pub const SNAPSHOT_KIND_ELEMENT_IDENTITY_MAP_U64: u32 = 0x0115;
-
-/// Snapshot section kind for relation local-to-canonical `u16` maps.
-///
-/// # Performance
-///
-/// `perf: unspecified`; this is a compile-time constant.
-pub const SNAPSHOT_KIND_RELATION_IDENTITY_MAP_U16: u32 = 0x0116;
-
-/// Snapshot section kind for relation local-to-canonical `u32` maps.
-///
-/// # Performance
-///
-/// `perf: unspecified`; this is a compile-time constant.
-pub const SNAPSHOT_KIND_RELATION_IDENTITY_MAP_U32: u32 = 0x0117;
-
-/// Snapshot section kind for relation local-to-canonical `u64` maps.
-///
-/// # Performance
-///
-/// `perf: unspecified`; this is a compile-time constant.
-pub const SNAPSHOT_KIND_RELATION_IDENTITY_MAP_U64: u32 = 0x0118;
-
-/// Snapshot section kind for incidence local-to-canonical `u16` maps.
-///
-/// # Performance
-///
-/// `perf: unspecified`; this is a compile-time constant.
-pub const SNAPSHOT_KIND_INCIDENCE_IDENTITY_MAP_U16: u32 = 0x0119;
-
-/// Snapshot section kind for incidence local-to-canonical `u32` maps.
-///
-/// # Performance
-///
-/// `perf: unspecified`; this is a compile-time constant.
-pub const SNAPSHOT_KIND_INCIDENCE_IDENTITY_MAP_U32: u32 = 0x011A;
-
-/// Snapshot section kind for incidence local-to-canonical `u64` maps.
-///
-/// # Performance
-///
-/// `perf: unspecified`; this is a compile-time constant.
-pub const SNAPSHOT_KIND_INCIDENCE_IDENTITY_MAP_U64: u32 = 0x011B;
+pub const SNAPSHOT_KIND_INCIDENCE_IDENTITY_MAP_BASE: u32 = 0x011C;
 
 /// Internal property/identity snapshot section version.
 ///
@@ -200,38 +152,40 @@ pub trait PropertyIndex: sealed::PropertyIndex + Copy + Ord {
 ///
 /// Implementations perform checked conversions in `O(1)`.
 pub trait PropertySnapshotMetaWord: sealed::PropertySnapshotMetaWord + PropertyIndex {
+    /// Two-bit width discriminant carried in a section kind's low bits:
+    /// `0b00` = `u16`, `0b01` = `u32`, `0b10` = `u64` (`0b11` reserved).
+    ///
+    /// Mirrors `oxgraph_layout_util::SnapshotWidth::WIDTH_CODE` for the same
+    /// width; the in-crate impls forward to it so the encoding has one source
+    /// of truth.
+    const WIDTH_CODE: u32;
+
     /// Property descriptor section kind for this metadata width.
-    const PROPERTY_DESCRIPTORS_KIND: u32;
+    const PROPERTY_DESCRIPTORS_KIND: u32 =
+        SNAPSHOT_KIND_PROPERTY_DESCRIPTORS_BASE | Self::WIDTH_CODE;
 
     /// Property data section kind for this metadata width.
-    const PROPERTY_DATA_KIND: u32;
+    const PROPERTY_DATA_KIND: u32 = SNAPSHOT_KIND_PROPERTY_DATA_BASE | Self::WIDTH_CODE;
 
     /// Identity mode section kind for this metadata width.
-    const IDENTITY_MODES_KIND: u32;
+    const IDENTITY_MODES_KIND: u32 = SNAPSHOT_KIND_IDENTITY_MODES_BASE | Self::WIDTH_CODE;
 
     /// Element identity map section kind for this metadata width.
-    const ELEMENT_IDENTITY_MAP_KIND: u32;
+    const ELEMENT_IDENTITY_MAP_KIND: u32 =
+        SNAPSHOT_KIND_ELEMENT_IDENTITY_MAP_BASE | Self::WIDTH_CODE;
 
     /// Relation identity map section kind for this metadata width.
-    const RELATION_IDENTITY_MAP_KIND: u32;
+    const RELATION_IDENTITY_MAP_KIND: u32 =
+        SNAPSHOT_KIND_RELATION_IDENTITY_MAP_BASE | Self::WIDTH_CODE;
 
     /// Incidence identity map section kind for this metadata width.
-    const INCIDENCE_IDENTITY_MAP_KIND: u32;
+    const INCIDENCE_IDENTITY_MAP_KIND: u32 =
+        SNAPSHOT_KIND_INCIDENCE_IDENTITY_MAP_BASE | Self::WIDTH_CODE;
 }
 
 /// Implements property width traits for one unsigned integer.
 macro_rules! impl_property_width {
-    (
-        $index:ty,
-        $arrow:ty,
-        $word:ty,
-        $descriptor_kind:expr,
-        $data_kind:expr,
-        $identity_kind:expr,
-        $element_kind:expr,
-        $relation_kind:expr,
-        $incidence_kind:expr
-    ) => {
+    ($index:ty, $arrow:ty, $word:ty) => {
         impl sealed::PropertyIndex for $index {}
 
         impl PropertyIndex for $index {
@@ -270,51 +224,16 @@ macro_rules! impl_property_width {
         impl sealed::PropertySnapshotMetaWord for $index {}
 
         impl PropertySnapshotMetaWord for $index {
-            const PROPERTY_DESCRIPTORS_KIND: u32 = $descriptor_kind;
-            const PROPERTY_DATA_KIND: u32 = $data_kind;
-            const IDENTITY_MODES_KIND: u32 = $identity_kind;
-            const ELEMENT_IDENTITY_MAP_KIND: u32 = $element_kind;
-            const RELATION_IDENTITY_MAP_KIND: u32 = $relation_kind;
-            const INCIDENCE_IDENTITY_MAP_KIND: u32 = $incidence_kind;
+            const WIDTH_CODE: u32 = <$index as oxgraph_layout_util::SnapshotWidth>::WIDTH_CODE;
         }
     };
 }
 
-impl_property_width!(
-    u16,
-    arrow_array::types::UInt16Type,
-    U16<LE>,
-    SNAPSHOT_KIND_PROPERTY_DESCRIPTORS_U16,
-    SNAPSHOT_KIND_PROPERTY_DATA_U16,
-    SNAPSHOT_KIND_IDENTITY_MODES_U16,
-    SNAPSHOT_KIND_ELEMENT_IDENTITY_MAP_U16,
-    SNAPSHOT_KIND_RELATION_IDENTITY_MAP_U16,
-    SNAPSHOT_KIND_INCIDENCE_IDENTITY_MAP_U16
-);
+impl_property_width!(u16, arrow_array::types::UInt16Type, U16<LE>);
 
-impl_property_width!(
-    u32,
-    arrow_array::types::UInt32Type,
-    U32<LE>,
-    SNAPSHOT_KIND_PROPERTY_DESCRIPTORS_U32,
-    SNAPSHOT_KIND_PROPERTY_DATA_U32,
-    SNAPSHOT_KIND_IDENTITY_MODES_U32,
-    SNAPSHOT_KIND_ELEMENT_IDENTITY_MAP_U32,
-    SNAPSHOT_KIND_RELATION_IDENTITY_MAP_U32,
-    SNAPSHOT_KIND_INCIDENCE_IDENTITY_MAP_U32
-);
+impl_property_width!(u32, arrow_array::types::UInt32Type, U32<LE>);
 
-impl_property_width!(
-    u64,
-    arrow_array::types::UInt64Type,
-    U64<LE>,
-    SNAPSHOT_KIND_PROPERTY_DESCRIPTORS_U64,
-    SNAPSHOT_KIND_PROPERTY_DATA_U64,
-    SNAPSHOT_KIND_IDENTITY_MODES_U64,
-    SNAPSHOT_KIND_ELEMENT_IDENTITY_MAP_U64,
-    SNAPSHOT_KIND_RELATION_IDENTITY_MAP_U64,
-    SNAPSHOT_KIND_INCIDENCE_IDENTITY_MAP_U64
-);
+impl_property_width!(u64, arrow_array::types::UInt64Type, U64<LE>);
 
 /// Marker trait selecting which axis of a topology view a property layer
 /// keys against (elements, relations, or incidences).

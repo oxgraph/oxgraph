@@ -13,8 +13,8 @@ use oxgraph_snapshot::Snapshot;
 /// Section kinds the synthetic inbound snapshot is written under. The transpose
 /// is exported with the default CSR offsets/targets kinds; the CSC view reads
 /// them via the storage-agnostic `from_snapshot_with_kinds`.
-const OFFSETS_KIND: u32 = oxgraph_csr::SNAPSHOT_KIND_CSR_OFFSETS_U32;
-const TARGETS_KIND: u32 = oxgraph_csr::SNAPSHOT_KIND_CSR_TARGETS_U32;
+const OFFSETS_KIND: u32 = <u32 as oxgraph_csr::CsrSnapshotIndex>::OFFSETS_KIND;
+const TARGETS_KIND: u32 = <u32 as oxgraph_csr::CsrSnapshotIndex>::TARGETS_KIND;
 
 /// Builds an inbound (transposed) CSR snapshot for `edges` over `node_count`
 /// nodes and returns the encoded bytes.

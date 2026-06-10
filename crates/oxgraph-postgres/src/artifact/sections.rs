@@ -13,8 +13,9 @@ use crate::error::{BuildError, PostgresGraphError};
 /// Appends or replaces Postgres-owned sections on CSR topology bytes.
 ///
 /// Forward topology sections are preserved. When `inbound_topology_bytes` is
-/// [`Some`], CSR offsets/targets are copied into inbound section kinds
-/// `0x0201` / `0x0202`.
+/// [`Some`], CSR offsets/targets are copied into the inbound section kinds
+/// [`SNAPSHOT_KIND_PG_INBOUND_OFFSETS_U32`] /
+/// [`SNAPSHOT_KIND_PG_INBOUND_TARGETS_U32`].
 ///
 /// # Errors
 ///

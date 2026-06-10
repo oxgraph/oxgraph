@@ -9,16 +9,33 @@
 
 use oxgraph_hyper::{DirectedHyperedgeParticipants, DirectedVertexSuccessors};
 use oxgraph_hyper_bcsr::{
-    BcsrHyperedgeId, BcsrSnapshotError, BcsrSnapshotHypergraph, BcsrVertexId,
-    SNAPSHOT_KIND_BCSR_HEAD_OFFSETS_U32, SNAPSHOT_KIND_BCSR_HEAD_PARTICIPANTS_U32,
-    SNAPSHOT_KIND_BCSR_TAIL_OFFSETS_U32, SNAPSHOT_KIND_BCSR_TAIL_PARTICIPANTS_U32,
-    SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_HYPEREDGES_U32,
-    SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_OFFSETS_U32,
-    SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_HYPEREDGES_U32,
-    SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_OFFSETS_U32,
+    BcsrHyperedgeId, BcsrSnapshotError, BcsrSnapshotHypergraph, BcsrSnapshotIndex, BcsrVertexId,
 };
 use oxgraph_layout_util::crc32c_append;
 use oxgraph_snapshot::{Snapshot, SnapshotBuilder, SnapshotError};
+
+/// `u32` head offsets section kind derived from the base-plus-width scheme.
+const SNAPSHOT_KIND_BCSR_HEAD_OFFSETS_U32: u32 = <u32 as BcsrSnapshotIndex>::HEAD_OFFSETS_KIND;
+/// `u32` head participants section kind derived from the base-plus-width scheme.
+const SNAPSHOT_KIND_BCSR_HEAD_PARTICIPANTS_U32: u32 =
+    <u32 as BcsrSnapshotIndex>::HEAD_PARTICIPANTS_KIND;
+/// `u32` tail offsets section kind derived from the base-plus-width scheme.
+const SNAPSHOT_KIND_BCSR_TAIL_OFFSETS_U32: u32 = <u32 as BcsrSnapshotIndex>::TAIL_OFFSETS_KIND;
+/// `u32` tail participants section kind derived from the base-plus-width scheme.
+const SNAPSHOT_KIND_BCSR_TAIL_PARTICIPANTS_U32: u32 =
+    <u32 as BcsrSnapshotIndex>::TAIL_PARTICIPANTS_KIND;
+/// `u32` vertex outgoing offsets section kind derived from the base-plus-width scheme.
+const SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_OFFSETS_U32: u32 =
+    <u32 as BcsrSnapshotIndex>::VERTEX_OUTGOING_OFFSETS_KIND;
+/// `u32` vertex outgoing hyperedges section kind derived from the base-plus-width scheme.
+const SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_HYPEREDGES_U32: u32 =
+    <u32 as BcsrSnapshotIndex>::VERTEX_OUTGOING_HYPEREDGES_KIND;
+/// `u32` vertex incoming offsets section kind derived from the base-plus-width scheme.
+const SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_OFFSETS_U32: u32 =
+    <u32 as BcsrSnapshotIndex>::VERTEX_INCOMING_OFFSETS_KIND;
+/// `u32` vertex incoming hyperedges section kind derived from the base-plus-width scheme.
+const SNAPSHOT_KIND_BCSR_VERTEX_INCOMING_HYPEREDGES_U32: u32 =
+    <u32 as BcsrSnapshotIndex>::VERTEX_INCOMING_HYPEREDGES_KIND;
 
 /// Local error type covering both snapshot and bipartite-CSR adaptor failures.
 #[derive(Debug)]

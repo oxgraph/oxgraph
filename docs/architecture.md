@@ -59,9 +59,11 @@ wire widths are only `u16`, `u32`, and `u64`; `usize` is native-memory-only.
 property crates register section kinds and validate their own payloads.
 
 Persisted integer payloads are explicitly little-endian. CSR and BCSR topology
-sections use width-specific section kinds, so a generic tool can identify
-payload width from section kind alone. Snapshot readers request a typed view;
-wrong-width opens fail instead of reinterpreting bytes.
+sections use width-specific section kinds derived as `BASE | WIDTH_CODE` (low
+two bits encode the word width; see `docs/section-kind-registry.md`), so a
+generic tool can identify payload width from section kind alone. Snapshot
+readers request a typed view; wrong-width opens fail instead of reinterpreting
+bytes.
 
 Property and identity sections are also width-specific. Descriptor records and
 identity mode/map records are generic over a selected metadata/canonical ID word
