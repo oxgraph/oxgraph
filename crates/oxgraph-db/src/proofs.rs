@@ -594,9 +594,10 @@ fn overlay_watermark_monotonic_under_apply() {
 /// `i64`, agreeing with the checked standard conversion (and never panicking).
 ///
 /// The assertion compares the narrowed `i64` scalar, NOT the `PropertyValue`:
-/// `PropertyValue`'s derived `PartialEq` includes its `Text(String)` arm, which
-/// the model checker unwinds as an unbounded `memcmp` over a symbolic-length
-/// string — even though this conversion only ever yields `Integer`/`None`.
+/// `PropertyValue`'s derived `PartialEq` includes its `Text(Arc<str>)` arm,
+/// which the model checker unwinds as an unbounded `memcmp` over a
+/// symbolic-length string — even though this conversion only ever yields
+/// `Integer`/`None`.
 #[kani::proof]
 fn property_value_try_from_u64_matches_checked() {
     let raw: u64 = kani::any();

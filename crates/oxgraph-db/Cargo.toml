@@ -25,7 +25,9 @@ oxgraph-mmap = { version = "0.3.2", path = "../oxgraph-mmap" }
 oxgraph-property = { version = "0.3.2", path = "../oxgraph-property" }
 oxgraph-snapshot = { version = "0.3.2", path = "../oxgraph-snapshot", features = ["alloc"] }
 oxgraph-topology = { version = "0.3.2", path = "../oxgraph-topology" }
-serde = { workspace = true }
+# `rc` enables the `Arc<str>` / `Arc<BTreeSet<…>>` serde impls the structurally
+# shared value types (`PropertyValue::Text`, `LabelSet`) derive through.
+serde = { workspace = true, features = ["rc"] }
 yoke = { workspace = true }
 zerocopy = { workspace = true }
 

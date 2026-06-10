@@ -11,7 +11,7 @@
 //! `perf: unspecified`; this module defines value types and `O(1)` watermark
 //! arithmetic.
 
-use std::collections::BTreeSet;
+use std::{collections::BTreeSet, sync::Arc};
 
 use serde::{Deserialize, Serialize};
 
@@ -20,24 +20,112 @@ use crate::{
     RelationTypeId, RoleId, backing::DbHeader, catalog::PropertyFamily,
 };
 
+/// Shared, copy-on-write set of labels carried by one record.
+///
+/// Wraps an `Arc<BTreeSet<LabelId>>`. Cloning a record — and therefore the
+/// overlay delta maps that hold records, which a fresh writer seeds by cloning
+/// its parent's — shares the same allocation instead of deep-copying the set.
+/// The first [`Self::insert`] into a SHARED set copies it once
+/// ([`Arc::make_mut`]); a uniquely owned set mutates in place. The serde
+/// representation is the plain label set, unchanged from the owned form.
+///
+/// # Performance
+///
+/// `clone` is `O(1)` (an `Arc` increment). [`Self::insert`] is `O(log labels)`
+/// plus a one-time `O(labels)` copy when the set is still shared
+/// (copy-on-write). [`Self::contains`] is `O(log labels)`; [`Self::len`] and
+/// [`Self::is_empty`] are `O(1)`.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(transparent)]
+pub struct LabelSet(Arc<BTreeSet<LabelId>>);
+
+impl LabelSet {
+    /// Iterates the labels in ascending order.
+    ///
+    /// # Performance
+    ///
+    /// Creating the iterator is `O(1)`; a full walk is `O(labels)`.
+    pub fn iter(&self) -> impl Iterator<Item = LabelId> + '_ {
+        self.0.iter().copied()
+    }
+
+    /// Returns whether `label` is present.
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(log labels)`.
+    #[must_use]
+    pub fn contains(&self, label: &LabelId) -> bool {
+        self.0.contains(label)
+    }
+
+    /// Returns the number of labels.
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(1)`.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    /// Returns whether the set is empty.
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(1)`.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// Inserts `label`, returning whether it was newly added.
+    ///
+    /// A no-op insert (the label is already present) never copies, so
+    /// re-asserting a label on a record whose set is still shared with a
+    /// parent overlay stays `O(log labels)`.
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(log labels)`, plus a one-time `O(labels)`
+    /// copy-on-write when the set is shared and the label is new.
+    pub fn insert(&mut self, label: LabelId) -> bool {
+        if self.0.contains(&label) {
+            return false;
+        }
+        Arc::make_mut(&mut self.0).insert(label)
+    }
+}
+
+impl FromIterator<LabelId> for LabelSet {
+    /// Collects labels into a freshly owned (unshared) set.
+    ///
+    /// # Performance
+    ///
+    /// This function is `O(labels × log labels)`.
+    fn from_iter<I: IntoIterator<Item = LabelId>>(iter: I) -> Self {
+        Self(Arc::new(iter.into_iter().collect()))
+    }
+}
+
 /// One visible canonical element.
 ///
 /// # Performance
 ///
-/// Cloning is `O(label count)`.
+/// Cloning is `O(1)`: the label set is shared copy-on-write ([`LabelSet`]).
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ElementRecord {
     /// Stable element identifier.
     pub id: ElementId,
     /// Labels assigned to this element.
-    pub labels: BTreeSet<LabelId>,
+    pub labels: LabelSet,
 }
 
 /// One visible canonical relation.
 ///
 /// # Performance
 ///
-/// Cloning is `O(label count)`.
+/// Cloning is `O(1)`: the label set is shared copy-on-write ([`LabelSet`]).
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct RelationRecord {
     /// Stable relation identifier.
@@ -45,7 +133,7 @@ pub struct RelationRecord {
     /// Optional relation type.
     pub relation_type: Option<RelationTypeId>,
     /// Labels assigned to this relation.
-    pub labels: BTreeSet<LabelId>,
+    pub labels: LabelSet,
 }
 
 /// One visible incidence in canonical database coordinates.

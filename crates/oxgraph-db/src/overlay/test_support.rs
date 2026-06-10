@@ -108,7 +108,7 @@ pub(crate) fn small_base() -> Base {
         &base,
         PropertySubject::Element(e1),
         name,
-        PropertyValue::Text("Alice".to_owned()),
+        PropertyValue::from("Alice"),
     );
     // A relation-family property on the typed relation r1 and an
     // incidence-family property on inc1, so tombstoning each withdraws a real
@@ -135,7 +135,7 @@ pub(crate) fn small_base() -> Base {
         &base,
         PropertySubject::Element(e2),
         name,
-        PropertyValue::Text("Bob".to_owned()),
+        PropertyValue::from("Bob"),
     );
 
     freeze_writer(write)
@@ -164,7 +164,7 @@ pub(crate) fn base_view_from_ops() -> (BaseRecords, Overlay) {
         &base,
         PropertySubject::Element(e1),
         name,
-        PropertyValue::Text("Alice".to_owned()),
+        PropertyValue::from("Alice"),
     );
     (base, write.freeze())
 }

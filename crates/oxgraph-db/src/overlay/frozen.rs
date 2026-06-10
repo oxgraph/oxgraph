@@ -6,23 +6,20 @@
 //! mapped base; [`Snapshot`] is the immutable `(generation, lsn, base,
 //! overlay)` unit a read transaction pins.
 
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    sync::Arc,
-};
+use std::{collections::BTreeMap, sync::Arc};
 
 use yoke::Yoke;
 
 #[cfg(any(test, kani))]
 use super::write::WriteOverlay;
-use super::{Delta, merge::MergedState};
+use super::{Delta, SubjectDelta, merge::MergedState};
 use crate::{
     Catalog, CheckpointGeneration, DbError, ElementId, IncidenceId, LabelId, PropertyKeyId,
     RelationId, RoleId,
     backing::{Base, BaseView},
     id::CommitSeq,
     index::{BaseIndex, BorrowedBaseIndex, OverlayIndex, OwnedBaseIndex},
-    state::{ElementRecord, IncidenceRecord, NextIds, PropertySubject, RelationRecord},
+    state::{ElementRecord, IncidenceRecord, LabelSet, NextIds, PropertySubject, RelationRecord},
     value::{PropertyType, PropertyValue},
 };
 #[cfg(all(kani, feature = "kani-heavy"))]
@@ -41,8 +38,11 @@ use crate::{IndexId, ProjectionId, RelationTypeId};
 ///
 /// # Performance
 ///
-/// Cloning is `O(change)` (it deep-clones the delta maps); the accessors below
-/// are `O(log change)` or `O(change)` as documented.
+/// Cloning is `O(change)` map entries with `O(1)` per entry: the delta map
+/// node structure is cloned, but record label sets, text property values,
+/// per-subject property delta maps, and index posting sets are `Arc`-shared
+/// copy-on-write, so no payload bytes are duplicated. The accessors below are
+/// `O(log change)` or `O(change)` as documented.
 #[derive(Clone, Debug)]
 pub(crate) struct Overlay {
     /// Element delta: id -> add/override record, or tombstone.
@@ -52,8 +52,9 @@ pub(crate) struct Overlay {
     /// Incidence delta: id -> add/override record, or tombstone.
     pub(super) incidences: Delta<IncidenceRecord>,
     /// Property delta: subject -> key -> set value, or remove (tombstone).
-    pub(super) properties:
-        BTreeMap<PropertySubject, BTreeMap<PropertyKeyId, Option<PropertyValue>>>,
+    /// Each per-subject inner map is `Arc`-shared copy-on-write with the
+    /// writer seeded from this overlay.
+    pub(super) properties: BTreeMap<PropertySubject, SubjectDelta>,
     /// Catalog additions folded into this published overlay.
     pub(super) catalog: Catalog,
     /// The nine monotonic id allocators (the watermark) for this overlay.
@@ -123,8 +124,8 @@ impl Overlay {
             next.incidences.insert(*id, *entry);
         }
         for (subject, keys) in &delta.properties {
-            let merged = next.properties.entry(*subject).or_default();
-            for (key, value) in keys {
+            let merged = Arc::make_mut(next.properties.entry(*subject).or_default());
+            for (key, value) in keys.iter() {
                 merged.insert(*key, value.clone());
             }
         }
@@ -488,7 +489,7 @@ impl BaseRecords {
 /// This function is `O(labels)`.
 fn decode_labels(
     run: Option<&[zerocopy::byteorder::U64<zerocopy::byteorder::LE>]>,
-) -> Result<BTreeSet<LabelId>, DbError> {
+) -> Result<LabelSet, DbError> {
     let run = run.ok_or_else(|| DbError::invalid_store("base label run out of bounds"))?;
     Ok(run.iter().map(|word| LabelId::new(word.get())).collect())
 }
@@ -523,7 +524,7 @@ fn decode_base_properties(
                     .ok_or_else(|| DbError::invalid_store("base property text out of bounds"))?;
                 let text = core::str::from_utf8(bytes)
                     .map_err(|_error| DbError::invalid_store("base property text is not UTF-8"))?;
-                PropertyValue::Text(text.to_owned())
+                PropertyValue::Text(Arc::from(text))
             }
         };
         properties
@@ -694,7 +695,7 @@ impl BaseRecords {
                 id,
                 ElementRecord {
                     id,
-                    labels: BTreeSet::new(),
+                    labels: LabelSet::default(),
                 },
             );
         }
@@ -724,7 +725,7 @@ impl Overlay {
         for (id, present) in entries.iter().copied() {
             let entry = present.then(|| ElementRecord {
                 id,
-                labels: BTreeSet::new(),
+                labels: LabelSet::default(),
             });
             elements.insert(id, entry);
         }

@@ -42,11 +42,12 @@
 //! is `O(parent change + delta change)`; merge iterators are `O(base + overlay
 //! change)`.
 
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, sync::Arc};
 
 use crate::{
-    ElementId, IncidenceId, RelationId,
+    ElementId, IncidenceId, PropertyKeyId, RelationId,
     state::{ElementRecord, IncidenceRecord, RelationRecord},
+    value::PropertyValue,
 };
 
 mod frozen;
@@ -74,6 +75,18 @@ pub(crate) use write::WriteOverlay;
 /// Copying the variant tag is `O(1)`; cloning a present record is `O(record
 /// size)`.
 type Delta<R> = BTreeMap<<R as Keyed>::Id, Option<R>>;
+
+/// One subject's property delta (key -> set value, or `None` for a removal
+/// tombstone), `Arc`-shared copy-on-write between a frozen parent [`Overlay`]
+/// and the writer seeded from it: cloning the outer property map shares each
+/// per-subject inner map in `O(1)`, and a writer copies an inner map only when
+/// it first mutates that subject (via [`Arc::make_mut`]).
+///
+/// # Performance
+///
+/// Cloning is `O(1)`; the first mutation of a shared subject map adds a
+/// one-time `O(subject's delta entries)` copy.
+pub(crate) type SubjectDelta = Arc<BTreeMap<PropertyKeyId, Option<PropertyValue>>>;
 
 /// A record keyed by a canonical id, so the per-family delta maps can name their
 /// key type generically.

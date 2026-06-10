@@ -28,6 +28,7 @@ use crate::{
 ///
 /// Copying this value is `O(1)`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum CheckpointPolicy {
     /// Never auto-checkpoint; the caller folds explicitly via [`Db::compact`].
     Manual,
@@ -46,10 +47,12 @@ impl CheckpointPolicy {
     /// four times the live base size.
     pub const DEFAULT_FACTOR: u32 = 4;
 
-    /// The base-size floor (bytes) below which the size-ratio policy never fires,
-    /// so a freshly created (near-empty) base is not checkpointed on its first
-    /// commits before it carries meaningful data.
-    const MIN_BASE_BYTES: u64 = 4 * 1024;
+    /// The base-size floor (bytes) below which [`CheckpointPolicy::SizeRatio`]
+    /// never fires: a base smaller than this is treated as exactly this large
+    /// when the ratio is evaluated, so a freshly created (near-empty) store is
+    /// not checkpointed on its first commits before the base carries
+    /// meaningful data.
+    pub const MIN_BASE_BYTES: u64 = 4 * 1024;
 
     /// Returns whether a delta-log of `log_bytes` over a base of `base_bytes`
     /// should trigger an auto-checkpoint under this policy.

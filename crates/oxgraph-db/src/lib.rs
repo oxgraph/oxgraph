@@ -43,7 +43,8 @@ pub use crate::{
         PropertyKeyDefinition, RelationTypeDefinition, RoleDefinition,
     },
     database::{
-        CatalogSummary, CheckpointPolicy, CommitOutcome, Db, Match, ReadPin, Reader, Stats, Writer,
+        CatalogSummary, CheckpointPolicy, CommitOutcome, Db, IndexProbe, ReadPin, Reader, Stats,
+        Writer,
     },
     error::{CatalogError, DbError, IdFamily, QueryError, StorageError, TxnError},
     id::{
@@ -53,7 +54,7 @@ pub use crate::{
     query::{PreparedQuery, QueryResult, QueryRow, QueryValue},
     read::{Element, Properties, Relation},
     schema::{Bound, GraphProjectionSpec, Schema},
-    state::{ElementRecord, IncidenceRecord, PropertySubject, RelationRecord},
+    state::{ElementRecord, IncidenceRecord, LabelSet, PropertySubject, RelationRecord},
     traversal::{Direction, Subgraph, TraversedEdge, TraversedNode, Walk},
     typed::{Assignable, Bool, EqualityIndex, Int, Key, RangeIndex, Readable, Text, ValueType},
     value::{PropertyType, PropertyValue},

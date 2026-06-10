@@ -26,7 +26,7 @@ use std::{fmt::Display, path::Path};
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use oxgraph_db::{
-    Db, DbError, IndexDefinition, IndexId, Int, Key, Match, PropertyFamily, PropertyKeyId,
+    Db, DbError, IndexDefinition, IndexId, IndexProbe, Int, Key, PropertyFamily, PropertyKeyId,
     PropertySubject, PropertyType, PropertyValue, Text,
 };
 
@@ -213,7 +213,7 @@ fn bench_index_equal(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, _size| {
             b.iter(|| {
                 unwrap(
-                    read.lookup(fixture.rank_index, Match::Equal(&probe)),
+                    read.lookup(fixture.rank_index, IndexProbe::Equal(&probe)),
                     "index lookup",
                 )
             });
@@ -243,7 +243,7 @@ fn bench_property_range(c: &mut Criterion) {
     group.finish();
 }
 
-/// Benchmarks an `Match::All` membership lookup (label / relation-type)
+/// Benchmarks an `IndexProbe::All` membership lookup (label / relation-type)
 /// resolved by the named index, across growing base sizes. The probed index is a
 /// RARE one ([`ANCHOR_COUNT`] carriers, fixed regardless of base), so the per-call
 /// time stays flat (`O(log n)` posting probe) rather than growing with the base.
@@ -254,7 +254,7 @@ fn bench_membership_all(c: &mut Criterion, group_name: &str, fixture_tag: &str, 
         let read = database.reader();
         let index = index_named(&database, index_name);
         group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, _size| {
-            b.iter(|| unwrap(read.lookup(index, Match::All), "membership lookup"));
+            b.iter(|| unwrap(read.lookup(index, IndexProbe::All), "membership lookup"));
         });
     }
     group.finish();
@@ -287,12 +287,12 @@ fn bench_composite_equal(c: &mut Criterion) {
         let target = half(size);
         let values = [
             PropertyValue::Integer(target),
-            PropertyValue::Text(format!("e{target}")),
+            PropertyValue::from(format!("e{target}")),
         ];
         group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, _size| {
             b.iter(|| {
                 unwrap(
-                    read.lookup(composite_index, Match::Composite(&values)),
+                    read.lookup(composite_index, IndexProbe::Composite(&values)),
                     "composite lookup",
                 )
             });
