@@ -10,10 +10,7 @@ use std::collections::{BTreeMap, BTreeSet, btree_map};
 use super::{
     Delta,
     frozen::{BaseRecords, Overlay},
-    log::{
-        MutationLog, blob_str, decode_def_words, decode_index_def, decode_projection_def,
-        encode_index_words, encode_projection_words,
-    },
+    log::{MutationLog, blob_str, decode_def_words},
 };
 use crate::{
     Catalog, DbError, ElementId, IncidenceId, IndexId, LabelId, ProjectionId, PropertyKeyId,
@@ -361,14 +358,24 @@ impl WriteOverlay {
             }
             wire::OP_CATALOG_REGISTER_PROJECTION => {
                 let words = decode_def_words(blob, word(3), word(4), lsn)?;
-                let definition = decode_projection_def(op.flags.get(), name, &words, lsn)?;
+                let definition = wire::defs::decode_projection_body(op.flags.get(), name, &words)
+                    .map_err(|error| DbError::LogCorrupt {
+                    lsn,
+                    reason: error.reason,
+                })?;
                 self.catalog
                     .insert_projection(ProjectionId::new(word(0)), definition)
             }
             // OP_CATALOG_REGISTER_INDEX (the only remaining catalog kind).
             _index => {
                 let words = decode_def_words(blob, word(3), word(4), lsn)?;
-                let definition = decode_index_def(op.flags.get(), &words, lsn)?;
+                let definition =
+                    wire::defs::decode_index_body(op.flags.get(), &words).map_err(|error| {
+                        DbError::LogCorrupt {
+                            lsn,
+                            reason: error.reason,
+                        }
+                    })?;
                 self.catalog
                     .insert_index(IndexId::new(word(0)), name, definition)
             }
@@ -1203,7 +1210,7 @@ impl WriteOverlay {
         let id = self.next.projection;
         self.next.projection = id.checked_next().ok_or(DbError::IdOverflow)?;
         let (name_off, name_len) = self.log.intern(definition.name().as_bytes());
-        let (kind, words) = encode_projection_words(&definition);
+        let (kind, words) = wire::defs::encode_projection_body(&definition);
         let (def_off, def_len) = self.log.intern_words(&words);
         self.catalog.insert_projection(id, definition)?;
         self.log.push(
@@ -1231,7 +1238,7 @@ impl WriteOverlay {
         let id = self.next.index;
         self.next.index = id.checked_next().ok_or(DbError::IdOverflow)?;
         let (name_off, name_len) = self.log.intern(name.as_bytes());
-        let (kind, words) = encode_index_words(&definition);
+        let (kind, words) = wire::defs::encode_index_body(&definition);
         let (def_off, def_len) = self.log.intern_words(&words);
         self.catalog.insert_index(id, name, definition)?;
         self.log.push(

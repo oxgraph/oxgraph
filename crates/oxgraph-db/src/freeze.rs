@@ -25,10 +25,7 @@ use zerocopy::{
 use crate::{
     Catalog, DbError, ElementId, IncidenceId, IndexId, LabelId, ProjectionId, PropertyKeyId,
     PropertySubject, PropertyValue, RelationId, RelationTypeId, RoleId,
-    catalog::{
-        GraphProjectionDefinition, HypergraphProjectionDefinition, IndexDefinition,
-        ProjectionDefinition, PropertyKeyDefinition,
-    },
+    catalog::{IndexDefinition, ProjectionDefinition, PropertyKeyDefinition},
     crc,
     index::OwnedBaseIndex,
     overlay::StateView,
@@ -36,23 +33,6 @@ use crate::{
     value::PropertyType,
     wire,
 };
-
-/// Projection definition-body discriminant for binary graph projections.
-const DEF_PROJECTION_GRAPH: u32 = 0;
-/// Projection definition-body discriminant for hypergraph projections.
-const DEF_PROJECTION_HYPER: u32 = 1;
-/// Index definition-body discriminant for label membership.
-const DEF_INDEX_LABEL: u32 = 0;
-/// Index definition-body discriminant for relation-type membership.
-const DEF_INDEX_RELATION_TYPE: u32 = 1;
-/// Index definition-body discriminant for single-key equality.
-const DEF_INDEX_PROPERTY_EQUALITY: u32 = 2;
-/// Index definition-body discriminant for single-key range.
-const DEF_INDEX_PROPERTY_RANGE: u32 = 3;
-/// Index definition-body discriminant for composite equality.
-const DEF_INDEX_COMPOSITE_EQUALITY: u32 = 4;
-/// Index definition-body discriminant for projection materialization.
-const DEF_INDEX_PROJECTION: u32 = 5;
 
 /// The durable header stamps a base file records: the checkpoint-time commit
 /// sequence, transaction id, and generation folded into the base. Per the
@@ -963,21 +943,9 @@ fn encode_projection_def(
     defs: &mut Vec<U64<LE>>,
 ) -> Result<(u32, u32, u32), DbError> {
     let offset = checked_u32(defs.len())?;
-    let kind = match definition {
-        ProjectionDefinition::Graph(graph) => {
-            defs.push(U64::new(graph.source_role.get()));
-            defs.push(U64::new(graph.target_role.get()));
-            push_id_set(defs, graph.relation_types.iter().map(|id| id.get()))?;
-            DEF_PROJECTION_GRAPH
-        }
-        ProjectionDefinition::Hypergraph(hyper) => {
-            push_id_set(defs, hyper.source_roles.iter().map(|id| id.get()))?;
-            push_id_set(defs, hyper.target_roles.iter().map(|id| id.get()))?;
-            push_id_set(defs, hyper.relation_types.iter().map(|id| id.get()))?;
-            DEF_PROJECTION_HYPER
-        }
-    };
-    let len = checked_u32(defs.len() - usize_of(offset))?;
+    let (kind, words) = wire::defs::encode_projection_body(definition);
+    let len = checked_u32(words.len())?;
+    defs.extend(words.into_iter().map(U64::new));
     Ok((kind, offset, len))
 }
 
@@ -996,57 +964,10 @@ fn encode_index_def(
     defs: &mut Vec<U64<LE>>,
 ) -> Result<(u32, u32, u32), DbError> {
     let offset = checked_u32(defs.len())?;
-    let kind = match definition {
-        IndexDefinition::Label { label } => {
-            defs.push(U64::new(label.get()));
-            DEF_INDEX_LABEL
-        }
-        IndexDefinition::RelationType { relation_type } => {
-            defs.push(U64::new(relation_type.get()));
-            DEF_INDEX_RELATION_TYPE
-        }
-        IndexDefinition::PropertyEquality { key } => {
-            defs.push(U64::new(key.get()));
-            DEF_INDEX_PROPERTY_EQUALITY
-        }
-        IndexDefinition::PropertyRange { key } => {
-            defs.push(U64::new(key.get()));
-            DEF_INDEX_PROPERTY_RANGE
-        }
-        IndexDefinition::CompositeEquality { keys } => {
-            for key in keys {
-                defs.push(U64::new(key.get()));
-            }
-            DEF_INDEX_COMPOSITE_EQUALITY
-        }
-        IndexDefinition::Projection { projection } => {
-            defs.push(U64::new(projection.get()));
-            DEF_INDEX_PROJECTION
-        }
-    };
-    let len = checked_u32(defs.len() - usize_of(offset))?;
+    let (kind, words) = wire::defs::encode_index_body(definition);
+    let len = checked_u32(words.len())?;
+    defs.extend(words.into_iter().map(U64::new));
     Ok((kind, offset, len))
-}
-
-/// Pushes a length-prefixed id set into the definition run.
-///
-/// # Errors
-///
-/// Returns [`DbError::InvalidStore`] when the set size exceeds `u32`.
-///
-/// # Performance
-///
-/// This function is `O(set size)`.
-fn push_id_set(
-    defs: &mut Vec<U64<LE>>,
-    ids: impl ExactSizeIterator<Item = u64>,
-) -> Result<(), DbError> {
-    let count = checked_u32(ids.len())?;
-    defs.push(U64::new(u64::from(count)));
-    for id in ids {
-        defs.push(U64::new(id));
-    }
-    Ok(())
 }
 
 /// Borrows a definition body slice out of the shared run.
@@ -1070,35 +991,6 @@ fn def_body<'run>(
         .ok_or_else(|| DbError::invalid_store("definition body out of bounds"))
 }
 
-/// Reads a length-prefixed id set starting at `cursor`, advancing it past the
-/// set.
-///
-/// # Errors
-///
-/// Returns [`DbError::InvalidStore`] when the length or slice is out of bounds.
-///
-/// # Performance
-///
-/// This function is `O(set size)`.
-fn read_id_set(body: &[U64<LE>], cursor: &mut usize) -> Result<Vec<u64>, DbError> {
-    let count = usize::try_from(
-        body.get(*cursor)
-            .ok_or_else(|| DbError::invalid_store("missing id-set length"))?
-            .get(),
-    )
-    .map_err(|_error| DbError::invalid_store("id-set length exceeds usize"))?;
-    *cursor += 1;
-    let end = cursor
-        .checked_add(count)
-        .ok_or_else(|| DbError::invalid_store("id-set overflow"))?;
-    let slice = body
-        .get(*cursor..end)
-        .ok_or_else(|| DbError::invalid_store("id-set out of bounds"))?;
-    let ids = slice.iter().map(|word| word.get()).collect();
-    *cursor = end;
-    Ok(ids)
-}
-
 /// Decodes a projection definition from its record and the shared run.
 ///
 /// # Errors
@@ -1114,54 +1006,12 @@ fn decode_projection_def(
     name: String,
     defs: &[U64<LE>],
 ) -> Result<ProjectionDefinition, DbError> {
-    let body = def_body(record, defs)?;
-    match record.kind.get() {
-        DEF_PROJECTION_GRAPH => {
-            let source_role = body
-                .first()
-                .ok_or_else(|| DbError::invalid_store("graph projection missing source role"))?
-                .get();
-            let target_role = body
-                .get(1)
-                .ok_or_else(|| DbError::invalid_store("graph projection missing target role"))?
-                .get();
-            let mut cursor = 2;
-            let relation_types = read_id_set(body, &mut cursor)?
-                .into_iter()
-                .map(RelationTypeId::new)
-                .collect();
-            Ok(ProjectionDefinition::Graph(GraphProjectionDefinition {
-                name,
-                relation_types,
-                source_role: RoleId::new(source_role),
-                target_role: RoleId::new(target_role),
-            }))
-        }
-        DEF_PROJECTION_HYPER => {
-            let mut cursor = 0;
-            let source_roles = read_id_set(body, &mut cursor)?
-                .into_iter()
-                .map(RoleId::new)
-                .collect();
-            let target_roles = read_id_set(body, &mut cursor)?
-                .into_iter()
-                .map(RoleId::new)
-                .collect();
-            let relation_types = read_id_set(body, &mut cursor)?
-                .into_iter()
-                .map(RelationTypeId::new)
-                .collect();
-            Ok(ProjectionDefinition::Hypergraph(
-                HypergraphProjectionDefinition {
-                    name,
-                    relation_types,
-                    source_roles,
-                    target_roles,
-                },
-            ))
-        }
-        _other => Err(DbError::invalid_store("unknown projection definition kind")),
-    }
+    let body: Vec<u64> = def_body(record, defs)?
+        .iter()
+        .map(|word| word.get())
+        .collect();
+    wire::defs::decode_projection_body(record.kind.get(), name, &body)
+        .map_err(|error| DbError::invalid_store(error.reason))
 }
 
 /// Decodes an index definition from its record and the shared run.
@@ -1175,36 +1025,12 @@ fn decode_projection_def(
 ///
 /// This function is `O(definition size)`.
 fn decode_index_def(record: &wire::DefWire, defs: &[U64<LE>]) -> Result<IndexDefinition, DbError> {
-    let body = def_body(record, defs)?;
-    let first = || {
-        body.first()
-            .ok_or_else(|| DbError::invalid_store("index definition missing id"))
-            .map(|word| word.get())
-    };
-    match record.kind.get() {
-        DEF_INDEX_LABEL => Ok(IndexDefinition::Label {
-            label: LabelId::new(first()?),
-        }),
-        DEF_INDEX_RELATION_TYPE => Ok(IndexDefinition::RelationType {
-            relation_type: RelationTypeId::new(first()?),
-        }),
-        DEF_INDEX_PROPERTY_EQUALITY => Ok(IndexDefinition::PropertyEquality {
-            key: PropertyKeyId::new(first()?),
-        }),
-        DEF_INDEX_PROPERTY_RANGE => Ok(IndexDefinition::PropertyRange {
-            key: PropertyKeyId::new(first()?),
-        }),
-        DEF_INDEX_COMPOSITE_EQUALITY => Ok(IndexDefinition::CompositeEquality {
-            keys: body
-                .iter()
-                .map(|word| PropertyKeyId::new(word.get()))
-                .collect(),
-        }),
-        DEF_INDEX_PROJECTION => Ok(IndexDefinition::Projection {
-            projection: ProjectionId::new(first()?),
-        }),
-        _other => Err(DbError::invalid_store("unknown index definition kind")),
-    }
+    let body: Vec<u64> = def_body(record, defs)?
+        .iter()
+        .map(|word| word.get())
+        .collect();
+    wire::defs::decode_index_body(record.kind.get(), &body)
+        .map_err(|error| DbError::invalid_store(error.reason))
 }
 
 #[cfg(test)]
