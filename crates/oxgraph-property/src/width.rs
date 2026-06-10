@@ -20,7 +20,7 @@ use crate::model::{IdFamily, PropertyError};
 /// order (descriptors, data, identity modes, element/relation/incidence
 /// identity maps), so every derived kind of one role sorts below every derived
 /// kind of the next role for any metadata/map width mix — the
-/// strictly-ascending order the v2 container mandates.
+/// strictly-ascending order the container mandates.
 ///
 /// # Performance
 ///

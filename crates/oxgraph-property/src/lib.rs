@@ -29,7 +29,7 @@
 //! (`0b00` = `u16`, `0b01` = `u32`, `0b10` = `u64`) selects the descriptor
 //! metadata word width; [`PropertySnapshotMetaWord`] derives the per-width
 //! kinds. The payload format is owned by this crate and remains an
-//! OxGraph-internal ABI candidate while snapshot v1 bytes are not stable. All
+//! OxGraph-internal ABI candidate while the snapshot bytes are not stable. All
 //! section-kind constants are `perf: unspecified` — compile-time `u32` tags.
 // kani-skip: property layers depend on Arrow heap arrays and snapshot byte streams outside Kani's
 // bounded no-std proof scope.

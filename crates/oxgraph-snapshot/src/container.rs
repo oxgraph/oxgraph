@@ -34,16 +34,14 @@ pub const FORMAT_MAGIC: [u8; 8] = *b"OXGTOPO\0";
 /// Format major version this library reads and writes.
 ///
 /// A snapshot whose `format_major` field does not equal this constant is
-/// rejected at open time. Major bumps are permitted to break compatibility
-/// in arbitrary ways. v2 made per-section CRC-32C checksums and the header
-/// table checksum mandatory and mandated strictly-ascending section kinds;
-/// v1 bytes are rejected with
+/// rejected at open time with
 /// [`SnapshotError::FormatMajorMismatch`](crate::SnapshotError::FormatMajorMismatch).
+/// Major bumps are permitted to break compatibility in arbitrary ways.
 ///
 /// # Performance
 ///
 /// `perf: unspecified`; this is a compile-time constant.
-pub const FORMAT_MAJOR: u32 = 2;
+pub const FORMAT_MAJOR: u32 = 1;
 
 /// Format minor version written by this library's builder.
 ///
@@ -59,8 +57,8 @@ pub const FORMAT_MINOR: u32 = 0;
 /// Highest format minor version this library can read.
 ///
 /// Snapshots with `format_minor > MAX_SUPPORTED_MINOR` are rejected at open
-/// time. v2.0 is intentionally strict; raising this value is a deliberate
-/// per-minor decision once the new minor is proven safely readable here.
+/// time. Raising this value is a deliberate per-minor decision once the new
+/// minor is proven safely readable here.
 ///
 /// # Performance
 ///
@@ -354,19 +352,19 @@ struct RawSectionEntry {
     offset: U64<LE>,
     /// Byte length of the section payload.
     length: U64<LE>,
-    /// Opaque section kind; the container assigns no semantics. v2 mandates
+    /// Opaque section kind; the container assigns no semantics. the format mandates
     /// strictly-ascending kind order across the table.
     kind: U32<LE>,
     /// Opaque section version; consumers interpret per kind.
     version: U32<LE>,
-    /// CRC-32C over this section's payload bytes; mandatory in v2
+    /// CRC-32C over this section's payload bytes; mandatory
     /// (`crc32c(b"") == 0` covers empty sections).
     crc32c: U32<LE>,
     /// `log2` of the producer's chosen payload alignment; v2 cap is 12.
     alignment_log2: u8,
-    /// Reserved flag bits; must be zero in v2.
+    /// Reserved flag bits; must be zero.
     flags: u8,
-    /// Trailing reserved bytes; must be zero in v2.
+    /// Trailing reserved bytes; must be zero.
     reserved: [u8; 2],
 }
 
@@ -577,12 +575,12 @@ pub enum ValidationLevel {
 /// invariants are presumed already validated by the caller.
 ///
 /// Per-entry self-consistency, payload bounds (`offset + length` does not
-/// overflow and stays within the snapshot), **and** the v2 strictly-ascending
+/// overflow and stays within the snapshot), **and** the strictly-ascending
 /// kind order are enforced at every level, so every [`Section`] a
 /// [`Snapshot`] hands out is bounds-safe and [`Snapshot::section`]'s binary
 /// search is sound regardless of the requested [`ValidationLevel`]. The
 /// ascending order also makes the table duplicate-free by construction,
-/// replacing v1's `O(s^2)` duplicate-kind walk. [`ValidationLevel::Layout`]
+/// so no separate duplicate-kind walk is needed. [`ValidationLevel::Layout`]
 /// additionally enforces non-overlapping monotonic offset ordering.
 ///
 /// # Errors
@@ -1073,7 +1071,7 @@ impl ExactSizeIterator for SectionIter<'_> {
 /// Every field is opaque to the encoder. `kind` and `version` are passed
 /// through unchanged; `alignment_log2` controls payload alignment relative
 /// to the snapshot's start; `payload` is the section's raw bytes. Sections
-/// must be supplied in strictly-ascending `kind` order (the v2 mandate).
+/// must be supplied in strictly-ascending `kind` order (the format's ascending-kind mandate).
 ///
 /// # Performance
 ///
@@ -1413,7 +1411,7 @@ impl SnapshotWriter {
     /// Returns [`PlanError::AlignmentTooLarge`] when `alignment_log2` exceeds
     /// the format cap, [`PlanError::TooManySections`] when the reservation is
     /// exhausted, or [`PlanError::NonAscendingKind`] when `kind` is not
-    /// strictly greater than the previous section's kind (the v2 mandate,
+    /// strictly greater than the previous section's kind (the format's ascending-kind mandate,
     /// which also rules out duplicates).
     ///
     /// # Performance
@@ -1717,7 +1715,7 @@ impl SectionSink<'_> {
 /// This is the escape hatch for producers that must patch a section's
 /// payload *after* encoding — e.g. a trailer whose payload is derived from
 /// the encoded bytes themselves. After mutating the payload in place, call
-/// this to restore the v2 checksum invariants for that section and the
+/// this to restore the checksum invariants for that section and the
 /// table. All other entries are left untouched.
 ///
 /// # Errors

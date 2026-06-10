@@ -44,18 +44,22 @@ the database write path.
   feature is the only thing that pulls a layer in. `snapshot-alloc` now
   re-exports `SnapshotWriter`/`SectionSink` (previously `SnapshotBuilder`).
 
-### ⚠ Breaking — on-disk formats (stores must be rebuilt)
+### On-disk formats
 
-- **OXGT container v2**: per-section CRC-32C plus a header table CRC are
-  mandatory; section kinds must be strictly ascending (lookup is now a binary
-  search); v1 bytes are rejected at open. Checksums are injected through the
-  `Checksum32` seam; a pure-software CRC-32C lives in `oxgraph-layout-util`.
+Both formats changed shape in this release; with nothing deployed, each is
+simply format version 1 — there are no legacy readers and no migration paths.
+
+- **OXGT container**: per-section CRC-32C plus a header table CRC are
+  mandatory; section kinds must be strictly ascending (lookup is a binary
+  search). Checksums are injected through the `Checksum32` seam; a
+  pure-software CRC-32C lives in `oxgraph-layout-util`.
 - **Section-kind scheme**: kinds encode their word width in the low bits
-  (`BASE | WIDTH_CODE`); every in-tree layer's kinds were renumbered into
-  registry bands (see `docs/section-kind-registry.md`).
-- **OXGDB v3** (`oxgraph-db`): section kinds renumbered, the whole-base
-  trailer is deleted, and verification moved to bind time. v2 databases are
-  rejected; re-index/rebuild persisted stores (e.g. `.oxcode/index.oxgdb/`).
+  (`BASE | WIDTH_CODE`); every in-tree layer's kinds live in registry bands
+  (see `docs/section-kind-registry.md`).
+- **OXGDB** (`oxgraph-db`): section kinds are contiguous in emission order,
+  there is no whole-base trailer, and payload verification happens at bind
+  time. A store whose header carries an unknown format version is rejected —
+  there is no rebuild-from-records fallback.
 
 ### Added
 

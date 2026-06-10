@@ -460,7 +460,8 @@ fn bcsr_snapshot_bytes(node_count: u32, offsets: &[u32], targets: &[u32]) -> Vec
         Err(error) => panic!("BCSR snapshot writer: {error:?}"),
     };
     let add = |writer: &mut SnapshotWriter, kind: u32, words: &[u32]| {
-        if let Err(error) = writer.section_bytes(kind, 0, 2, &words_to_bytes(words)) {
+        let version = <u32 as BcsrSnapshotIndex>::SECTION_VERSION;
+        if let Err(error) = writer.section_bytes(kind, version, 2, &words_to_bytes(words)) {
             panic!("BCSR section {kind:#06x}: {error:?}");
         }
     };

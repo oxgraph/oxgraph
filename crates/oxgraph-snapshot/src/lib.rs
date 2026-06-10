@@ -16,7 +16,7 @@
 //! be borrowed from any byte slice — `Vec<u8>`, mmap'd files, sub-slices —
 //! without an alignment requirement on the base pointer.
 //!
-//! v2 mandates two integrity invariants. Every section entry carries a
+//! The container mandates two integrity invariants. Every section entry carries a
 //! CRC-32C over its payload bytes and the header carries a CRC-32C over the
 //! section-table bytes; the crate is `no_std` and bundles no CRC
 //! implementation, so writers and the checked/verify read paths take a
@@ -38,10 +38,10 @@
 //!
 //! # Stability
 //!
-//! v2.0 is a clean format break from v1 (mandatory checksums, ascending
-//! kinds); v1 bytes are rejected at open. The bytes are intentionally not
-//! yet promised as a stable ABI. Format minor bumps will preserve backward
-//! read compatibility once they ship.
+//! The bytes are intentionally not yet promised as a stable ABI: a snapshot
+//! whose format major does not match this library is rejected at open.
+//! Format minor bumps will preserve backward read compatibility once they
+//! ship.
 #![no_std]
 
 #[cfg(kani)]

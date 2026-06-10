@@ -38,21 +38,14 @@ pub(crate) mod defs;
 /// [`DbHeaderRecord::format_version`]. A reader that does not recognize the
 /// value rejects the store rather than guessing the layout.
 ///
-/// Bumped to `2` when the derived [`crate::index::BaseIndex`] postings became a
-/// persisted, borrow-at-open structure. Bumped to `3` for the OXGT container
-/// v2 break: the section kinds below were renumbered contiguously in emission
-/// order (the container mandates strictly-ascending kinds), the container
-/// itself carries mandatory per-section checksums, and the v1/v2 whole-base
-/// trailer section was deleted (the per-section checksums supersede it), so a
-/// v2-format base is doubly unreadable — the container rejects its v1 bytes
-/// before this header is even reached, and a hypothetical re-encoding would
-/// still trip this version check into [`crate::DbError::UnsupportedFormat`].
-/// There is no rebuild-from-records fallback on the production path.
+/// A store whose header carries a different version is rejected with
+/// [`crate::DbError::UnsupportedFormat`]; there is no rebuild-from-records
+/// fallback on the production path.
 ///
 /// # Performance
 ///
 /// `perf: unspecified`; this is a compile-time constant.
-pub(crate) const OXGDB_FORMAT_VERSION: u32 = 3;
+pub(crate) const OXGDB_FORMAT_VERSION: u32 = 1;
 
 /// Section version recorded on every OXGDB section entry. Bumped independently
 /// of [`OXGDB_FORMAT_VERSION`] when a single section's record layout changes.
@@ -284,7 +277,7 @@ pub(crate) const ALL_SECTION_KINDS: [u32; 22] = [
 // Every OXGDB section kind must live inside the container's reserved
 // `DATABASE_BAND` (a stray value would silently collide with another
 // subsystem's band) AND the emission order above must be strictly ascending
-// by value, because the OXGT v2 container rejects non-ascending tables.
+// by value, because the OXGT container rejects non-ascending tables.
 // Enforced at compile time so a typo or reorder fails the build rather than
 // corrupting a store.
 const _: () = {
