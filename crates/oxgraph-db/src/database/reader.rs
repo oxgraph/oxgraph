@@ -316,15 +316,53 @@ impl Reader {
 
     /// Returns one owned property value.
     ///
+    /// Prefer [`Self::value`] (borrowed `Cow`) or [`Self::text`] (borrowed
+    /// `&str`) when the value does not need to outlive this reader; owning is
+    /// correct only across commit boundaries.
+    ///
     /// # Performance
     ///
-    /// This method is `O(log subjects + log keys)`.
+    /// This method is `O(log subjects + log keys)` plus one value clone
+    /// (`O(1)` for every variant — text payloads are `Arc`-shared).
     #[must_use]
     pub fn property(&self, subject: PropertySubject, key: PropertyKeyId) -> Option<PropertyValue> {
         self.snapshot
             .view()
             .property_ref(subject, key)
             .map(Cow::into_owned)
+    }
+
+    /// Returns one property value borrowed from this reader's pinned snapshot:
+    /// `Cow::Borrowed` for any committed value, `Cow::Owned` only when the
+    /// value lives in the published overlay's delta.
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(log subjects + log keys)`; the borrowed arm clones
+    /// nothing.
+    #[must_use]
+    pub fn value(
+        &self,
+        subject: PropertySubject,
+        key: PropertyKeyId,
+    ) -> Option<Cow<'_, PropertyValue>> {
+        self.snapshot.view().property_ref(subject, key)
+    }
+
+    /// Returns one text property's `Arc`-shared payload, or `None` when the
+    /// property is absent or not text.
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(log subjects + log keys)`; the text bytes are never
+    /// copied (the shared payload is reference-counted for both base- and
+    /// overlay-resident values).
+    #[must_use]
+    pub fn text(&self, subject: PropertySubject, key: PropertyKeyId) -> Option<Arc<str>> {
+        match self.snapshot.view().property_ref(subject, key)?.as_ref() {
+            PropertyValue::Text(text) => Some(Arc::clone(text)),
+            _other => None,
+        }
     }
 
     /// Returns the owned element whose value in `index` equals `value`, or `None`
