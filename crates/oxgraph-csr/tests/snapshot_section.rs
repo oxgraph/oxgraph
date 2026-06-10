@@ -7,6 +7,7 @@ use oxgraph_csr::{
     SNAPSHOT_KIND_CSR_TARGETS_U16, SNAPSHOT_KIND_CSR_TARGETS_U32, SNAPSHOT_KIND_CSR_TARGETS_U64,
 };
 use oxgraph_graph::{EdgeTargetGraph, GraphCounts, OutgoingGraph};
+use oxgraph_layout_util::crc32c_append;
 use oxgraph_snapshot::{Snapshot, SnapshotBuilder, SnapshotError};
 
 /// Test fixture error covering snapshot, view, and CSR failure modes.
@@ -63,7 +64,7 @@ fn build_csr_snapshot_from_bytes(
     offsets_bytes: Vec<u8>,
     targets_bytes: Vec<u8>,
 ) -> Vec<u8> {
-    let mut builder = SnapshotBuilder::new();
+    let mut builder = SnapshotBuilder::new(crc32c_append);
     if let Err(error) = builder.add_section(
         offsets_kind,
         oxgraph_csr::SNAPSHOT_CSR_SECTION_VERSION,
@@ -206,7 +207,7 @@ fn bfs_runs_over_snapshot_csr_graph() -> Result<(), FixtureError> {
 
 #[test]
 fn rejects_missing_offsets_section() -> Result<(), SnapshotError> {
-    let mut builder = SnapshotBuilder::new();
+    let mut builder = SnapshotBuilder::new(crc32c_append);
     if let Err(error) =
         builder.add_section(SNAPSHOT_KIND_CSR_TARGETS_U32, 0, 2, words_to_bytes(&[0, 1]))
     {

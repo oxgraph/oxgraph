@@ -29,8 +29,8 @@ use oxgraph_hyper::{
     RelationIndex as RelationIndexTrait, RelationWeight, TopologyBase, TopologyCounts,
 };
 use oxgraph_layout_util::{
-    IdOutOfBounds, LayoutIndex, LayoutWord, OffsetOverflow, build_offset_index, id_to_slot,
-    index_from_usize, slot_or_max,
+    IdOutOfBounds, LayoutIndex, LayoutWord, OffsetOverflow, build_offset_index, crc32c_append,
+    id_to_slot, index_from_usize, slot_or_max,
 };
 #[cfg(feature = "build-property-arrow")]
 use oxgraph_property::{
@@ -1902,7 +1902,7 @@ where
     RelationIndex: LayoutIndex + BcsrSnapshotIndex,
     IncidenceIndex: LayoutIndex + BcsrSnapshotIndex,
 {
-    let mut builder = SnapshotBuilder::new();
+    let mut builder = SnapshotBuilder::new(crc32c_append);
     add_topology_sections::<VertexIndex, RelationIndex, IncidenceIndex>(&mut builder, topology)?;
     builder.finish().map_err(HyperBuildError::from)
 }
@@ -2052,7 +2052,7 @@ where
             incidence_map.len(),
         )?,
     ];
-    let mut builder = SnapshotBuilder::new();
+    let mut builder = SnapshotBuilder::new(crc32c_append);
     add_topology_sections::<VertexIndex, RelationIndex, IncidenceIndex>(&mut builder, topology)?;
     oxgraph_property::export::append_identity_and_property_sections(
         &mut builder,

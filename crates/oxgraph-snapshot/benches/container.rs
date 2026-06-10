@@ -1,15 +1,17 @@
 //! Criterion benches for the topology-agnostic snapshot container.
 //!
 //! Defends three perf contracts (the corresponding doc claims live next to each item):
-//! - `Snapshot::open` at `ValidationLevel::Layout` is `O(s^2)` in the section count, dominated by
-//!   the duplicate-kind walk (see [`Snapshot::open_with`](oxgraph_snapshot::Snapshot::open_with)
-//!   doc). The bench parameterises across `s ∈ {1, 16, 256, 1024 = MAX_SECTION_COUNT}` and uses
-//!   `Throughput::Elements(s)` so a contract regression shows up as a sub-linear elements/sec curve
-//!   rather than a hidden constant-factor blowup.
-//! - `Snapshot::section` linear scan cost is `O(s)` per lookup; benched at the worst case (last
-//!   kind, forcing the full table walk).
-//! - `SnapshotBuilder::finish` is `O(s + total payload bytes)`; benched with payload size held
-//!   constant so the bytes-per-second number tracks the linear-in-bytes term directly.
+//! - `Snapshot::open` is `O(s)` in the section count (one structural table walk; the v2
+//!   ascending-kind mandate removed the v1 duplicate-kind `O(s^2)` term — see
+//!   [`Snapshot::open_with`](oxgraph_snapshot::Snapshot::open_with) doc). The bench parameterises
+//!   across `s ∈ {1, 16, 256, 1024 = MAX_SECTION_COUNT}` and uses `Throughput::Elements(s)` so a
+//!   contract regression shows up as a sub-linear elements/sec curve rather than a hidden
+//!   constant-factor blowup.
+//! - `Snapshot::section` is `O(log s)` per lookup (binary search over the ascending kinds); benched
+//!   at the worst case (last kind).
+//! - `SnapshotBuilder::finish` is `O(s + total payload bytes)` (payload copies plus one CRC-32C
+//!   fold per section); benched with payload size held constant so the bytes-per-second number
+//!   tracks the linear-in-bytes term directly.
 
 use std::hint::black_box;
 
@@ -17,13 +19,14 @@ use criterion::{
     BenchmarkGroup, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main,
     measurement::WallTime,
 };
+use oxgraph_layout_util::crc32c_append;
 use oxgraph_snapshot::{Snapshot, SnapshotBuilder};
 
 /// Builds a snapshot with `count` distinct sections, each carrying
 /// `bytes_per_section` bytes. Used to size both `open` and `section`
 /// lookup benches.
 fn build_snapshot(count: u32, bytes_per_section: usize) -> Vec<u8> {
-    let mut builder = SnapshotBuilder::new();
+    let mut builder = SnapshotBuilder::new(crc32c_append);
     for kind in 0..count {
         let payload = vec![(kind & 0xFF) as u8; bytes_per_section];
         match builder.add_section(kind, 0, 0, payload) {

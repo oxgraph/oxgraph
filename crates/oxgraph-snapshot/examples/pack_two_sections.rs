@@ -6,14 +6,15 @@
 //!
 //! Run with: `cargo run -p oxgraph-snapshot --example pack_two_sections --features alloc`
 
+use oxgraph_layout_util::crc32c_append;
 use oxgraph_snapshot::{Snapshot, SnapshotBuilder, SnapshotError};
 use zerocopy::byteorder::{LE, U32};
 
 fn main() -> Result<(), SnapshotError> {
     let words: [u32; 5] = [10, 20, 30, 40, 50];
-    let bytes_payload = b"oxgraph-snapshot v1.0".to_vec();
+    let bytes_payload = b"oxgraph-snapshot v2.0".to_vec();
 
-    let mut builder = SnapshotBuilder::new();
+    let mut builder = SnapshotBuilder::new(crc32c_append);
     if let Err(error) = builder.add_section_typed(0x0100, 0, &words) {
         panic!("typed section: {error:?}");
     }

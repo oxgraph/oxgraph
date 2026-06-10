@@ -1,5 +1,6 @@
 //! Builder determinism property test: equal logical input → byte-equal output.
 
+use oxgraph_layout_util::crc32c_append;
 use oxgraph_snapshot::{MAX_ALIGNMENT_LOG2, SnapshotBuilder};
 use proptest::prelude::*;
 
@@ -15,7 +16,7 @@ prop_compose! {
 }
 
 fn build_once(sections: &[(u32, u32, u8, Vec<u8>)]) -> Vec<u8> {
-    let mut builder = SnapshotBuilder::new();
+    let mut builder = SnapshotBuilder::new(crc32c_append);
     for (kind, version, alignment_log2, payload) in sections {
         match builder.add_section(*kind, *version, *alignment_log2, payload.clone()) {
             Ok(_) => {}
@@ -37,7 +38,7 @@ proptest! {
 
     #[test]
     fn builder_is_deterministic(
-        sections in proptest::collection::vec(arb_section(), 0..16)
+        mut sections in proptest::collection::vec(arb_section(), 0..16)
             .prop_filter(
                 "kinds must be unique",
                 |entries| {
@@ -46,6 +47,7 @@ proptest! {
                 },
             )
     ) {
+        sections.sort_by_key(|(kind, _, _, _)| *kind);
         let first = build_once(&sections);
         let second = build_once(&sections);
         prop_assert_eq!(first, second);

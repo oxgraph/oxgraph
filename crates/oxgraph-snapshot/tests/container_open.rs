@@ -1,5 +1,6 @@
 //! Snapshot opener tests covering header, section table, and layout failures.
 
+use oxgraph_layout_util::crc32c_append;
 use oxgraph_snapshot::{
     FORMAT_MAGIC, FORMAT_MAJOR, FORMAT_MINOR, HEADER_SIZE, MAX_ALIGNMENT_LOG2, MAX_SECTION_COUNT,
     PlanError, SECTION_ENTRY_SIZE, Snapshot, SnapshotBuilder, SnapshotError,
@@ -13,9 +14,9 @@ fn add(builder: &mut SnapshotBuilder, kind: u32, version: u32, alignment_log2: u
     }
 }
 
-/// Builds a known-good snapshot with two distinct sections.
+/// Builds a known-good snapshot with two distinct, ascending sections.
 fn baseline_snapshot() -> Vec<u8> {
-    let mut builder = SnapshotBuilder::new();
+    let mut builder = SnapshotBuilder::new(crc32c_append);
     add(&mut builder, 1, 0, 2, b"abcd");
     add(&mut builder, 2, 0, 0, b"xyz");
     match builder.finish() {
@@ -66,6 +67,16 @@ fn opens_baseline_snapshot() -> Result<(), SnapshotError> {
     Ok(())
 }
 
+/// `open_checked` accepts intact bytes and `verify_all` accepts every intact
+/// payload.
+#[test]
+fn open_checked_and_verify_all_accept_baseline() -> Result<(), SnapshotError> {
+    let bytes = baseline_snapshot();
+    let snapshot = Snapshot::open_checked(&bytes, crc32c_append)?;
+    snapshot.verify_all(crc32c_append)?;
+    Ok(())
+}
+
 #[test]
 fn rejects_truncated_header() {
     assert_open_error(
@@ -99,6 +110,29 @@ fn rejects_wrong_major() {
     );
 }
 
+/// v1 bytes are rejected by the same major check with a clear error naming
+/// both versions — there is deliberately no legacy-read path.
+#[test]
+fn rejects_v1_major() {
+    let mut bytes = baseline_snapshot();
+    set_u32(&mut bytes, 8, 1);
+    assert_open_error(
+        &bytes,
+        &SnapshotError::FormatMajorMismatch {
+            actual: 1,
+            supported: FORMAT_MAJOR,
+        },
+    );
+    let error = SnapshotError::FormatMajorMismatch {
+        actual: 1,
+        supported: FORMAT_MAJOR,
+    };
+    assert_eq!(
+        error.to_string(),
+        "unsupported snapshot format major: snapshot is 1, this reader supports 2"
+    );
+}
+
 #[test]
 fn rejects_minor_too_new() {
     let mut bytes = baseline_snapshot();
@@ -128,7 +162,8 @@ fn rejects_wrong_header_size() {
 #[test]
 fn rejects_non_zero_header_reserved() {
     let mut bytes = baseline_snapshot();
-    bytes[24] = 1;
+    // The reserved bytes follow the table_crc32c word at header offset 24.
+    bytes[28] = 1;
     assert_open_error(&bytes, &SnapshotError::NonZeroHeaderReserved);
 }
 
@@ -155,12 +190,21 @@ fn rejects_truncated_section_table() {
     }
 }
 
+/// A flipped entry `crc32c` byte is invisible to the structural open (the
+/// field is opaque without a checksum fn) but fails `open_checked`.
 #[test]
-fn rejects_non_zero_entry_checksum() {
+fn entry_crc_flip_passes_structural_open_but_fails_open_checked() {
     let mut bytes = baseline_snapshot();
-    let entry_offset = HEADER_SIZE;
-    bytes[entry_offset + 24] = 1;
-    assert_open_error(&bytes, &SnapshotError::NonZeroEntryChecksum { kind: 1 });
+    let entry_crc_offset = HEADER_SIZE + 24;
+    bytes[entry_crc_offset] ^= 0xFF;
+    assert!(
+        Snapshot::open(&bytes).is_ok(),
+        "structural open is checksum-blind"
+    );
+    match Snapshot::open_checked(&bytes, crc32c_append) {
+        Err(SnapshotError::TableChecksumMismatch { .. }) => {}
+        other => panic!("expected TableChecksumMismatch, got {other:?}"),
+    }
 }
 
 #[test]
@@ -214,6 +258,25 @@ fn rejects_section_out_of_bounds() {
 #[test]
 fn rejects_unsorted_section_table() {
     let mut bytes = baseline_snapshot();
+    // Swap only the (offset, length) words of the two entries, keeping the
+    // kinds ascending, so the offset-monotonicity walk is what fires.
+    let first = HEADER_SIZE;
+    let second = HEADER_SIZE + SECTION_ENTRY_SIZE;
+    let mut tmp = [0u8; 16];
+    tmp.copy_from_slice(&bytes[first..first + 16]);
+    bytes.copy_within(second..second + 16, first);
+    bytes[second..second + 16].copy_from_slice(&tmp);
+    match Snapshot::open(&bytes) {
+        Err(SnapshotError::UnsortedSectionTable { index: 1 }) => {}
+        other => panic!("expected UnsortedSectionTable, got {other:?}"),
+    }
+}
+
+/// Swapping whole entries breaks the ascending-kind mandate before the
+/// offset walk can run.
+#[test]
+fn rejects_swapped_entries_as_non_ascending() {
+    let mut bytes = baseline_snapshot();
     let first = HEADER_SIZE;
     let second = HEADER_SIZE + SECTION_ENTRY_SIZE;
     let mut tmp = [0u8; SECTION_ENTRY_SIZE];
@@ -221,15 +284,33 @@ fn rejects_unsorted_section_table() {
     bytes.copy_within(second..second + SECTION_ENTRY_SIZE, first);
     bytes[second..second + SECTION_ENTRY_SIZE].copy_from_slice(&tmp);
     match Snapshot::open(&bytes) {
-        Err(SnapshotError::UnsortedSectionTable { .. }) => {}
-        other => panic!("expected UnsortedSectionTable, got {other:?}"),
+        Err(SnapshotError::NonAscendingKind { kind: 1, prev: 2 }) => {}
+        other => panic!("expected NonAscendingKind, got {other:?}"),
     }
 }
 
+/// A duplicated kind is rejected by the same ascending-kind walk (equal is
+/// not strictly greater).
 #[test]
-fn rejects_duplicate_kind() {
+fn rejects_duplicate_kind_as_non_ascending() {
     let mut bytes = baseline_snapshot();
     let second_entry = HEADER_SIZE + SECTION_ENTRY_SIZE;
     set_u32(&mut bytes, second_entry + 16, 1);
-    assert_open_error(&bytes, &SnapshotError::DuplicateKind { kind: 1 });
+    assert_open_error(
+        &bytes,
+        &SnapshotError::NonAscendingKind { kind: 1, prev: 1 },
+    );
+}
+
+/// A descending kind is rejected naming both the offender and its
+/// predecessor.
+#[test]
+fn rejects_descending_kind() {
+    let mut bytes = baseline_snapshot();
+    let second_entry = HEADER_SIZE + SECTION_ENTRY_SIZE;
+    set_u32(&mut bytes, second_entry + 16, 0);
+    assert_open_error(
+        &bytes,
+        &SnapshotError::NonAscendingKind { kind: 0, prev: 1 },
+    );
 }

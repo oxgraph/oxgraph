@@ -1,6 +1,7 @@
 //! Postgres-owned snapshot section assembly (inbound CSC + metadata).
 
 use oxgraph_csr::CsrSnapshotIndex;
+use oxgraph_layout_util::crc32c_append;
 use oxgraph_snapshot::{Snapshot, SnapshotBuilder};
 
 use super::metadata::{
@@ -30,7 +31,7 @@ pub fn attach_postgres_sections(
 ) -> Result<Vec<u8>, PostgresGraphError> {
     let forward = Snapshot::open(forward_topology_bytes)?;
     let inbound = inbound_topology_bytes.map(Snapshot::open).transpose()?;
-    let mut builder = SnapshotBuilder::new();
+    let mut builder = SnapshotBuilder::new(crc32c_append);
     for section in forward.sections() {
         if is_postgres_owned_kind(section.kind()) {
             continue;

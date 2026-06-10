@@ -1,5 +1,6 @@
 //! Tests for explicit little-endian section builder helpers.
 
+use oxgraph_layout_util::crc32c_append;
 use oxgraph_snapshot::{Snapshot, SnapshotBuilder};
 use zerocopy::byteorder::{LE, U16, U32, U64};
 
@@ -10,7 +11,7 @@ fn little_endian_helper_writes_portable_word_bytes() {
         U16::<LE>::new(0x0304),
         U16::<LE>::new(0x0506),
     ];
-    let mut builder = SnapshotBuilder::new();
+    let mut builder = SnapshotBuilder::new(crc32c_append);
     if let Err(error) = builder.add_section_little_endian(0xCAFE, 7, &payload) {
         panic!("little-endian section rejected: {error:?}");
     }
@@ -33,7 +34,7 @@ fn little_endian_helper_writes_portable_word_bytes() {
 fn little_endian_helper_supports_multiple_word_widths() {
     let words32 = [U32::<LE>::new(0x0102_0304)];
     let words64 = [U64::<LE>::new(0x0102_0304_0506_0708)];
-    let mut builder = SnapshotBuilder::new();
+    let mut builder = SnapshotBuilder::new(crc32c_append);
     if let Err(error) = builder.add_section_little_endian(1, 0, &words32) {
         panic!("u32 little-endian section rejected: {error:?}");
     }

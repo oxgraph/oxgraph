@@ -39,16 +39,19 @@ pub(crate) mod defs;
 /// value rejects the store rather than guessing the layout.
 ///
 /// Bumped to `2` when the derived [`crate::index::BaseIndex`] postings became a
-/// persisted, borrow-at-open structure: a base written under the `1` format
-/// lacks the five `SECTION_INDEX_*`/`SECTION_CSR_OUT`/`SECTION_CSC_IN`/
-/// `SECTION_INDEX_RELATION_TYPE` posting sections and cannot be opened (there is
-/// no rebuild-from-records fallback on the production path), so it is rejected
-/// with [`crate::DbError::UnsupportedFormat`].
+/// persisted, borrow-at-open structure. Bumped to `3` for the OXGT container
+/// v2 break: the section kinds below were renumbered contiguously in emission
+/// order (the container mandates strictly-ascending kinds) and the container
+/// itself carries mandatory per-section checksums, so a v2-format base is
+/// doubly unreadable — the container rejects its v1 bytes before this header
+/// is even reached, and a hypothetical re-encoding would still trip this
+/// version check into [`crate::DbError::UnsupportedFormat`]. There is no
+/// rebuild-from-records fallback on the production path.
 ///
 /// # Performance
 ///
 /// `perf: unspecified`; this is a compile-time constant.
-pub(crate) const OXGDB_FORMAT_VERSION: u32 = 2;
+pub(crate) const OXGDB_FORMAT_VERSION: u32 = 3;
 
 /// Section version recorded on every OXGDB section entry. Bumped independently
 /// of [`OXGDB_FORMAT_VERSION`] when a single section's record layout changes.
@@ -74,6 +77,13 @@ pub(crate) const MAX_BASE_SECTION_KINDS: usize = 23;
 /// `perf: unspecified`; this is a compile-time constant.
 pub(crate) const RELATION_TYPE_NONE: u64 = 0;
 
+// Section kinds are assigned contiguously from the band base IN EMISSION
+// ORDER (the order `freeze::freeze_view` writes sections), because the OXGT
+// v2 container mandates a strictly-ascending kind order across the table.
+// `ALL_SECTION_KINDS` below lists the same order and a compile-time check
+// pins it as strictly ascending; renumber the whole block when the emission
+// order changes.
+
 /// Fixed header section: one [`DbHeaderRecord`] carrying the format version,
 /// commit/transaction/generation stamps, and the nine id allocators.
 ///
@@ -81,147 +91,135 @@ pub(crate) const RELATION_TYPE_NONE: u64 = 0;
 ///
 /// `perf: unspecified`; this is a compile-time constant.
 pub(crate) const SECTION_DB_HEADER: u32 = 0x0300;
-/// Concatenated UTF-8 string table; every catalog name is a `(offset, len)`
-/// slice into this byte section.
-///
-/// # Performance
-///
-/// `perf: unspecified`; this is a compile-time constant.
-pub(crate) const SECTION_STRING_TABLE: u32 = 0x0301;
 /// Catalog role records ([`NamedWire`] array).
 ///
 /// # Performance
 ///
 /// `perf: unspecified`; this is a compile-time constant.
-pub(crate) const SECTION_CATALOG_ROLES: u32 = 0x0302;
+pub(crate) const SECTION_CATALOG_ROLES: u32 = 0x0301;
 /// Catalog label records ([`NamedWire`] array).
 ///
 /// # Performance
 ///
 /// `perf: unspecified`; this is a compile-time constant.
-pub(crate) const SECTION_CATALOG_LABELS: u32 = 0x0303;
+pub(crate) const SECTION_CATALOG_LABELS: u32 = 0x0302;
 /// Catalog relation-type records ([`NamedWire`] array).
 ///
 /// # Performance
 ///
 /// `perf: unspecified`; this is a compile-time constant.
-pub(crate) const SECTION_CATALOG_RELATION_TYPES: u32 = 0x0304;
+pub(crate) const SECTION_CATALOG_RELATION_TYPES: u32 = 0x0303;
 /// Catalog property-key records ([`PropertyKeyWire`] array).
 ///
 /// # Performance
 ///
 /// `perf: unspecified`; this is a compile-time constant.
-pub(crate) const SECTION_CATALOG_PROPERTY_KEYS: u32 = 0x0305;
+pub(crate) const SECTION_CATALOG_PROPERTY_KEYS: u32 = 0x0304;
 /// Catalog projection records ([`DefWire`] array; bodies in
 /// [`SECTION_CATALOG_DEFS`]).
 ///
 /// # Performance
 ///
 /// `perf: unspecified`; this is a compile-time constant.
-pub(crate) const SECTION_CATALOG_PROJECTIONS: u32 = 0x0306;
+pub(crate) const SECTION_CATALOG_PROJECTIONS: u32 = 0x0305;
 /// Catalog index records ([`DefWire`] array; bodies in
 /// [`SECTION_CATALOG_DEFS`]).
 ///
 /// # Performance
 ///
 /// `perf: unspecified`; this is a compile-time constant.
-pub(crate) const SECTION_CATALOG_INDEXES: u32 = 0x0307;
+pub(crate) const SECTION_CATALOG_INDEXES: u32 = 0x0306;
 /// Projection/index definition bodies: a flat `u64` run holding the id sets and
 /// key vectors a [`DefWire`] slices with `(payload_off, payload_len)`.
 ///
 /// # Performance
 ///
 /// `perf: unspecified`; this is a compile-time constant.
-pub(crate) const SECTION_CATALOG_DEFS: u32 = 0x0308;
-/// Base content-integrity trailer: a single [`BaseTrailer`] written last in a
-/// base file, holding the CRC-32C over every base byte preceding the trailer
-/// section. Open recomputes it to fault truncation or in-place corruption into
-/// [`crate::DbError::InvalidStore`] before any borrow.
-///
-/// # Performance
-///
-/// `perf: unspecified`; this is a compile-time constant.
-pub(crate) const SECTION_BASE_TRAILER: u32 = 0x0309;
+pub(crate) const SECTION_CATALOG_DEFS: u32 = 0x0307;
 /// Element records ([`ElementWire`] array; label runs in
 /// [`SECTION_ELEMENT_LABELS`]).
 ///
 /// # Performance
 ///
 /// `perf: unspecified`; this is a compile-time constant.
-pub(crate) const SECTION_ELEMENT_RECORDS: u32 = 0x0310;
+pub(crate) const SECTION_ELEMENT_RECORDS: u32 = 0x0308;
 /// Element label run: a flat `u64` run of label ids sliced by each
 /// [`ElementWire`]'s `(label_off, label_len)`.
 ///
 /// # Performance
 ///
 /// `perf: unspecified`; this is a compile-time constant.
-pub(crate) const SECTION_ELEMENT_LABELS: u32 = 0x0311;
+pub(crate) const SECTION_ELEMENT_LABELS: u32 = 0x0309;
 /// Relation records ([`RelationWire`] array; label runs in
 /// [`SECTION_RELATION_LABELS`]).
 ///
 /// # Performance
 ///
 /// `perf: unspecified`; this is a compile-time constant.
-pub(crate) const SECTION_RELATION_RECORDS: u32 = 0x0312;
+pub(crate) const SECTION_RELATION_RECORDS: u32 = 0x030A;
 /// Relation label run: a flat `u64` run of label ids sliced by each
 /// [`RelationWire`]'s `(label_off, label_len)`.
 ///
 /// # Performance
 ///
 /// `perf: unspecified`; this is a compile-time constant.
-pub(crate) const SECTION_RELATION_LABELS: u32 = 0x0313;
+pub(crate) const SECTION_RELATION_LABELS: u32 = 0x030B;
 /// Incidence records ([`IncidenceWire`] array).
 ///
 /// # Performance
 ///
 /// `perf: unspecified`; this is a compile-time constant.
-pub(crate) const SECTION_INCIDENCE_RECORDS: u32 = 0x0314;
-/// Nested [`oxgraph_property`] snapshot bytes holding the typed property
-/// columns keyed by snapshot-local id.
-///
-/// # Performance
-///
-/// `perf: unspecified`; this is a compile-time constant.
-pub(crate) const SECTION_PROPERTY_SNAPSHOT: u32 = 0x0320;
-/// Nested local-to-canonical identity-map bytes, present only when a section's
-/// snapshot-local id order differs from canonical id order.
-///
-/// # Performance
-///
-/// `perf: unspecified`; this is a compile-time constant.
-pub(crate) const SECTION_IDENTITY_MAP: u32 = 0x0321;
+pub(crate) const SECTION_INCIDENCE_RECORDS: u32 = 0x030C;
 /// Typed property records ([`PropertyWire`] array); text values reference
 /// [`SECTION_PROPERTY_TEXT`].
 ///
 /// # Performance
 ///
 /// `perf: unspecified`; this is a compile-time constant.
-pub(crate) const SECTION_PROPERTY_RECORDS: u32 = 0x0322;
+pub(crate) const SECTION_PROPERTY_RECORDS: u32 = 0x030D;
 /// Concatenated UTF-8 property text values, sliced by each [`PropertyWire`]'s
 /// `(text_off, text_len)`.
 ///
 /// # Performance
 ///
 /// `perf: unspecified`; this is a compile-time constant.
-pub(crate) const SECTION_PROPERTY_TEXT: u32 = 0x0323;
-/// Nested forward (outbound) CSR adjacency snapshot bytes.
+pub(crate) const SECTION_PROPERTY_TEXT: u32 = 0x030E;
+/// Physical label membership postings: the persisted
+/// [`crate::index::BaseIndex`] `label_members` posting map as a directory of
+/// [`PostingDirEntry`] records (sorted by label id) plus a flat `[U64<LE>]`
+/// element value pool.
 ///
 /// # Performance
 ///
 /// `perf: unspecified`; this is a compile-time constant.
-pub(crate) const SECTION_CSR_OUT: u32 = 0x0330;
-/// Nested reverse (inbound) CSC adjacency snapshot bytes.
+pub(crate) const SECTION_INDEX_LABEL_POSTINGS: u32 = 0x030F;
+/// Physical relation-type membership postings: the persisted
+/// [`crate::index::BaseIndex`] `relation_type_members` posting map as a
+/// directory of [`PostingDirEntry`] records (sorted by relation-type id) plus a
+/// flat `[U64<LE>]` relation value pool.
 ///
 /// # Performance
 ///
 /// `perf: unspecified`; this is a compile-time constant.
-pub(crate) const SECTION_CSC_IN: u32 = 0x0331;
-/// Nested directed bipartite-CSR hypergraph snapshot bytes.
+pub(crate) const SECTION_INDEX_RELATION_TYPE_POSTINGS: u32 = 0x0310;
+/// Physical element reverse-adjacency postings: the persisted
+/// [`crate::index::BaseIndex`] `element_incidences` posting map as a directory
+/// of [`PostingDirEntry`] records (sorted by element id) plus a flat `[U64<LE>]`
+/// incidence value pool.
 ///
 /// # Performance
 ///
 /// `perf: unspecified`; this is a compile-time constant.
-pub(crate) const SECTION_HYPER_BCSR: u32 = 0x0332;
+pub(crate) const SECTION_INDEX_ELEMENT_INCIDENCES: u32 = 0x0311;
+/// Physical relation reverse-adjacency postings: the persisted
+/// [`crate::index::BaseIndex`] `relation_incidences` posting map as a directory
+/// of [`PostingDirEntry`] records (sorted by relation id) plus a flat
+/// `[U64<LE>]` incidence value pool.
+///
+/// # Performance
+///
+/// `perf: unspecified`; this is a compile-time constant.
+pub(crate) const SECTION_INDEX_RELATION_INCIDENCES: u32 = 0x0312;
 /// Physical equality/composite index postings: the persisted
 /// [`crate::index::BaseIndex`] `property_equality` posting map. Holds a
 /// directory of [`EqualityDirEntry`] records (sorted by `(key_id,
@@ -232,25 +230,7 @@ pub(crate) const SECTION_HYPER_BCSR: u32 = 0x0332;
 /// # Performance
 ///
 /// `perf: unspecified`; this is a compile-time constant.
-pub(crate) const SECTION_INDEX_EQUALITY: u32 = 0x0340;
-/// Physical label membership postings: the persisted
-/// [`crate::index::BaseIndex`] `label_members` posting map as a directory of
-/// [`PostingDirEntry`] records (sorted by label id) plus a flat `[U64<LE>]`
-/// element value pool.
-///
-/// # Performance
-///
-/// `perf: unspecified`; this is a compile-time constant.
-pub(crate) const SECTION_INDEX_LABEL_POSTINGS: u32 = 0x0341;
-/// Physical relation-type membership postings: the persisted
-/// [`crate::index::BaseIndex`] `relation_type_members` posting map as a
-/// directory of [`PostingDirEntry`] records (sorted by relation-type id) plus a
-/// flat `[U64<LE>]` relation value pool.
-///
-/// # Performance
-///
-/// `perf: unspecified`; this is a compile-time constant.
-pub(crate) const SECTION_INDEX_RELATION_TYPE_POSTINGS: u32 = 0x0342;
+pub(crate) const SECTION_INDEX_EQUALITY: u32 = 0x0313;
 /// Concatenated UTF-8 text-value bytes for the equality index directory; every
 /// [`EqualityDirEntry`] whose value is text references this section by
 /// `(text_off, text_len)`.
@@ -258,35 +238,35 @@ pub(crate) const SECTION_INDEX_RELATION_TYPE_POSTINGS: u32 = 0x0342;
 /// # Performance
 ///
 /// `perf: unspecified`; this is a compile-time constant.
-pub(crate) const SECTION_INDEX_EQUALITY_TEXT: u32 = 0x0343;
-/// Physical element reverse-adjacency postings: the persisted
-/// [`crate::index::BaseIndex`] `element_incidences` posting map as a directory
-/// of [`PostingDirEntry`] records (sorted by element id) plus a flat `[U64<LE>]`
-/// incidence value pool.
+pub(crate) const SECTION_INDEX_EQUALITY_TEXT: u32 = 0x0314;
+/// Concatenated UTF-8 string table; every catalog name is a `(offset, len)`
+/// slice into this byte section.
 ///
 /// # Performance
 ///
 /// `perf: unspecified`; this is a compile-time constant.
-pub(crate) const SECTION_INDEX_ELEMENT_INCIDENCES: u32 = SECTION_CSR_OUT;
-/// Physical relation reverse-adjacency postings: the persisted
-/// [`crate::index::BaseIndex`] `relation_incidences` posting map as a directory
-/// of [`PostingDirEntry`] records (sorted by relation id) plus a flat
-/// `[U64<LE>]` incidence value pool.
+pub(crate) const SECTION_STRING_TABLE: u32 = 0x0315;
+/// Base content-integrity trailer: a single [`BaseTrailer`] written last in a
+/// base file (and carrying the band's largest kind so it also sorts last),
+/// holding the CRC-32C over the base's payload region (see
+/// [`crate::freeze`]). Open recomputes it to fault truncation or in-place
+/// corruption into [`crate::DbError::InvalidStore`] before any borrow.
 ///
 /// # Performance
 ///
 /// `perf: unspecified`; this is a compile-time constant.
-pub(crate) const SECTION_INDEX_RELATION_INCIDENCES: u32 = SECTION_CSC_IN;
+pub(crate) const SECTION_BASE_TRAILER: u32 = 0x0316;
 
-/// Every section kind this store emits, used by the compile-time band check
-/// below and available to tooling that wants to enumerate the layout.
+/// Every section kind this store emits, listed in EMISSION ORDER (the order
+/// `freeze::freeze_view` writes sections). Used by the compile-time band and
+/// ascending-order checks below and available to tooling that wants to
+/// enumerate the layout.
 ///
 /// # Performance
 ///
 /// `perf: unspecified`; this is a compile-time constant.
-pub(crate) const ALL_SECTION_KINDS: [u32; 26] = [
+pub(crate) const ALL_SECTION_KINDS: [u32; 23] = [
     SECTION_DB_HEADER,
-    SECTION_STRING_TABLE,
     SECTION_CATALOG_ROLES,
     SECTION_CATALOG_LABELS,
     SECTION_CATALOG_RELATION_TYPES,
@@ -294,29 +274,29 @@ pub(crate) const ALL_SECTION_KINDS: [u32; 26] = [
     SECTION_CATALOG_PROJECTIONS,
     SECTION_CATALOG_INDEXES,
     SECTION_CATALOG_DEFS,
-    SECTION_BASE_TRAILER,
     SECTION_ELEMENT_RECORDS,
     SECTION_ELEMENT_LABELS,
     SECTION_RELATION_RECORDS,
     SECTION_RELATION_LABELS,
     SECTION_INCIDENCE_RECORDS,
-    SECTION_PROPERTY_SNAPSHOT,
-    SECTION_IDENTITY_MAP,
     SECTION_PROPERTY_RECORDS,
     SECTION_PROPERTY_TEXT,
-    SECTION_INDEX_ELEMENT_INCIDENCES,
-    SECTION_INDEX_RELATION_INCIDENCES,
-    SECTION_HYPER_BCSR,
-    SECTION_INDEX_EQUALITY,
     SECTION_INDEX_LABEL_POSTINGS,
     SECTION_INDEX_RELATION_TYPE_POSTINGS,
+    SECTION_INDEX_ELEMENT_INCIDENCES,
+    SECTION_INDEX_RELATION_INCIDENCES,
+    SECTION_INDEX_EQUALITY,
     SECTION_INDEX_EQUALITY_TEXT,
+    SECTION_STRING_TABLE,
+    SECTION_BASE_TRAILER,
 ];
 
 // Every OXGDB section kind must live inside the container's reserved
-// `DATABASE_BAND`; a stray value would silently collide with another
-// subsystem's band. Enforced at compile time so a typo in a constant above
-// fails the build rather than corrupting a store.
+// `DATABASE_BAND` (a stray value would silently collide with another
+// subsystem's band) AND the emission order above must be strictly ascending
+// by value, because the OXGT v2 container rejects non-ascending tables.
+// Enforced at compile time so a typo or reorder fails the build rather than
+// corrupting a store.
 const _: () = {
     let mut index = 0;
     while index < ALL_SECTION_KINDS.len() {
@@ -324,6 +304,12 @@ const _: () = {
             kinds::in_band(ALL_SECTION_KINDS[index], kinds::DATABASE_BAND),
             "OXGDB section kind escaped DATABASE_BAND",
         );
+        if index > 0 {
+            assert!(
+                ALL_SECTION_KINDS[index - 1] < ALL_SECTION_KINDS[index],
+                "OXGDB emission order must be strictly ascending by kind value",
+            );
+        }
         index += 1;
     }
 };
@@ -705,9 +691,12 @@ pub(crate) struct EqualityDirEntry {
 
 /// Base content-integrity trailer record. Exactly one occupies
 /// [`SECTION_BASE_TRAILER`], written last in a base file. Its `crc32c` is the
-/// CRC-32C over every base byte preceding the trailer section, so open can
-/// recompute the checksum and reject a truncated or in-place-corrupted base
-/// before borrowing any section.
+/// CRC-32C over the base's payload region — every byte from the end of the
+/// container's section table to the start of this trailer's payload (see
+/// [`crate::freeze`] for why the header and table are excluded: their bytes
+/// are covered by the OXGT v2 `table_crc32c` instead, and they are patched
+/// *after* this CRC is stamped). Open recomputes it to reject a truncated or
+/// in-place-corrupted base before borrowing any section.
 ///
 /// # Performance
 ///
@@ -715,7 +704,7 @@ pub(crate) struct EqualityDirEntry {
 #[derive(Clone, Copy, Debug, FromBytes, Immutable, IntoBytes, KnownLayout)]
 #[repr(C)]
 pub(crate) struct BaseTrailer {
-    /// CRC-32C over all base bytes preceding this trailer section.
+    /// CRC-32C over the base's payload region preceding this trailer payload.
     pub(crate) crc32c: U32<LE>,
     /// Reserved word; must be zero in this format version.
     pub(crate) reserved: U32<LE>,

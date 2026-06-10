@@ -34,6 +34,7 @@ use oxgraph_hyper_bcsr::{
     SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_HYPEREDGES_U32,
     SNAPSHOT_KIND_BCSR_VERTEX_OUTGOING_OFFSETS_U32,
 };
+use oxgraph_layout_util::crc32c_append;
 use oxgraph_snapshot::{Snapshot, SnapshotBuilder, SnapshotError};
 use oxgraph_topology::{
     ContainsElement, ElementId, ElementIndex, ElementPredecessors, ElementSuccessors, TopologyBase,
@@ -753,7 +754,7 @@ fn words_to_bytes(words: &[u32]) -> Vec<u8> {
 
 /// Builds a valid v1 snapshot byte vector for BFS tests.
 fn valid_snapshot_bytes() -> Vec<u8> {
-    let mut builder = SnapshotBuilder::new();
+    let mut builder = SnapshotBuilder::new(crc32c_append);
     if let Err(error) = builder.add_section(
         SNAPSHOT_KIND_CSR_OFFSETS_U32,
         oxgraph_csr::SNAPSHOT_CSR_SECTION_VERSION,
@@ -852,7 +853,7 @@ fn bcsr_snapshot_bytes() -> Vec<u8> {
     let vertex_incoming_offsets: &[u32] = &[0, 0, 1, 2, 4];
     let vertex_incoming_hyperedges: &[u32] = &[0, 0, 1, 2];
 
-    let mut builder = SnapshotBuilder::new();
+    let mut builder = SnapshotBuilder::new(crc32c_append);
 
     let add = |builder: &mut SnapshotBuilder, kind: u32, words: &[u32]| {
         if let Err(error) = builder.add_section(

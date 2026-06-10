@@ -70,11 +70,6 @@ pub enum SnapshotError {
     },
     /// Section table bytes could not be interpreted.
     MalformedSectionTable,
-    /// A section entry's `reserved_checksum` bytes were not all zero.
-    NonZeroEntryChecksum {
-        /// Section kind whose entry violated the invariant.
-        kind: u32,
-    },
     /// A section entry's trailing reserved bytes were not all zero.
     NonZeroEntryReserved {
         /// Section kind whose entry violated the invariant.
@@ -116,9 +111,35 @@ pub enum SnapshotError {
         /// Index of the entry whose offset violated monotonicity.
         index: usize,
     },
-    /// Two section entries shared the same kind.
-    DuplicateKind {
-        /// Duplicated section kind.
+    /// A section entry's kind was not strictly greater than its predecessor's.
+    ///
+    /// v2 mandates a strictly-ascending kind order, which also makes the
+    /// table duplicate-free by construction.
+    NonAscendingKind {
+        /// Kind of the offending entry.
+        kind: u32,
+        /// Kind of the preceding entry.
+        prev: u32,
+    },
+    /// The header's `table_crc32c` did not match the section-table bytes.
+    TableChecksumMismatch {
+        /// Checksum recorded in the header.
+        expected: u32,
+        /// Checksum recomputed over the section-table bytes.
+        actual: u32,
+    },
+    /// A section payload's checksum did not match its table entry.
+    SectionChecksumMismatch {
+        /// Kind of the failing section.
+        kind: u32,
+        /// Checksum recorded in the section entry.
+        expected: u32,
+        /// Checksum recomputed over the payload bytes.
+        actual: u32,
+    },
+    /// No section with the requested kind was present.
+    SectionMissing {
+        /// Requested section kind.
         kind: u32,
     },
     /// A `u64` value could not be represented as `usize` on this target.
@@ -128,45 +149,59 @@ pub enum SnapshotError {
     },
 }
 
-impl fmt::Display for SnapshotError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl SnapshotError {
+    /// Formats the header-level variants; returns `None` for the rest.
+    ///
+    /// Split out of [`fmt::Display`] purely to keep each formatting function
+    /// within the complexity budget.
+    fn fmt_header_issue(&self, formatter: &mut fmt::Formatter<'_>) -> Option<fmt::Result> {
         match self {
-            Self::TruncatedHeader { needed, actual } => write!(
+            Self::TruncatedHeader { needed, actual } => Some(write!(
                 formatter,
                 "snapshot header is truncated: needed {needed} bytes, got {actual}"
-            ),
-            Self::MalformedHeader => formatter.write_str("snapshot header is malformed"),
-            Self::BadMagic { actual } => write!(formatter, "bad snapshot magic: {actual:?}"),
-            Self::FormatMajorMismatch { actual, supported } => write!(
+            )),
+            Self::MalformedHeader => Some(formatter.write_str("snapshot header is malformed")),
+            Self::BadMagic { actual } => Some(write!(formatter, "bad snapshot magic: {actual:?}")),
+            Self::FormatMajorMismatch { actual, supported } => Some(write!(
                 formatter,
                 "unsupported snapshot format major: snapshot is {actual}, this reader supports {supported}"
-            ),
+            )),
             Self::FormatMinorTooNew {
                 actual,
                 max_supported,
-            } => write!(
+            } => Some(write!(
                 formatter,
                 "snapshot format minor {actual} is newer than this reader's maximum {max_supported}"
-            ),
-            Self::HeaderSizeMismatch { actual, expected } => write!(
+            )),
+            Self::HeaderSizeMismatch { actual, expected } => Some(write!(
                 formatter,
                 "header_size mismatch: snapshot reports {actual}, this reader expects {expected}"
-            ),
+            )),
             Self::NonZeroHeaderReserved => {
-                formatter.write_str("snapshot header reserved bytes are not all zero")
+                Some(formatter.write_str("snapshot header reserved bytes are not all zero"))
             }
-            Self::SectionCountTooLarge { count, max } => {
-                write!(formatter, "section count {count} exceeds maximum {max}")
-            }
-            Self::TruncatedSectionTable { needed, actual } => write!(
+            Self::SectionCountTooLarge { count, max } => Some(write!(
+                formatter,
+                "section count {count} exceeds maximum {max}"
+            )),
+            Self::TruncatedSectionTable { needed, actual } => Some(write!(
                 formatter,
                 "section table is truncated: needed {needed} bytes, got {actual}"
-            ),
-            Self::MalformedSectionTable => formatter.write_str("section table bytes are malformed"),
-            Self::NonZeroEntryChecksum { kind } => write!(
-                formatter,
-                "section {kind} entry reserved checksum bytes are not all zero"
-            ),
+            )),
+            Self::MalformedSectionTable => {
+                Some(formatter.write_str("section table bytes are malformed"))
+            }
+            _ => None,
+        }
+    }
+}
+
+impl fmt::Display for SnapshotError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(result) = self.fmt_header_issue(formatter) {
+            return result;
+        }
+        match self {
             Self::NonZeroEntryReserved { kind } => write!(
                 formatter,
                 "section {kind} entry trailing reserved bytes are not all zero"
@@ -198,10 +233,41 @@ impl fmt::Display for SnapshotError {
                 formatter,
                 "section table entry at index {index} is unsorted or overlaps its predecessor"
             ),
-            Self::DuplicateKind { kind } => write!(formatter, "duplicate section kind {kind}"),
+            Self::NonAscendingKind { kind, prev } => write!(
+                formatter,
+                "section kind {kind} is not strictly greater than its predecessor {prev}"
+            ),
+            Self::TableChecksumMismatch { expected, actual } => write!(
+                formatter,
+                "section table checksum mismatch: header records {expected:#010x}, table bytes hash to {actual:#010x}"
+            ),
+            Self::SectionChecksumMismatch {
+                kind,
+                expected,
+                actual,
+            } => write!(
+                formatter,
+                "section {kind} payload checksum mismatch: entry records {expected:#010x}, payload hashes to {actual:#010x}"
+            ),
+            Self::SectionMissing { kind } => {
+                write!(formatter, "snapshot section {kind} is missing")
+            }
             Self::UsizeOverflow { value } => {
                 write!(formatter, "u64 value {value} does not fit usize")
             }
+            // Already formatted by `fmt_header_issue`; the early return above
+            // makes these arms unreachable, and listing them explicitly keeps
+            // the match exhaustive when a variant is added.
+            Self::TruncatedHeader { .. }
+            | Self::MalformedHeader
+            | Self::BadMagic { .. }
+            | Self::FormatMajorMismatch { .. }
+            | Self::FormatMinorTooNew { .. }
+            | Self::HeaderSizeMismatch { .. }
+            | Self::NonZeroHeaderReserved
+            | Self::SectionCountTooLarge { .. }
+            | Self::TruncatedSectionTable { .. }
+            | Self::MalformedSectionTable => Ok(()),
         }
     }
 }
@@ -231,6 +297,15 @@ pub enum SectionViewError {
         /// `core::mem::align_of::<T>()` for the requested element type.
         required: usize,
     },
+    /// Payload checksum did not match the section entry's recorded value.
+    ChecksumMismatch {
+        /// Kind of the failing section.
+        kind: u32,
+        /// Checksum recorded in the section entry.
+        expected: u32,
+        /// Checksum recomputed over the payload bytes.
+        actual: u32,
+    },
 }
 
 impl fmt::Display for SectionViewError {
@@ -246,6 +321,14 @@ impl fmt::Display for SectionViewError {
             Self::AlignmentMismatch { ptr_addr, required } => write!(
                 formatter,
                 "section payload at address {ptr_addr:#x} is not aligned to {required}"
+            ),
+            Self::ChecksumMismatch {
+                kind,
+                expected,
+                actual,
+            } => write!(
+                formatter,
+                "section {kind} payload checksum mismatch: entry records {expected:#010x}, payload hashes to {actual:#010x}"
             ),
         }
     }
@@ -336,15 +419,21 @@ pub enum PlanError {
     },
     /// Computed offsets or lengths overflowed `u64` or `usize`.
     PayloadOverflow,
-    /// More sections were supplied than the v1 cap permits.
+    /// More sections were supplied than the format cap permits.
     TooManySections {
         /// Section count actually supplied.
         count: usize,
     },
-    /// Two pending sections shared the same kind.
-    DuplicateKind {
-        /// Duplicated section kind.
+    /// A pending section's kind was not strictly greater than its
+    /// predecessor's.
+    ///
+    /// v2 mandates strictly-ascending kind order in the section table, which
+    /// also makes it duplicate-free by construction.
+    NonAscendingKind {
+        /// Kind of the offending section.
         kind: u32,
+        /// Kind of the preceding section.
+        prev: u32,
     },
 }
 
@@ -357,15 +446,21 @@ impl fmt::Display for PlanError {
             ),
             Self::AlignmentTooLarge { alignment_log2 } => write!(
                 formatter,
-                "alignment_log2 {alignment_log2} exceeds the v1 maximum"
+                "alignment_log2 {alignment_log2} exceeds the format maximum"
             ),
             Self::PayloadOverflow => {
                 formatter.write_str("snapshot payload arithmetic overflowed u64 or usize")
             }
             Self::TooManySections { count } => {
-                write!(formatter, "section count {count} exceeds the v1 maximum")
+                write!(
+                    formatter,
+                    "section count {count} exceeds the format maximum"
+                )
             }
-            Self::DuplicateKind { kind } => write!(formatter, "duplicate section kind {kind}"),
+            Self::NonAscendingKind { kind, prev } => write!(
+                formatter,
+                "section kind {kind} is not strictly greater than its predecessor {prev}"
+            ),
         }
     }
 }

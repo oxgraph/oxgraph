@@ -16,6 +16,7 @@ use oxgraph_algo::breadth_first_search;
 use oxgraph_csr::{
     CsrNodeId, CsrSnapshotGraph, SNAPSHOT_KIND_CSR_OFFSETS_U32, SNAPSHOT_KIND_CSR_TARGETS_U32,
 };
+use oxgraph_layout_util::crc32c_append;
 use oxgraph_snapshot::{Snapshot, SnapshotBuilder};
 
 /// Builds a deterministic CSR ring graph of `node_count` nodes (each node
@@ -32,7 +33,7 @@ fn ring_snapshot_bytes(node_count: u32) -> Vec<u8> {
     let offsets_bytes: Vec<u8> = offsets.iter().flat_map(|word| word.to_le_bytes()).collect();
     let targets_bytes: Vec<u8> = targets.iter().flat_map(|word| word.to_le_bytes()).collect();
 
-    let mut builder = SnapshotBuilder::new();
+    let mut builder = SnapshotBuilder::new(crc32c_append);
     match builder.add_section(
         SNAPSHOT_KIND_CSR_OFFSETS_U32,
         oxgraph_csr::SNAPSHOT_CSR_SECTION_VERSION,
