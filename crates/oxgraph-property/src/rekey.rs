@@ -112,7 +112,7 @@ where
         let in_range = canonical.to_usize().is_some_and(|index| index < layer_len);
         if !in_range {
             return Err(PropertyError::SparseIndexOutOfBounds {
-                index: canonical.to_u64(),
+                index: canonical.into(),
                 len: layer_len,
             });
         }
@@ -133,13 +133,13 @@ where
             for (local, canonical) in local_to_canonical.iter().copied().enumerate() {
                 let Some(canonical_usize) = canonical.to_usize() else {
                     return Err(PropertyError::SparseIndexOutOfBounds {
-                        index: canonical.to_u64(),
+                        index: canonical.into(),
                         len: layer.len(),
                     });
                 };
                 if canonical_usize >= layer.len() {
                     return Err(PropertyError::SparseIndexOutOfBounds {
-                        index: canonical.to_u64(),
+                        index: canonical.into(),
                         len: layer.len(),
                     });
                 }
@@ -155,19 +155,19 @@ where
                 let canonical = indices.value(position);
                 let Some(canonical_usize) = canonical.to_usize() else {
                     return Err(PropertyError::SparseIndexOutOfBounds {
-                        index: canonical.to_u64(),
+                        index: canonical.into(),
                         len: layer.len(),
                     });
                 };
                 if canonical_usize >= canonical_to_local.len() {
                     return Err(PropertyError::SparseIndexOutOfBounds {
-                        index: canonical.to_u64(),
+                        index: canonical.into(),
                         len: layer.len(),
                     });
                 }
                 let Some(local) = canonical_to_local[canonical_usize] else {
                     return Err(PropertyError::SparseIndexOutOfBounds {
-                        index: canonical.to_u64(),
+                        index: canonical.into(),
                         len: layer.len(),
                     });
                 };
