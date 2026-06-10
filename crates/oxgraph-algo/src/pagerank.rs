@@ -26,6 +26,34 @@ use core::{
 
 use oxgraph_graph::ForwardGraph;
 use oxgraph_hyper::{DirectedHyperedgeIncidences, DirectedVertexHyperedges};
+
+/// Capability bundle the hypergraph `PageRank` surface requires.
+///
+/// Bundles directed vertex-to-hyperedge adjacency, directed hyperedge
+/// incidences, incidence-to-vertex resolution, and dense element/relation
+/// indexing. Blanket-implemented for every topology providing the parts, so
+/// callers never implement it directly.
+///
+/// # Performance
+///
+/// `perf: unspecified`; this is a bound bundle.
+pub trait PageRankHypergraph:
+    DirectedVertexHyperedges
+    + DirectedHyperedgeIncidences
+    + IncidenceElement
+    + ElementIndex
+    + RelationIndex
+{
+}
+
+impl<T> PageRankHypergraph for T where
+    T: DirectedVertexHyperedges
+        + DirectedHyperedgeIncidences
+        + IncidenceElement
+        + ElementIndex
+        + RelationIndex
+{
+}
 use oxgraph_topology::{
     ElementId, ElementIndex, IncidenceElement, IncidenceIndex, IncidenceWeight, RelationId,
     RelationIndex, RelationWeight,
@@ -387,11 +415,7 @@ where
 /// outgoing-incidence iterator.
 pub trait HypergraphOutgoingDistribution<H, S>
 where
-    H: DirectedVertexHyperedges
-        + DirectedHyperedgeIncidences
-        + IncidenceElement
-        + ElementIndex
-        + RelationIndex,
+    H: PageRankHypergraph,
     S: PageRankScalar,
 {
     /// Distributes `rank` from `element` to its outgoing visible relations.
@@ -445,11 +469,7 @@ where
 
 impl<H, S> HypergraphOutgoingDistribution<H, S> for Uniform
 where
-    H: DirectedVertexHyperedges
-        + DirectedHyperedgeIncidences
-        + IncidenceElement
-        + ElementIndex
-        + RelationIndex,
+    H: PageRankHypergraph,
     S: PageRankScalar,
 {
     fn distribute_from_element(
@@ -551,12 +571,7 @@ impl<'rw, 'iw, RW, IW> HyperWeighted<'rw, 'iw, RW, IW> {
 
 impl<H, RW, IW, S> HypergraphOutgoingDistribution<H, S> for HyperWeighted<'_, '_, RW, IW>
 where
-    H: DirectedVertexHyperedges
-        + DirectedHyperedgeIncidences
-        + IncidenceElement
-        + ElementIndex
-        + RelationIndex
-        + IncidenceIndex,
+    H: PageRankHypergraph + IncidenceIndex,
     RW: RelationWeight<ElementId = H::ElementId, RelationId = H::RelationId>,
     RW::Weight: IntoPageRankScalar<S>,
     IW: IncidenceWeight<
@@ -1412,11 +1427,7 @@ pub fn pagerank_hypergraph<H, D, IE, IR, S>(
     relation_ranks: &mut [S],
 ) -> Result<PageRankReport<S>, PageRankError<S>>
 where
-    H: DirectedVertexHyperedges
-        + DirectedHyperedgeIncidences
-        + IncidenceElement
-        + ElementIndex
-        + RelationIndex,
+    H: PageRankHypergraph,
     D: HypergraphOutgoingDistribution<H, S>,
     IE: Clone + IntoIterator<Item = ElementId<H>>,
     IR: Clone + IntoIterator<Item = RelationId<H>>,
@@ -1485,11 +1496,7 @@ pub fn pagerank_hypergraph_with_scratch<H, D, IE, IR, S>(
     scratch: HypergraphPageRankScratch<'_, S>,
 ) -> Result<PageRankReport<S>, PageRankError<S>>
 where
-    H: DirectedVertexHyperedges
-        + DirectedHyperedgeIncidences
-        + IncidenceElement
-        + ElementIndex
-        + RelationIndex,
+    H: PageRankHypergraph,
     D: HypergraphOutgoingDistribution<H, S>,
     IE: Clone + IntoIterator<Item = ElementId<H>>,
     IR: Clone + IntoIterator<Item = RelationId<H>>,
@@ -1574,11 +1581,7 @@ pub fn pagerank_hypergraph_with_workspace<H, D, IE, IR, S>(
     workspace: &mut HypergraphPageRankWorkspace<H, S>,
 ) -> Result<PageRankReport<S>, PageRankError<S>>
 where
-    H: DirectedVertexHyperedges
-        + DirectedHyperedgeIncidences
-        + IncidenceElement
-        + ElementIndex
-        + RelationIndex,
+    H: PageRankHypergraph,
     D: HypergraphOutgoingDistribution<H, S>,
     IE: Clone + IntoIterator<Item = ElementId<H>>,
     IR: Clone + IntoIterator<Item = RelationId<H>>,
@@ -2064,11 +2067,7 @@ fn iterate_hypergraph<H, D, IE, IR, S>(
     next_relations: &mut [S],
 ) -> Result<PageRankReport<S>, PageRankError<S>>
 where
-    H: DirectedVertexHyperedges
-        + DirectedHyperedgeIncidences
-        + IncidenceElement
-        + ElementIndex
-        + RelationIndex,
+    H: PageRankHypergraph,
     D: HypergraphOutgoingDistribution<H, S>,
     IE: Clone + IntoIterator<Item = ElementId<H>>,
     IR: Clone + IntoIterator<Item = RelationId<H>>,
