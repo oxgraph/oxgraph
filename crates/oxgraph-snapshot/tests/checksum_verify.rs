@@ -5,7 +5,7 @@
 
 use oxgraph_layout_util::crc32c_append;
 use oxgraph_snapshot::{
-    HEADER_SIZE, SECTION_ENTRY_SIZE, SectionViewError, Snapshot, SnapshotBuilder, SnapshotError,
+    HEADER_SIZE, SECTION_ENTRY_SIZE, SectionViewError, Snapshot, SnapshotError, SnapshotWriter,
     patch_section_crc,
 };
 use proptest::{prelude::*, test_runner::TestCaseError};
@@ -15,16 +15,19 @@ const KINDS: [u32; 3] = [3, 7, 9];
 
 /// Builds a three-section snapshot with distinct non-empty payloads.
 fn baseline() -> Vec<u8> {
-    let mut builder = SnapshotBuilder::new(crc32c_append);
+    let mut writer = match SnapshotWriter::new(KINDS.len(), crc32c_append) {
+        Ok(value) => value,
+        Err(error) => panic!("writer: {error:?}"),
+    };
     for (index, kind) in KINDS.iter().enumerate() {
         let payload = vec![u8::try_from(index).unwrap_or(0); 8 + index];
-        if let Err(error) = builder.add_section(*kind, 0, 0, payload) {
-            panic!("add_section({kind}): {error:?}");
+        if let Err(error) = writer.section_bytes(*kind, 0, 0, &payload) {
+            panic!("section_bytes({kind}): {error:?}");
         }
     }
-    match builder.finish() {
+    match writer.finish() {
         Ok(bytes) => bytes,
-        Err(error) => panic!("builder finish: {error:?}"),
+        Err(error) => panic!("writer finish: {error:?}"),
     }
 }
 

@@ -31,7 +31,7 @@ use oxgraph_property::{
 };
 #[cfg(feature = "build-property-arrow")]
 use oxgraph_property::{PropertyError, PropertyLayer};
-use oxgraph_snapshot::{PlanError, SnapshotBuilder};
+use oxgraph_snapshot::{PlanError, SnapshotWriter};
 
 use crate::{CsrGraph, CsrNativeGraph, CsrSnapshotIndex};
 
@@ -1204,7 +1204,7 @@ where
     Id: Clone + Copy + Into<u64> + Ord + TryInto<EdgeIndex>,
 {
     let property = encode_graph_properties(&graph.topology, layers)?;
-    export_topology_property_snapshot(&graph.topology, property)
+    export_topology_property_snapshot(&graph.topology, &property)
 }
 
 /// Exports a frozen weighted graph with external property layers.
@@ -1228,7 +1228,7 @@ where
     Id: Clone + Copy + Into<u64> + Ord + TryInto<EdgeIndex>,
 {
     let property = encode_graph_properties(&graph.topology, layers)?;
-    export_topology_property_snapshot(&graph.topology, property)
+    export_topology_property_snapshot(&graph.topology, &property)
 }
 
 /// Encodes graph property layers after relation rekeying.
@@ -1299,25 +1299,25 @@ where
     NodeIndex: LayoutIndex + CsrSnapshotIndex,
     EdgeIndex: LayoutIndex + CsrSnapshotIndex,
 {
-    let mut builder = SnapshotBuilder::new(crc32c_append);
-    builder.add_section_widths(
+    let mut writer = SnapshotWriter::new(2, crc32c_append)?;
+    writer.section_widths(
         EdgeIndex::OFFSETS_KIND,
         EdgeIndex::SECTION_VERSION,
         &topology.offsets,
     )?;
-    builder.add_section_widths(
+    writer.section_widths(
         NodeIndex::TARGETS_KIND,
         NodeIndex::SECTION_VERSION,
         &topology.targets,
     )?;
-    builder.finish().map_err(GraphBuildError::from)
+    writer.finish().map_err(GraphBuildError::from)
 }
 
 /// Exports topology, identity, and encoded property payloads.
 #[cfg(feature = "build-property-arrow")]
 fn export_topology_property_snapshot<NodeIndex, EdgeIndex>(
     topology: &FrozenTopology<NodeIndex, EdgeIndex>,
-    property: EncodedPropertySnapshot,
+    property: &EncodedPropertySnapshot,
 ) -> Result<Vec<u8>, GraphBuildError<NodeIndex, EdgeIndex>>
 where
     NodeIndex: LayoutIndex + CsrSnapshotIndex,
@@ -1330,25 +1330,25 @@ where
         )?,
         IdentityModeRecord::<EdgeIndex>::explicit_map(IdFamily::Relation, topology.edge_ids.len())?,
     ];
-    let mut builder = SnapshotBuilder::new(crc32c_append);
-    builder.add_section_widths(
+    let mut writer = SnapshotWriter::new(6, crc32c_append)?;
+    writer.section_widths(
         EdgeIndex::OFFSETS_KIND,
         EdgeIndex::SECTION_VERSION,
         &topology.offsets,
     )?;
-    builder.add_section_widths(
+    writer.section_widths(
         NodeIndex::TARGETS_KIND,
         NodeIndex::SECTION_VERSION,
         &topology.targets,
     )?;
     oxgraph_property::export::append_identity_and_property_sections(
-        &mut builder,
+        &mut writer,
         &identity_modes,
         EdgeIndex::RELATION_IDENTITY_MAP_KIND,
         &topology.edge_ids,
         property,
     )?;
-    builder.finish().map_err(GraphBuildError::from)
+    writer.finish().map_err(GraphBuildError::from)
 }
 
 #[cfg(test)]

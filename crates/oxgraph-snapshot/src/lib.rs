@@ -32,8 +32,8 @@
 //! # Cargo features
 //!
 //! - default: reader-only API; `no_std`, no allocation.
-//! - `alloc`: enables [`SnapshotBuilder`] and [`SnapshotWriter`], the owning encoders that return
-//!   encoded `Vec<u8>` bytes.
+//! - `alloc`: enables [`SnapshotWriter`], the owning write-through encoder that returns encoded
+//!   `Vec<u8>` bytes.
 //! - `std`: reserved for future mmap helpers; no effect beyond activating `alloc`.
 //!
 //! # Stability
@@ -56,8 +56,6 @@ mod container_error;
 #[cfg(kani)]
 mod proofs;
 
-#[cfg(feature = "alloc")]
-pub use crate::container::SnapshotBuilder;
 #[cfg(feature = "alloc")]
 pub use crate::container::{SectionSink, SnapshotWriter};
 pub use crate::{

@@ -22,7 +22,7 @@ checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 
 [[package]]
 name = "oxgraph-algo"
-version = "0.1.0"
+version = "0.4.0"
 dependencies = [
  "oxgraph-graph",
  "oxgraph-hyper",
@@ -31,7 +31,7 @@ dependencies = [
 
 [[package]]
 name = "oxgraph-csr"
-version = "0.1.0"
+version = "0.4.0"
 dependencies = [
  "oxgraph-graph",
  "oxgraph-layout-util",
@@ -41,21 +41,21 @@ dependencies = [
 
 [[package]]
 name = "oxgraph-graph"
-version = "0.1.0"
+version = "0.4.0"
 dependencies = [
  "oxgraph-topology",
 ]
 
 [[package]]
 name = "oxgraph-hyper"
-version = "0.1.0"
+version = "0.4.0"
 dependencies = [
  "oxgraph-topology",
 ]
 
 [[package]]
 name = "oxgraph-hyper-bcsr"
-version = "0.1.0"
+version = "0.4.0"
 dependencies = [
  "oxgraph-hyper",
  "oxgraph-layout-util",
@@ -65,7 +65,7 @@ dependencies = [
 
 [[package]]
 name = "oxgraph-layout-util"
-version = "0.1.0"
+version = "0.4.0"
 dependencies = [
  "zerocopy",
 ]
@@ -87,7 +87,7 @@ dependencies = [
 
 [[package]]
 name = "oxgraph-snapshot"
-version = "0.1.0"
+version = "0.4.0"
 dependencies = [
  "oxgraph-layout-util",
  "zerocopy",
@@ -95,7 +95,7 @@ dependencies = [
 
 [[package]]
 name = "oxgraph-topology"
-version = "0.1.0"
+version = "0.4.0"
 
 [[package]]
 name = "portable-atomic"
@@ -204,18 +204,18 @@ checksum = "e6e4313cd5fcd3dad5cafa179702e2b244f760991f45397d14d4ebf38247da75"
 
 [[package]]
 name = "zerocopy"
-version = "0.8.48"
+version = "0.8.52"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eed437bf9d6692032087e337407a86f04cd8d6a16a37199ed57949d415bd68e9"
+checksum = "ce1022995ff5ff5d841ad7d994facc23098cd40152f2c1d11cd607c6f530653f"
 dependencies = [
  "zerocopy-derive",
 ]
 
 [[package]]
 name = "zerocopy-derive"
-version = "0.8.48"
+version = "0.8.52"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "70e3cd084b1788766f53af483dd21f93881ff30d7320490ec3ef7526d203bad4"
+checksum = "1ae7f38b72ec2a254e2b87ef277cf2cd4fb97cbebf944faa6f33354da0867930"
 dependencies = [
  "proc-macro2",
  "quote",

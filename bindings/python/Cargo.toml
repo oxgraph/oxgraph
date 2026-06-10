@@ -15,15 +15,15 @@ name = "_oxgraph"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-oxgraph-algo = { version = "0.2.0", path = "../../crates/oxgraph-algo", features = ["std"] }
-oxgraph-csr = { version = "0.2.0", path = "../../crates/oxgraph-csr", features = ["build"] }
-oxgraph-graph = { version = "0.2.0", path = "../../crates/oxgraph-graph" }
-oxgraph-hyper = { version = "0.2.0", path = "../../crates/oxgraph-hyper" }
-oxgraph-hyper-bcsr = { version = "0.2.0", path = "../../crates/oxgraph-hyper-bcsr", features = [
+oxgraph-algo = { version = "0.4.0", path = "../../crates/oxgraph-algo", features = ["std"] }
+oxgraph-csr = { version = "0.4.0", path = "../../crates/oxgraph-csr", features = ["build"] }
+oxgraph-graph = { version = "0.4.0", path = "../../crates/oxgraph-graph" }
+oxgraph-hyper = { version = "0.4.0", path = "../../crates/oxgraph-hyper" }
+oxgraph-hyper-bcsr = { version = "0.4.0", path = "../../crates/oxgraph-hyper-bcsr", features = [
   "build",
 ] }
-oxgraph-snapshot = { version = "0.2.0", path = "../../crates/oxgraph-snapshot" }
-oxgraph-topology = { version = "0.2.0", path = "../../crates/oxgraph-topology" }
+oxgraph-snapshot = { version = "0.4.0", path = "../../crates/oxgraph-snapshot" }
+oxgraph-topology = { version = "0.4.0", path = "../../crates/oxgraph-topology" }
 pyo3 = { version = "0.28.3", features = ["extension-module"] }
 
 [build-dependencies]

@@ -15,7 +15,7 @@ use criterion::{
 use oxgraph_algo::breadth_first_search;
 use oxgraph_csr::{CsrNodeId, CsrSnapshotGraph, CsrSnapshotIndex};
 use oxgraph_layout_util::crc32c_append;
-use oxgraph_snapshot::{Snapshot, SnapshotBuilder};
+use oxgraph_snapshot::{Snapshot, SnapshotWriter};
 
 /// `u32` CSR offsets section kind derived from the base-plus-width scheme.
 const SNAPSHOT_KIND_CSR_OFFSETS_U32: u32 = <u32 as CsrSnapshotIndex>::OFFSETS_KIND;
@@ -36,28 +36,31 @@ fn ring_snapshot_bytes(node_count: u32) -> Vec<u8> {
     let offsets_bytes: Vec<u8> = offsets.iter().flat_map(|word| word.to_le_bytes()).collect();
     let targets_bytes: Vec<u8> = targets.iter().flat_map(|word| word.to_le_bytes()).collect();
 
-    let mut builder = SnapshotBuilder::new(crc32c_append);
-    match builder.add_section(
+    let mut writer = match SnapshotWriter::new(2, crc32c_append) {
+        Ok(value) => value,
+        Err(error) => panic!("bench writer: {error:?}"),
+    };
+    match writer.section_bytes(
         SNAPSHOT_KIND_CSR_OFFSETS_U32,
         oxgraph_csr::SNAPSHOT_CSR_SECTION_VERSION,
         2,
-        offsets_bytes,
+        &offsets_bytes,
     ) {
-        Ok(_) => {}
+        Ok(()) => {}
         Err(error) => panic!("bench offsets: {error:?}"),
     }
-    match builder.add_section(
+    match writer.section_bytes(
         SNAPSHOT_KIND_CSR_TARGETS_U32,
         oxgraph_csr::SNAPSHOT_CSR_SECTION_VERSION,
         2,
-        targets_bytes,
+        &targets_bytes,
     ) {
-        Ok(_) => {}
+        Ok(()) => {}
         Err(error) => panic!("bench targets: {error:?}"),
     }
-    match builder.finish() {
+    match writer.finish() {
         Ok(bytes) => bytes,
-        Err(error) => panic!("bench builder finish: {error:?}"),
+        Err(error) => panic!("bench writer finish: {error:?}"),
     }
 }
 

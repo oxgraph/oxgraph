@@ -9,9 +9,9 @@
 //!   constant-factor blowup.
 //! - `Snapshot::section` is `O(log s)` per lookup (binary search over the ascending kinds); benched
 //!   at the worst case (last kind).
-//! - `SnapshotBuilder::finish` is `O(s + total payload bytes)` (payload copies plus one CRC-32C
-//!   fold per section); benched with payload size held constant so the bytes-per-second number
-//!   tracks the linear-in-bytes term directly.
+//! - `SnapshotWriter` encode (`section_bytes` writes + `finish`) is `O(s + total payload bytes)`
+//!   (one streamed payload copy plus one CRC-32C fold per section); benched with payload size held
+//!   constant so the bytes-per-second number tracks the linear-in-bytes term directly.
 
 use std::hint::black_box;
 
@@ -20,23 +20,26 @@ use criterion::{
     measurement::WallTime,
 };
 use oxgraph_layout_util::crc32c_append;
-use oxgraph_snapshot::{Snapshot, SnapshotBuilder};
+use oxgraph_snapshot::{Snapshot, SnapshotWriter};
 
 /// Builds a snapshot with `count` distinct sections, each carrying
 /// `bytes_per_section` bytes. Used to size both `open` and `section`
 /// lookup benches.
 fn build_snapshot(count: u32, bytes_per_section: usize) -> Vec<u8> {
-    let mut builder = SnapshotBuilder::new(crc32c_append);
+    let mut writer = match SnapshotWriter::new(count as usize, crc32c_append) {
+        Ok(value) => value,
+        Err(error) => panic!("bench writer: {error:?}"),
+    };
     for kind in 0..count {
         let payload = vec![(kind & 0xFF) as u8; bytes_per_section];
-        match builder.add_section(kind, 0, 0, payload) {
-            Ok(_) => {}
-            Err(error) => panic!("bench builder: {error:?}"),
+        match writer.section_bytes(kind, 0, 0, &payload) {
+            Ok(()) => {}
+            Err(error) => panic!("bench writer: {error:?}"),
         }
     }
-    match builder.finish() {
+    match writer.finish() {
         Ok(bytes) => bytes,
-        Err(error) => panic!("bench builder finish: {error:?}"),
+        Err(error) => panic!("bench writer finish: {error:?}"),
     }
 }
 
@@ -85,9 +88,9 @@ fn bench_section_lookup_last(group: &mut BenchmarkGroup<'_, WallTime>) {
     }
 }
 
-/// Benchmarks `SnapshotBuilder::finish` across a range of total payload
-/// sizes to document the linear-in-bytes contract.
-fn bench_builder_finish(group: &mut BenchmarkGroup<'_, WallTime>) {
+/// Benchmarks the `SnapshotWriter` encode path across a range of total
+/// payload sizes to document the linear-in-bytes contract.
+fn bench_writer_encode(group: &mut BenchmarkGroup<'_, WallTime>) {
     for &(count, payload_size) in &[(16u32, 1024usize), (256, 1024), (1024, 1024)] {
         group.throughput(Throughput::Bytes(u64::from(count) * payload_size as u64));
         group.bench_with_input(
@@ -116,9 +119,9 @@ fn bench_container(criterion: &mut Criterion) {
         lookup_group.finish();
     }
     {
-        let mut finish_group = criterion.benchmark_group("builder_finish");
-        bench_builder_finish(&mut finish_group);
-        finish_group.finish();
+        let mut encode_group = criterion.benchmark_group("writer_encode");
+        bench_writer_encode(&mut encode_group);
+        encode_group.finish();
     }
 }
 

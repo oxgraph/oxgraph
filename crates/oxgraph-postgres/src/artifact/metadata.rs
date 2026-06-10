@@ -1,7 +1,7 @@
 //! Postgres-owned snapshot metadata section ([`SNAPSHOT_KIND_PG_METADATA`]).
 
 use oxgraph_layout_util::SnapshotWidth;
-use oxgraph_snapshot::{PlanError, Snapshot, SnapshotBuilder, SnapshotError};
+use oxgraph_snapshot::{PlanError, Snapshot, SnapshotError, SnapshotWriter};
 use zerocopy::{
     FromBytes, Immutable, IntoBytes, KnownLayout,
     byteorder::{LE, U32, U64},
@@ -140,7 +140,7 @@ pub(super) fn read_postgres_metadata(
         .copied()
 }
 
-/// Writes the Postgres metadata section into a snapshot builder.
+/// Writes the Postgres metadata section into a snapshot writer.
 ///
 /// # Errors
 ///
@@ -150,13 +150,12 @@ pub(super) fn read_postgres_metadata(
 ///
 /// This function is `O(1)`.
 pub(super) fn write_postgres_metadata_section(
-    builder: &mut SnapshotBuilder,
+    writer: &mut SnapshotWriter,
     metadata: &PostgresMetadata,
 ) -> Result<(), PlanError> {
-    builder.add_section_typed(
+    writer.section_typed(
         SNAPSHOT_KIND_PG_METADATA,
         PostgresMetadata::VERSION,
         core::slice::from_ref(metadata),
-    )?;
-    Ok(())
+    )
 }

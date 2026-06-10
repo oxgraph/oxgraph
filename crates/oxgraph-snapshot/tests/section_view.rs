@@ -5,21 +5,24 @@
 
 use oxgraph_layout_util::crc32c_append;
 use oxgraph_snapshot::{
-    PendingSection, Section, SectionViewError, Snapshot, SnapshotBuilder, SnapshotError,
-    SnapshotPlan,
+    PendingSection, Section, SectionViewError, Snapshot, SnapshotError, SnapshotPlan,
+    SnapshotWriter,
 };
 use zerocopy::byteorder::{LE, U32};
 
 #[test]
 fn try_as_slice_succeeds_when_aligned() -> Result<(), SnapshotError> {
-    let mut builder = SnapshotBuilder::new(crc32c_append);
+    let mut writer = match SnapshotWriter::new(1, crc32c_append) {
+        Ok(value) => value,
+        Err(error) => panic!("writer: {error:?}"),
+    };
     let payload: [u32; 4] = [1, 2, 3, 4];
-    if let Err(error) = builder.add_section_typed(1, 0, &payload) {
+    if let Err(error) = writer.section_typed(1, 0, &payload) {
         panic!("typed section: {error:?}");
     }
-    let bytes = match builder.finish() {
+    let bytes = match writer.finish() {
         Ok(value) => value,
-        Err(error) => panic!("builder finish: {error:?}"),
+        Err(error) => panic!("writer finish: {error:?}"),
     };
 
     let snapshot = Snapshot::open(&bytes)?;
@@ -82,13 +85,16 @@ fn try_as_slice_rejects_misaligned_pointer() -> Result<(), SnapshotError> {
 #[test]
 fn try_as_slice_rejects_misaligned_length() -> Result<(), SnapshotError> {
     let payload = b"abcde";
-    let mut builder = SnapshotBuilder::new(crc32c_append);
-    if let Err(error) = builder.add_section(1, 0, 0, payload.to_vec()) {
+    let mut writer = match SnapshotWriter::new(1, crc32c_append) {
+        Ok(value) => value,
+        Err(error) => panic!("writer: {error:?}"),
+    };
+    if let Err(error) = writer.section_bytes(1, 0, 0, payload) {
         panic!("byte section: {error:?}");
     }
-    let bytes = match builder.finish() {
+    let bytes = match writer.finish() {
         Ok(value) => value,
-        Err(error) => panic!("builder finish: {error:?}"),
+        Err(error) => panic!("writer finish: {error:?}"),
     };
 
     let snapshot = Snapshot::open(&bytes)?;

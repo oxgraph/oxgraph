@@ -6,7 +6,7 @@ use oxgraph_csr::{
 };
 use oxgraph_graph::{EdgeTargetGraph, GraphCounts, OutgoingGraph};
 use oxgraph_layout_util::crc32c_append;
-use oxgraph_snapshot::{Snapshot, SnapshotBuilder, SnapshotError};
+use oxgraph_snapshot::{Snapshot, SnapshotError, SnapshotWriter};
 
 /// `u16` CSR offsets section kind derived from the base-plus-width scheme.
 const SNAPSHOT_KIND_CSR_OFFSETS_U16: u32 = <u16 as CsrSnapshotIndex>::OFFSETS_KIND;
@@ -72,11 +72,14 @@ fn u64_words_to_bytes(words: &[u64]) -> Vec<u8> {
 fn build_csr_snapshot_from_bytes(
     offsets_kind: u32,
     targets_kind: u32,
-    offsets_bytes: Vec<u8>,
-    targets_bytes: Vec<u8>,
+    offsets_bytes: &[u8],
+    targets_bytes: &[u8],
 ) -> Vec<u8> {
-    let mut builder = SnapshotBuilder::new(crc32c_append);
-    if let Err(error) = builder.add_section(
+    let mut writer = match SnapshotWriter::new(2, crc32c_append) {
+        Ok(value) => value,
+        Err(error) => panic!("writer: {error:?}"),
+    };
+    if let Err(error) = writer.section_bytes(
         offsets_kind,
         oxgraph_csr::SNAPSHOT_CSR_SECTION_VERSION,
         0,
@@ -84,7 +87,7 @@ fn build_csr_snapshot_from_bytes(
     ) {
         panic!("offsets section: {error:?}");
     }
-    if let Err(error) = builder.add_section(
+    if let Err(error) = writer.section_bytes(
         targets_kind,
         oxgraph_csr::SNAPSHOT_CSR_SECTION_VERSION,
         0,
@@ -92,9 +95,9 @@ fn build_csr_snapshot_from_bytes(
     ) {
         panic!("targets section: {error:?}");
     }
-    match builder.finish() {
+    match writer.finish() {
         Ok(bytes) => bytes,
-        Err(error) => panic!("builder finish: {error:?}"),
+        Err(error) => panic!("writer finish: {error:?}"),
     }
 }
 
@@ -103,8 +106,8 @@ fn build_csr_snapshot(offsets: &[u32], targets: &[u32]) -> Vec<u8> {
     build_csr_snapshot_from_bytes(
         SNAPSHOT_KIND_CSR_OFFSETS_U32,
         SNAPSHOT_KIND_CSR_TARGETS_U32,
-        words_to_bytes(offsets),
-        words_to_bytes(targets),
+        &words_to_bytes(offsets),
+        &words_to_bytes(targets),
     )
 }
 
@@ -132,8 +135,8 @@ fn opens_u16_snapshot_as_csr_graph() -> Result<(), CsrSnapshotError<u16, u16>> {
     let bytes = build_csr_snapshot_from_bytes(
         SNAPSHOT_KIND_CSR_OFFSETS_U16,
         SNAPSHOT_KIND_CSR_TARGETS_U16,
-        u16_words_to_bytes(&[0, 2, 2]),
-        u16_words_to_bytes(&[1, 0]),
+        &u16_words_to_bytes(&[0, 2, 2]),
+        &u16_words_to_bytes(&[1, 0]),
     );
     let snapshot = match Snapshot::open(&bytes) {
         Ok(value) => value,
@@ -158,8 +161,8 @@ fn opens_u64_snapshot_as_csr_graph() -> Result<(), CsrSnapshotError<u64, u64>> {
     let bytes = build_csr_snapshot_from_bytes(
         SNAPSHOT_KIND_CSR_OFFSETS_U64,
         SNAPSHOT_KIND_CSR_TARGETS_U64,
-        u64_words_to_bytes(&[0, 1, 1]),
-        u64_words_to_bytes(&[1]),
+        &u64_words_to_bytes(&[0, 1, 1]),
+        &u64_words_to_bytes(&[1]),
     );
     let snapshot = match Snapshot::open(&bytes) {
         Ok(value) => value,
@@ -178,8 +181,8 @@ fn opens_mixed_u32_targets_u64_offsets() -> Result<(), CsrSnapshotError<u32, u64
     let bytes = build_csr_snapshot_from_bytes(
         SNAPSHOT_KIND_CSR_OFFSETS_U64,
         SNAPSHOT_KIND_CSR_TARGETS_U32,
-        u64_words_to_bytes(&[0, 1, 1]),
-        words_to_bytes(&[1]),
+        &u64_words_to_bytes(&[0, 1, 1]),
+        &words_to_bytes(&[1]),
     );
     let snapshot = match Snapshot::open(&bytes) {
         Ok(value) => value,
@@ -218,15 +221,21 @@ fn bfs_runs_over_snapshot_csr_graph() -> Result<(), FixtureError> {
 
 #[test]
 fn rejects_missing_offsets_section() -> Result<(), SnapshotError> {
-    let mut builder = SnapshotBuilder::new(crc32c_append);
-    if let Err(error) =
-        builder.add_section(SNAPSHOT_KIND_CSR_TARGETS_U32, 0, 2, words_to_bytes(&[0, 1]))
-    {
+    let mut writer = match SnapshotWriter::new(1, crc32c_append) {
+        Ok(value) => value,
+        Err(error) => panic!("writer: {error:?}"),
+    };
+    if let Err(error) = writer.section_bytes(
+        SNAPSHOT_KIND_CSR_TARGETS_U32,
+        0,
+        2,
+        &words_to_bytes(&[0, 1]),
+    ) {
         panic!("targets-only: {error:?}");
     }
-    let bytes = match builder.finish() {
+    let bytes = match writer.finish() {
         Ok(value) => value,
-        Err(error) => panic!("builder finish: {error:?}"),
+        Err(error) => panic!("writer finish: {error:?}"),
     };
     let snapshot = Snapshot::open(&bytes)?;
     match CsrSnapshotGraph::<u32, u32>::from_snapshot(&snapshot) {
@@ -270,8 +279,8 @@ fn rejects_wrong_target_width() -> Result<(), SnapshotError> {
     let bytes = build_csr_snapshot_from_bytes(
         SNAPSHOT_KIND_CSR_OFFSETS_U32,
         SNAPSHOT_KIND_CSR_TARGETS_U16,
-        words_to_bytes(&[0, 1]),
-        u16_words_to_bytes(&[0]),
+        &words_to_bytes(&[0, 1]),
+        &u16_words_to_bytes(&[0]),
     );
     let snapshot = Snapshot::open(&bytes)?;
     match CsrSnapshotGraph::<u32, u32>::from_snapshot(&snapshot) {
@@ -285,8 +294,8 @@ fn rejects_wrong_offset_width() -> Result<(), SnapshotError> {
     let bytes = build_csr_snapshot_from_bytes(
         SNAPSHOT_KIND_CSR_OFFSETS_U16,
         SNAPSHOT_KIND_CSR_TARGETS_U32,
-        u16_words_to_bytes(&[0, 1]),
-        words_to_bytes(&[0]),
+        &u16_words_to_bytes(&[0, 1]),
+        &words_to_bytes(&[0]),
     );
     let snapshot = Snapshot::open(&bytes)?;
     match CsrSnapshotGraph::<u32, u32>::from_snapshot(&snapshot) {

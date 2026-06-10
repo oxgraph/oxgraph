@@ -16,7 +16,7 @@ use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_m
 use oxgraph_hyper::DirectedVertexSuccessors;
 use oxgraph_hyper_bcsr::{BcsrSnapshotHypergraph, BcsrSnapshotIndex, BcsrVertexId};
 use oxgraph_layout_util::crc32c_append;
-use oxgraph_snapshot::{Snapshot, SnapshotBuilder};
+use oxgraph_snapshot::{Snapshot, SnapshotWriter};
 
 /// `u32` head offsets section kind derived from the base-plus-width scheme.
 const SNAPSHOT_KIND_BCSR_HEAD_OFFSETS_U32: u32 = <u32 as BcsrSnapshotIndex>::HEAD_OFFSETS_KIND;
@@ -147,7 +147,6 @@ fn fill_vertex_major(vertex_count: u32, words: &mut SectionWords) {
 
 /// Encodes a [`SectionWords`] into a snapshot byte buffer.
 fn encode_snapshot(words: &SectionWords) -> Vec<u8> {
-    let mut builder = SnapshotBuilder::new(crc32c_append);
     let entries: [(u32, &[u32]); 8] = [
         (SNAPSHOT_KIND_BCSR_HEAD_OFFSETS_U32, &words.head_offsets),
         (
@@ -176,19 +175,23 @@ fn encode_snapshot(words: &SectionWords) -> Vec<u8> {
             &words.vertex_incoming_hyperedges,
         ),
     ];
+    let mut writer = match SnapshotWriter::new(entries.len(), crc32c_append) {
+        Ok(value) => value,
+        Err(error) => panic!("bench writer: {error:?}"),
+    };
     for (kind, payload) in entries {
-        if let Err(error) = builder.add_section(
+        if let Err(error) = writer.section_bytes(
             kind,
             oxgraph_hyper_bcsr::SNAPSHOT_BCSR_SECTION_VERSION,
             2,
-            words_to_bytes(payload),
+            &words_to_bytes(payload),
         ) {
             panic!("section 0x{kind:04x}: {error:?}");
         }
     }
-    match builder.finish() {
+    match writer.finish() {
         Ok(bytes) => bytes,
-        Err(error) => panic!("bench builder finish: {error:?}"),
+        Err(error) => panic!("bench writer finish: {error:?}"),
     }
 }
 

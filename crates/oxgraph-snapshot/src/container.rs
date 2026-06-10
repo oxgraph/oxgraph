@@ -1,6 +1,6 @@
 //! Topology-agnostic snapshot container: format constants, byte-level header
 //! and section table, validation, reader, no-`alloc` planner, and the
-//! `alloc`-gated owning builder.
+//! `alloc`-gated write-through encoder.
 //!
 //! All public types are re-exported through the crate root; consumers should
 //! depend on the crate-level paths rather than reaching in here.
@@ -10,7 +10,7 @@
 //! `pub use topology_snapshot::*`.
 
 #[cfg(feature = "alloc")]
-use alloc::{vec, vec::Vec};
+use alloc::vec::Vec;
 use core::fmt;
 
 use oxgraph_layout_util::SnapshotWidth;
@@ -1307,255 +1307,12 @@ fn align_up_checked(value: usize, alignment_log2: u8) -> Result<usize, PlanError
     Ok(added & !mask)
 }
 
-/// One owned section pending in a [`SnapshotBuilder`].
-#[cfg(feature = "alloc")]
-#[derive(Clone, Debug)]
-struct OwnedSection {
-    /// Section kind.
-    kind: u32,
-    /// Section version.
-    version: u32,
-    /// Declared payload alignment as `log2`.
-    alignment_log2: u8,
-    /// Owned payload bytes.
-    payload: Vec<u8>,
-}
-
-/// Owning snapshot builder that produces a `Vec<u8>` on finish.
-///
-/// The builder rejects non-ascending kinds, alignment overflows, and section
-/// count overflows at `add_section*` time, so the only failure that can
-/// reach [`SnapshotBuilder::finish`] is [`PlanError::PayloadOverflow`] —
-/// when the cumulative encoded length would overflow `u64` or `usize`.
-///
-/// # Performance
-///
-/// `add_section*` methods are `O(payload bytes copied)`.
-/// [`finish`](Self::finish) is `O(s + total payload bytes)` for `s` sections.
-#[cfg(feature = "alloc")]
-#[derive(Clone, Debug)]
-#[must_use]
-pub struct SnapshotBuilder {
-    /// Owned, in-order sections.
-    sections: Vec<OwnedSection>,
-    /// Checksum fold recorded into every section entry and the header.
-    checksum: Checksum32,
-}
-
-#[cfg(feature = "alloc")]
-impl SnapshotBuilder {
-    /// Constructs an empty builder that folds checksums with `checksum`.
-    ///
-    /// v2 checksums are mandatory: every section entry records
-    /// `checksum(0, payload)` and the header records the table checksum.
-    ///
-    /// # Performance
-    ///
-    /// This function is `O(1)`.
-    pub fn new(checksum: Checksum32) -> Self {
-        Self {
-            sections: Vec::new(),
-            checksum,
-        }
-    }
-
-    /// Appends a section with the given metadata and owned payload.
-    ///
-    /// Sections must be appended in strictly-ascending `kind` order (the v2
-    /// mandate, which also rules out duplicates).
-    ///
-    /// # Errors
-    ///
-    /// Returns [`PlanError`] when `alignment_log2` is too large, when the
-    /// builder already holds the maximum permitted section count, or when
-    /// `kind` is not strictly greater than the previous section's kind.
-    ///
-    /// # Performance
-    ///
-    /// This method is `O(1)` plus the payload move.
-    pub fn add_section(
-        &mut self,
-        kind: u32,
-        version: u32,
-        alignment_log2: u8,
-        payload: Vec<u8>,
-    ) -> Result<&mut Self, PlanError> {
-        if alignment_log2 > MAX_ALIGNMENT_LOG2 {
-            return Err(PlanError::AlignmentTooLarge { alignment_log2 });
-        }
-        if self.sections.len() >= MAX_SECTION_COUNT as usize {
-            return Err(PlanError::TooManySections {
-                count: self.sections.len() + 1,
-            });
-        }
-        if let Some(prior) = self.sections.last()
-            && kind <= prior.kind
-        {
-            return Err(PlanError::NonAscendingKind {
-                kind,
-                prev: prior.kind,
-            });
-        }
-        self.sections.push(OwnedSection {
-            kind,
-            version,
-            alignment_log2,
-            payload,
-        });
-        Ok(self)
-    }
-
-    /// Appends a section whose alignment is derived from `T`.
-    ///
-    /// The payload is copied via [`zerocopy::IntoBytes`].
-    ///
-    /// # Errors
-    ///
-    /// Returns [`PlanError`] for the same reasons as
-    /// [`add_section`](Self::add_section), plus
-    /// [`PlanError::AlignmentTooLarge`] when `align_of::<T>()` exceeds
-    /// the v1 cap.
-    ///
-    /// # Performance
-    ///
-    /// This method is `O(s + payload.len() * size_of::<T>())`.
-    pub fn add_section_typed<T>(
-        &mut self,
-        kind: u32,
-        version: u32,
-        payload: &[T],
-    ) -> Result<&mut Self, PlanError>
-    where
-        T: zerocopy::IntoBytes + zerocopy::Immutable,
-    {
-        let alignment = core::mem::align_of::<T>();
-        let alignment_log2 = match u8::try_from(alignment.trailing_zeros()) {
-            Ok(value) => value,
-            Err(_error) => {
-                return Err(PlanError::AlignmentTooLarge {
-                    alignment_log2: u8::MAX,
-                });
-            }
-        };
-        if alignment_log2 > MAX_ALIGNMENT_LOG2 {
-            return Err(PlanError::AlignmentTooLarge { alignment_log2 });
-        }
-        let bytes = payload.as_bytes().to_vec();
-        self.add_section(kind, version, alignment_log2, bytes)
-    }
-
-    /// Appends a section containing explicit little-endian typed words.
-    ///
-    /// Prefer [`add_section_widths`](Self::add_section_widths), which takes a
-    /// native index slice and lowers it through `slice_to_le`, enforcing the
-    /// little-endian guarantee in the type system. This method exists for
-    /// callers that already hold portable byteorder words such as
-    /// `zerocopy::byteorder::U32<LE>`; the payload is copied via
-    /// [`zerocopy::IntoBytes`] and the alignment is derived from `T`.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`PlanError`] for the same reasons as
-    /// [`add_section_typed`](Self::add_section_typed).
-    ///
-    /// # Performance
-    ///
-    /// This method is `O(s + payload.len() * size_of::<T>())`.
-    pub fn add_section_little_endian<T>(
-        &mut self,
-        kind: u32,
-        version: u32,
-        payload: &[T],
-    ) -> Result<&mut Self, PlanError>
-    where
-        T: zerocopy::IntoBytes + zerocopy::Immutable,
-    {
-        self.add_section_typed(kind, version, payload)
-    }
-
-    /// Appends a section from a native-width index slice, lowering it to its
-    /// explicit little-endian storage words first.
-    ///
-    /// Convenience wrapper that calls `oxgraph_layout_util::build::slice_to_le` and
-    /// then [`add_section_little_endian`](Self::add_section_little_endian), so
-    /// exporters can pass native `&[u32]`-style slices without converting by
-    /// hand. Requires the `alloc` feature (it allocates the converted words).
-    ///
-    /// # Errors
-    ///
-    /// Returns [`PlanError`] for the same reasons as
-    /// [`add_section_typed`](Self::add_section_typed).
-    ///
-    /// # Performance
-    ///
-    /// This method is `O(s + payload.len())` plus one allocation for the
-    /// converted words.
-    pub fn add_section_widths<W>(
-        &mut self,
-        kind: u32,
-        version: u32,
-        values: &[W],
-    ) -> Result<&mut Self, PlanError>
-    where
-        W: SnapshotWidth,
-    {
-        let words = oxgraph_layout_util::build::slice_to_le(values);
-        self.add_section_little_endian(kind, version, &words)
-    }
-
-    /// Returns the number of pending sections.
-    ///
-    /// # Performance
-    ///
-    /// This method is `O(1)`.
-    #[must_use]
-    pub const fn section_count(&self) -> usize {
-        self.sections.len()
-    }
-
-    /// Encodes the pending sections into an owned snapshot byte vector.
-    ///
-    /// The builder enforces per-insert invariants
-    /// ([`PlanError::AlignmentTooLarge`], [`PlanError::TooManySections`],
-    /// [`PlanError::NonAscendingKind`]) on `add_section*`, so this method
-    /// only fails when the cumulative payload arithmetic overflows
-    /// (`u64`/`usize`), surfaced as [`PlanError::PayloadOverflow`].
-    ///
-    /// # Errors
-    ///
-    /// Returns [`PlanError::PayloadOverflow`] when the total encoded length
-    /// would overflow `u64` or `usize`. All other [`PlanError`] variants
-    /// are caught at `add_section*` time and cannot reach this method.
-    ///
-    /// # Performance
-    ///
-    /// This method is `O(s + total payload bytes)`.
-    pub fn finish(self) -> Result<Vec<u8>, PlanError> {
-        let pending: Vec<PendingSection<'_>> = self
-            .sections
-            .iter()
-            .map(|section| PendingSection {
-                kind: section.kind,
-                version: section.version,
-                alignment_log2: section.alignment_log2,
-                payload: section.payload.as_slice(),
-            })
-            .collect();
-
-        let plan = SnapshotPlan::new(&pending)?;
-        let needed = plan.encoded_len()?;
-        let mut out = vec![0u8; needed];
-        plan.write_into(&mut out, self.checksum)?;
-        Ok(out)
-    }
-}
-
 /// Write-through snapshot encoder that lays payload bytes out at their final
 /// offsets in a single buffer.
 ///
-/// [`SnapshotBuilder`] owns every payload and copies the whole snapshot again
-/// at finish, holding ~2x the encoded bytes at peak; this writer streams each
-/// payload directly into the final buffer instead.
+/// This is the one owning write path: each payload streams directly into the
+/// final buffer, so peak memory stays at ~1x the encoded size (an
+/// own-then-copy builder would hold ~2x at finish).
 ///
 /// The table region is reserved up-front for `max_sections` entries; sections
 /// written beyond the reservation are rejected. When fewer sections are
@@ -1563,7 +1320,7 @@ impl SnapshotBuilder {
 /// payload — the same class of never-dereferenced bytes as alignment padding
 /// (every entry offset stays in bounds and monotonic, so validation accepts
 /// the layout). Writing exactly `max_sections` sections produces bytes
-/// identical to [`SnapshotBuilder::finish`] for the same logical input.
+/// identical to [`SnapshotPlan::write_into`] for the same logical input.
 ///
 /// # Performance
 ///
@@ -1728,6 +1485,92 @@ impl SnapshotWriter {
         let mut sink = self.begin_section(kind, version, alignment_log2)?;
         sink.write_typed(records);
         sink.end()
+    }
+
+    /// Writes one whole section of raw payload bytes at the requested
+    /// alignment, copying them directly into the final buffer.
+    ///
+    /// Convenience over [`begin_section`](Self::begin_section) + one
+    /// [`SectionSink::write`] + [`SectionSink::end`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PlanError`] for the same reasons as
+    /// [`begin_section`](Self::begin_section).
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(bytes.len())` (one append plus one checksum fold).
+    pub fn section_bytes(
+        &mut self,
+        kind: u32,
+        version: u32,
+        alignment_log2: u8,
+        bytes: &[u8],
+    ) -> Result<(), PlanError> {
+        let mut sink = self.begin_section(kind, version, alignment_log2)?;
+        sink.write(bytes);
+        sink.end()
+    }
+
+    /// Writes one whole section of explicit little-endian typed words.
+    ///
+    /// Prefer [`section_widths`](Self::section_widths), which takes a native
+    /// index slice and lowers it through `slice_to_le`, enforcing the
+    /// little-endian guarantee in the type system. This method exists for
+    /// callers that already hold portable byteorder words such as
+    /// `zerocopy::byteorder::U32<LE>`; the records are copied via
+    /// [`zerocopy::IntoBytes`] and the alignment is derived from `T`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PlanError`] for the same reasons as
+    /// [`section_typed`](Self::section_typed).
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(records.len() * size_of::<T>())`.
+    pub fn section_little_endian<T>(
+        &mut self,
+        kind: u32,
+        version: u32,
+        records: &[T],
+    ) -> Result<(), PlanError>
+    where
+        T: zerocopy::IntoBytes + zerocopy::Immutable,
+    {
+        self.section_typed(kind, version, records)
+    }
+
+    /// Writes one whole section from a native-width index slice, lowering it
+    /// to its explicit little-endian storage words first.
+    ///
+    /// Convenience wrapper that calls
+    /// `oxgraph_layout_util::build::slice_to_le` and then
+    /// [`section_little_endian`](Self::section_little_endian), so exporters
+    /// can pass native `&[u32]`-style slices without converting by hand.
+    /// Requires the `alloc` feature (it allocates the converted words).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PlanError`] for the same reasons as
+    /// [`section_typed`](Self::section_typed).
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(values.len())` plus one allocation for the
+    /// converted words.
+    pub fn section_widths<W>(
+        &mut self,
+        kind: u32,
+        version: u32,
+        values: &[W],
+    ) -> Result<(), PlanError>
+    where
+        W: SnapshotWidth,
+    {
+        let words = oxgraph_layout_util::build::slice_to_le(values);
+        self.section_little_endian(kind, version, &words)
     }
 
     /// Returns the number of sections recorded so far.
