@@ -41,12 +41,13 @@ pub(crate) mod defs;
 /// Bumped to `2` when the derived [`crate::index::BaseIndex`] postings became a
 /// persisted, borrow-at-open structure. Bumped to `3` for the OXGT container
 /// v2 break: the section kinds below were renumbered contiguously in emission
-/// order (the container mandates strictly-ascending kinds) and the container
-/// itself carries mandatory per-section checksums, so a v2-format base is
-/// doubly unreadable — the container rejects its v1 bytes before this header
-/// is even reached, and a hypothetical re-encoding would still trip this
-/// version check into [`crate::DbError::UnsupportedFormat`]. There is no
-/// rebuild-from-records fallback on the production path.
+/// order (the container mandates strictly-ascending kinds), the container
+/// itself carries mandatory per-section checksums, and the v1/v2 whole-base
+/// trailer section was deleted (the per-section checksums supersede it), so a
+/// v2-format base is doubly unreadable — the container rejects its v1 bytes
+/// before this header is even reached, and a hypothetical re-encoding would
+/// still trip this version check into [`crate::DbError::UnsupportedFormat`].
+/// There is no rebuild-from-records fallback on the production path.
 ///
 /// # Performance
 ///
@@ -64,9 +65,9 @@ pub(crate) const OXGDB_SECTION_VERSION: u32 = 1;
 /// Upper bound on the section kinds one base snapshot emits — the freeze
 /// path's [`oxgraph_snapshot::SnapshotWriter`] table reservation: header (1) +
 /// catalog (7) + topology (5) + properties (2) + index postings (6) + string
-/// table (1) + trailer (1). Exceeding it fails the freeze loudly, so adding a
-/// section kind without bumping this constant is caught by every test.
-pub(crate) const MAX_BASE_SECTION_KINDS: usize = 23;
+/// table (1). Exceeding it fails the freeze loudly, so adding a section kind
+/// without bumping this constant is caught by every test.
+pub(crate) const MAX_BASE_SECTION_KINDS: usize = 22;
 
 /// Sentinel `u64` standing in for "no relation type" inside a [`RelationWire`].
 /// Valid canonical ids are allocated from `1`, so `0` can never collide with a
@@ -246,16 +247,6 @@ pub(crate) const SECTION_INDEX_EQUALITY_TEXT: u32 = 0x0314;
 ///
 /// `perf: unspecified`; this is a compile-time constant.
 pub(crate) const SECTION_STRING_TABLE: u32 = 0x0315;
-/// Base content-integrity trailer: a single [`BaseTrailer`] written last in a
-/// base file (and carrying the band's largest kind so it also sorts last),
-/// holding the CRC-32C over the base's payload region (see
-/// [`crate::freeze`]). Open recomputes it to fault truncation or in-place
-/// corruption into [`crate::DbError::InvalidStore`] before any borrow.
-///
-/// # Performance
-///
-/// `perf: unspecified`; this is a compile-time constant.
-pub(crate) const SECTION_BASE_TRAILER: u32 = 0x0316;
 
 /// Every section kind this store emits, listed in EMISSION ORDER (the order
 /// `freeze::freeze_view` writes sections). Used by the compile-time band and
@@ -265,7 +256,7 @@ pub(crate) const SECTION_BASE_TRAILER: u32 = 0x0316;
 /// # Performance
 ///
 /// `perf: unspecified`; this is a compile-time constant.
-pub(crate) const ALL_SECTION_KINDS: [u32; 23] = [
+pub(crate) const ALL_SECTION_KINDS: [u32; 22] = [
     SECTION_DB_HEADER,
     SECTION_CATALOG_ROLES,
     SECTION_CATALOG_LABELS,
@@ -288,7 +279,6 @@ pub(crate) const ALL_SECTION_KINDS: [u32; 23] = [
     SECTION_INDEX_EQUALITY,
     SECTION_INDEX_EQUALITY_TEXT,
     SECTION_STRING_TABLE,
-    SECTION_BASE_TRAILER,
 ];
 
 // Every OXGDB section kind must live inside the container's reserved
@@ -689,27 +679,6 @@ pub(crate) struct EqualityDirEntry {
     pub(crate) members_len: U64<LE>,
 }
 
-/// Base content-integrity trailer record. Exactly one occupies
-/// [`SECTION_BASE_TRAILER`], written last in a base file. Its `crc32c` is the
-/// CRC-32C over the base's payload region — every byte from the end of the
-/// container's section table to the start of this trailer's payload (see
-/// [`crate::freeze`] for why the header and table are excluded: their bytes
-/// are covered by the OXGT v2 `table_crc32c` instead, and they are patched
-/// *after* this CRC is stamped). Open recomputes it to reject a truncated or
-/// in-place-corrupted base before borrowing any section.
-///
-/// # Performance
-///
-/// Copying is `O(1)`; the record is a fixed-size value type.
-#[derive(Clone, Copy, Debug, FromBytes, Immutable, IntoBytes, KnownLayout)]
-#[repr(C)]
-pub(crate) struct BaseTrailer {
-    /// CRC-32C over the base's payload region preceding this trailer payload.
-    pub(crate) crc32c: U32<LE>,
-    /// Reserved word; must be zero in this format version.
-    pub(crate) reserved: U32<LE>,
-}
-
 /// Eight-byte magic identifying a [`SuperblockRecord`].
 ///
 /// # Performance
@@ -1081,7 +1050,6 @@ mod tests {
         assert_eq!(size_of::<PostingDirEntry>(), 24);
         // 6 * 8 (u64 fields) + 2 * 4 (u32 fields incl. reserved) = 56.
         assert_eq!(size_of::<EqualityDirEntry>(), 6 * 8 + 2 * 4);
-        assert_eq!(size_of::<BaseTrailer>(), 8);
         // 8 (magic) + 5 * 8 (u64 fields) + 4 * 4 (u32 fields incl. pad) = 64.
         assert_eq!(size_of::<SuperblockRecord>(), 64);
         // 3 * 8 (u64 fields) + 4 * 4 (u32 fields) = 40.

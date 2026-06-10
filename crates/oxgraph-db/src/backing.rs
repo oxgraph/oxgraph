@@ -23,19 +23,22 @@
 //! extract the typed slices and is never stored — it is not [`yoke::Yokeable`].
 //! No raw-pointer reinterpretation is used, so `unsafe_code = forbid` holds.
 //!
-//! Before any borrow, [`Base::open`] verifies the container's `table_crc32c`
-//! (via [`oxgraph_snapshot::Snapshot::open_checked`]) and the
-//! [`wire::SECTION_BASE_TRAILER`] CRC over the payload region
-//! ([`freeze::base_payload_region`]). Together those scans cover every base
-//! byte, so a truncated or corrupted base surfaces as a clean
-//! [`StorageError`] at open.
+//! Integrity verification is FUSED into the bind pass. [`Base::open`] first
+//! verifies the container's `table_crc32c` (via
+//! [`oxgraph_snapshot::Snapshot::open_checked`]); then every section the
+//! attach binds has its payload CRC-32C verified exactly once, inside the
+//! bind funnels ([`freeze::typed_records`], [`freeze::raw_blob`], and
+//! [`posting_slices`] below) as the section is borrowed. There is no separate
+//! whole-base CRC scan: one pass over the bound payload bytes covers the
+//! store, and a truncated or corrupted base surfaces as a clean
+//! [`StorageError`] naming the failing section at open.
 //!
 //! # Performance
 //!
 //! `perf: unspecified`; this module defines the backing primitive and the
-//! `O(base bytes)` open-time CRC verification plus `O(1)` slice extraction. The
-//! [`BaseView`] accessors are `O(log n)` binary searches over the canonically
-//! sorted record arrays.
+//! open-time bind pass (`O(base bytes)` total — each bound section is
+//! checksum-folded once as it is borrowed). The [`BaseView`] accessors are
+//! `O(log n)` binary searches over the canonically sorted record arrays.
 
 use std::{fs::File, io::Read, ops::Deref, path::Path};
 
@@ -440,39 +443,42 @@ pub(crate) struct Base {
 }
 
 impl Base {
-    /// Opens a base file, verifying its content CRC before borrowing any section.
+    /// Opens a base file, verifying integrity at bind: the container's table
+    /// checksum first, then every bound section's payload CRC as it is
+    /// borrowed.
     ///
-    /// The base CRC is verified FIRST: the [`wire::SECTION_BASE_TRAILER`] record
-    /// is read, the CRC over `bytes[..trailer_payload_offset]` is recomputed and
-    /// compared, and a mismatch is rejected as [`StorageError::InvalidStore`] before
-    /// the [`Yoke`] attach. Only then is the [`BaseView`] attached:
-    /// [`oxgraph_snapshot::Snapshot`] is opened inside the closure to extract the
-    /// typed slices and build the owned catalog/header, and is dropped there.
+    /// The [`BaseView`] is attached inside [`Yoke::try_attach_to_cart`]:
+    /// [`oxgraph_snapshot::Snapshot`] is opened (checked) inside the closure
+    /// to extract the typed slices and build the owned catalog/header, and is
+    /// dropped there. Each section's payload CRC is verified exactly once by
+    /// the bind funnels; a mismatch is rejected as
+    /// [`StorageError::InvalidStore`] naming the failing section kind.
     ///
     /// # Errors
     ///
     /// Returns [`StorageError::NotFound`] when the file is absent, [`StorageError::Io`] on
     /// an IO failure, and [`StorageError::InvalidStore`] when the base is malformed,
-    /// the trailer is missing, or the CRC does not match.
+    /// the table checksum fails, or a bound section's payload CRC does not match.
     ///
     /// # Performance
     ///
-    /// This function is `O(base bytes)`.
+    /// This function is `O(base bytes)`: one fused pass that checksums each
+    /// bound section as it is borrowed.
     pub(crate) fn open(path: &Path, force_owned: bool) -> Result<Self, StorageError> {
         let backing = open_backing(path, force_owned)?;
         Self::attach(backing)
     }
 
     /// Attaches a base view directly over already-owned `bytes`, bypassing file
-    /// IO. This exercises the exact CRC-verify + Yoke-attach + slice-extraction
-    /// path of [`Self::open`] without touching the filesystem, so miri (whose
-    /// isolation blocks `File::open`) can certify the borrow code over the owned
-    /// backing.
+    /// IO. This exercises the exact verify-at-bind + Yoke-attach +
+    /// slice-extraction path of [`Self::open`] without touching the filesystem,
+    /// so miri (whose isolation blocks `File::open`) can certify the borrow
+    /// code over the owned backing.
     ///
     /// # Errors
     ///
     /// Returns [`StorageError::InvalidStore`] when the bytes are malformed, the
-    /// trailer is missing, or the CRC does not match.
+    /// table checksum fails, or a bound section's payload CRC does not match.
     ///
     /// # Performance
     ///
@@ -482,18 +488,19 @@ impl Base {
         Self::attach(Backing::owned(bytes))
     }
 
-    /// Verifies the base CRC over `backing` and attaches a borrowing view.
+    /// Attaches a borrowing view over `backing`, verifying integrity at bind
+    /// (table checksum via [`Snapshot::open_checked`], then each bound
+    /// section's payload CRC inside the bind funnels).
     ///
     /// # Errors
     ///
-    /// Returns [`StorageError::InvalidStore`] when CRC verification or section
-    /// extraction fails.
+    /// Returns [`StorageError::InvalidStore`] when checksum verification or
+    /// section extraction fails.
     ///
     /// # Performance
     ///
     /// This function is `O(base bytes)`.
-    fn attach(backing: Backing) -> Result<Self, StorageError> {
-        verify_base_crc(&backing)?;
+    pub(crate) fn attach(backing: Backing) -> Result<Self, StorageError> {
         let cart = Box::new(BaseCart { bytes: backing });
         let yoke = Yoke::try_attach_to_cart(cart, |cart: &BaseCart| attach_view(&cart.bytes))?;
         Ok(Self { yoke })
@@ -510,65 +517,34 @@ impl Base {
     }
 }
 
-/// Verifies the container table checksum and the
-/// [`wire::SECTION_BASE_TRAILER`] CRC over the payload region.
-///
-/// Opens `bytes` with [`Snapshot::open_checked`] (rejecting any header or
-/// section-table corruption via the v2 `table_crc32c`), reads the trailer
-/// record, recomputes the CRC over the payload region — the same
-/// [`freeze::base_payload_region`] range [`crate::freeze::freeze_view`]
-/// checksums — and compares.
-///
-/// # Errors
-///
-/// Returns [`StorageError::InvalidStore`] when the bytes are malformed, the trailer
-/// is missing or truncated, or the recorded CRC does not match the recomputed
-/// one.
-///
-/// # Performance
-///
-/// This function is `O(base bytes)` for the single CRC scan.
-fn verify_base_crc(bytes: &[u8]) -> Result<(), StorageError> {
-    let snapshot = Snapshot::open_checked(bytes, crc::checksum_append)
-        .map_err(|error| StorageError::invalid_store(error.to_string()))?;
-    let trailer_section = snapshot
-        .section(wire::SECTION_BASE_TRAILER)
-        .ok_or_else(|| StorageError::invalid_store("base is missing its content trailer"))?;
-    let trailer = wire::BaseTrailer::ref_from_prefix(trailer_section.bytes())
-        .map(|(record, _rest)| record)
-        .map_err(|_error| StorageError::invalid_store("base trailer payload is truncated"))?;
-    let covered_range = freeze::base_payload_region(bytes)?;
-    let covered = bytes
-        .get(covered_range)
-        .ok_or_else(|| StorageError::invalid_store("base trailer offset out of bounds"))?;
-    let recomputed = crc::checksum(covered);
-    if recomputed == trailer.crc32c.get() {
-        Ok(())
-    } else {
-        Err(StorageError::invalid_store("base content CRC mismatch"))
-    }
-}
-
-/// Opens the snapshot over `bytes` and extracts the borrowed [`BaseView`].
+/// Opens the snapshot over `bytes` (checked: the v2 `table_crc32c` is
+/// verified) and extracts the borrowed [`BaseView`], verifying each bound
+/// section's payload CRC exactly once via the bind funnels.
 ///
 /// Called only inside [`Yoke::try_attach_to_cart`]; the [`oxgraph_snapshot::Snapshot`]
-/// it opens is dropped at the end of this function and is never stored.
+/// it opens is dropped at the end of this function and is never stored. This is
+/// the ONLY place sections are bound, so the funnel verification here is the
+/// single integrity pass per open — post-open reads use the borrowed slices
+/// the view holds and never re-verify.
 ///
 /// # Errors
 ///
-/// Returns [`StorageError::InvalidStore`] when the bytes are malformed, a section is
-/// not borrowable as its typed slice, the header is missing, the format version
-/// is unsupported, or the property array is not sorted by `(subject_kind,
-/// subject_id, key)` (the canonical order [`crate::wire::encode_subject`]
-/// produces and [`crate::overlay::BaseRecords`] materializes in).
+/// Returns [`StorageError::InvalidStore`] when the bytes are malformed, the table
+/// checksum fails, a section's payload CRC does not match (the message names
+/// the failing kind), a section is not borrowable as its typed slice, the
+/// header is missing, the format version is unsupported, or the property array
+/// is not sorted by `(subject_kind, subject_id, key)` (the canonical order
+/// [`crate::wire::encode_subject`] produces and [`crate::overlay::BaseRecords`]
+/// materializes in).
 ///
 /// # Performance
 ///
-/// This function is `O(catalog + name bytes + properties)`; the bulk arrays are
-/// borrowed in `O(1)` and the property-sort check is one `O(properties)` scan.
+/// This function is `O(base bytes)`: each bound section is checksum-folded
+/// once as it is borrowed, the catalog decode is `O(catalog + name bytes)`,
+/// and the property-sort check is one `O(properties)` scan.
 fn attach_view(bytes: &[u8]) -> Result<BaseView<'_>, StorageError> {
-    let snapshot =
-        Snapshot::open(bytes).map_err(|error| StorageError::invalid_store(error.to_string()))?;
+    let snapshot = Snapshot::open_checked(bytes, crc::checksum_append)
+        .map_err(|error| StorageError::invalid_store(error.to_string()))?;
 
     let headers =
         freeze::typed_records::<wire::DbHeaderRecord>(&snapshot, wire::SECTION_DB_HEADER)?;
@@ -583,7 +559,7 @@ fn attach_view(bytes: &[u8]) -> Result<BaseView<'_>, StorageError> {
     }
     let header = DbHeader::from_record(header_record);
 
-    let string_table = freeze::raw_blob(&snapshot, wire::SECTION_STRING_TABLE);
+    let string_table = freeze::raw_blob(&snapshot, wire::SECTION_STRING_TABLE)?;
     let defs = freeze::typed_records::<U64<LE>>(&snapshot, wire::SECTION_CATALOG_DEFS)?;
     let catalog = freeze::decode_catalog(&snapshot, string_table, defs)
         .map_err(|error| StorageError::invalid_store(error.to_string()))?;
@@ -613,7 +589,7 @@ fn attach_view(bytes: &[u8]) -> Result<BaseView<'_>, StorageError> {
             wire::SECTION_RELATION_LABELS,
         )?,
         properties,
-        property_text: freeze::raw_blob(&snapshot, wire::SECTION_PROPERTY_TEXT),
+        property_text: freeze::raw_blob(&snapshot, wire::SECTION_PROPERTY_TEXT)?,
         index,
         catalog,
         header,
@@ -626,14 +602,16 @@ fn attach_view(bytes: &[u8]) -> Result<BaseView<'_>, StorageError> {
 ///
 /// # Errors
 ///
-/// Returns [`StorageError::InvalidStore`] when a posting section's frame is malformed,
-/// a directory or pool cannot be reinterpreted as its typed slice, or a directory
-/// entry slices outside its pool.
+/// Returns [`StorageError::InvalidStore`] when a posting section's payload CRC does
+/// not match, its frame is malformed, a directory or pool cannot be
+/// reinterpreted as its typed slice, or a directory entry slices outside its
+/// pool.
 ///
 /// # Performance
 ///
-/// This function is `O(directory entries)` for the bounds validation; the borrows
-/// themselves are `O(1)`.
+/// This function is `O(posting payload bytes + directory entries)`: each
+/// posting section is checksum-folded once at bind, then bounds-validated; the
+/// borrows themselves are `O(1)`.
 fn attach_index<'a>(snapshot: &Snapshot<'a>) -> Result<BorrowedBaseIndex<'a>, StorageError> {
     let (label_dir, label_pool) = posting_slices(snapshot, wire::SECTION_INDEX_LABEL_POSTINGS)?;
     let (relation_type_dir, relation_type_pool) =
@@ -643,7 +621,7 @@ fn attach_index<'a>(snapshot: &Snapshot<'a>) -> Result<BorrowedBaseIndex<'a>, St
     let (relation_incidence_dir, relation_incidence_pool) =
         posting_slices(snapshot, wire::SECTION_INDEX_RELATION_INCIDENCES)?;
     let (equality_dir, equality_pool) = posting_slices(snapshot, wire::SECTION_INDEX_EQUALITY)?;
-    let equality_text = freeze::raw_blob(snapshot, wire::SECTION_INDEX_EQUALITY_TEXT);
+    let equality_text = freeze::raw_blob(snapshot, wire::SECTION_INDEX_EQUALITY_TEXT)?;
     BorrowedBaseIndex::from_sections(
         label_dir,
         label_pool,
@@ -664,14 +642,20 @@ fn attach_index<'a>(snapshot: &Snapshot<'a>) -> Result<BorrowedBaseIndex<'a>, St
 /// pool `[U64<LE>]` slice, or two empty slices when the section is absent (the
 /// store omits empty posting maps).
 ///
+/// This is a bind funnel like [`freeze::typed_records`]: it verifies the
+/// section's payload CRC-32C before splitting, and it is called only from
+/// [`attach_index`] — once per posting section per open.
+///
 /// # Errors
 ///
-/// Returns [`StorageError::InvalidStore`] when the frame prefix is malformed or a
-/// region cannot be reinterpreted as its typed slice.
+/// Returns [`StorageError::InvalidStore`] when the payload checksum does not match
+/// the section entry (the message names the failing kind), the frame prefix is
+/// malformed, or a region cannot be reinterpreted as its typed slice.
 ///
 /// # Performance
 ///
-/// This function is `O(1)`.
+/// This function is `O(payload bytes)`: one checksum fold, then an `O(1)`
+/// split.
 #[expect(
     clippy::type_complexity,
     reason = "the directory `[T]` and value-pool `[U64<LE>]` slices are returned together as one framed section's two regions"
@@ -686,6 +670,9 @@ where
     let Some(section) = snapshot.section(kind) else {
         return Ok((&[], &[]));
     };
+    section
+        .verify(crc::checksum_append)
+        .map_err(|error| StorageError::invalid_store(error.to_string()))?;
     let (dir_bytes, pool_bytes) = freeze::split_posting_section(section.bytes())?;
     let dir = <[T]>::ref_from_bytes(dir_bytes)
         .map_err(|_error| StorageError::invalid_store("posting directory is not a whole array"))?;
@@ -782,7 +769,7 @@ mod tests {
     }
 
     /// The owned backing borrows the canonical reads from an in-memory buffer.
-    /// This drives `verify_base_crc` + the Yoke attach + every surviving
+    /// This drives the verify-at-bind Yoke attach + every surviving
     /// [`BaseView`] accessor with NO filesystem IO, so it is the path miri
     /// exercises (miri isolation blocks `File::open`).
     #[test]
@@ -824,8 +811,9 @@ mod tests {
     /// A base whose header records an unsupported OXGDB format version is
     /// rejected at open with [`StorageError::UnsupportedFormat`] — the "no legacy
     /// reader, no rebuild fallback" contract for the persisted-index format bump.
-    /// The format byte is patched and the trailer CRC re-stamped over the new
-    /// prefix, so the failure is the version check, not a CRC mismatch.
+    /// The format byte is patched and the header section's entry CRC (plus the
+    /// table CRC) re-stamped, so the failure is the version check, not a
+    /// checksum mismatch.
     #[test]
     fn unsupported_format_version_is_rejected() {
         use zerocopy::IntoBytes;
@@ -845,13 +833,14 @@ mod tests {
         let version_field = size_of::<zerocopy::byteorder::U32<LE>>();
         bytes[header_offset..header_offset + version_field]
             .copy_from_slice(zerocopy::byteorder::U32::<LE>::new(bogus).as_bytes());
-        // Re-stamp the trailer CRC over the patched payload region so the
-        // version check (not the CRC) is what rejects the base.
-        let covered = freeze::base_payload_region(&bytes).expect("payload region resolves");
-        let trailer_payload_offset = covered.end;
-        let crc = crate::crc::checksum(&bytes[covered]);
-        bytes[trailer_payload_offset..trailer_payload_offset + version_field]
-            .copy_from_slice(zerocopy::byteorder::U32::<LE>::new(crc).as_bytes());
+        // Re-stamp the patched header section's entry CRC (and the table CRC)
+        // so the version check (not the checksum) is what rejects the base.
+        oxgraph_snapshot::patch_section_crc(
+            &mut bytes,
+            wire::SECTION_DB_HEADER,
+            crate::crc::checksum_append,
+        )
+        .expect("re-stamp patched header section");
 
         let result = Base::open_owned_bytes(bytes).map(|_base| ());
         assert!(
@@ -864,18 +853,70 @@ mod tests {
         );
     }
 
-    /// Corrupting one byte of the covered region makes the base attach fail with
-    /// a CRC mismatch before any borrow. Driven in memory so it runs under miri.
+    /// Flipping ANY payload byte of ANY section makes the attach fail with a
+    /// checksum error naming the failing kind — the bind funnels verify every
+    /// bound section's CRC at open, so no section payload byte is uncovered.
+    /// Driven in memory so it runs under miri.
     #[test]
-    fn corrupt_covered_byte_fails_attach() {
-        let mut bytes = small_base_bytes();
-        // Flip a byte well inside the covered prefix (the container header). The
-        // trailer payload is the final 8 bytes; this index is safely before it.
-        bytes[16] ^= 0xFF;
+    fn corrupt_section_payload_fails_attach_naming_kind() {
+        let pristine = small_base_bytes();
+        // Collect every section's (kind, payload offset, payload length); the
+        // snapshot borrow must end before the bytes are mutated.
+        let sections: Vec<(u32, usize, usize)> = {
+            let snapshot = Snapshot::open(&pristine).expect("reopen frozen base");
+            snapshot
+                .sections()
+                .map(|section| {
+                    (
+                        section.kind(),
+                        section.bytes().as_ptr().addr() - pristine.as_ptr().addr(),
+                        section.bytes().len(),
+                    )
+                })
+                .collect()
+        };
+        assert!(!sections.is_empty(), "frozen base has sections");
+        for (kind, offset, len) in sections {
+            // Flip the first and last byte of the section's payload.
+            for position in [offset, offset + len - 1] {
+                let mut bytes = pristine.clone();
+                bytes[position] ^= 0xFF;
+                assert_checksum_rejects(bytes, kind);
+            }
+        }
+    }
+
+    /// Asserts that attaching `bytes` fails with a payload-checksum error
+    /// naming section `kind`.
+    fn assert_checksum_rejects(bytes: Vec<u8>, kind: u32) {
         let result = Base::open_owned_bytes(bytes).map(|_base| ());
+        let Err(StorageError::InvalidStore { message }) = result else {
+            panic!("corrupt section {kind:#06X} must fail attach, got {result:?}");
+        };
         assert!(
-            matches!(result, Err(StorageError::InvalidStore { .. })),
-            "corrupt base must fail, got {result:?}",
+            message.contains(&format!("section {kind} payload checksum mismatch")),
+            "checksum error must name section {kind:#06X}, got: {message}",
+        );
+    }
+
+    /// Flipping a byte inside the section TABLE fails the attach via the
+    /// header's `table_crc32c` ([`Snapshot::open_checked`]) before any section
+    /// is bound. The flipped byte is an entry's `version` word, which the
+    /// structural open does not interpret, so the table checksum is the check
+    /// that rejects it.
+    #[test]
+    fn corrupt_table_byte_fails_attach() {
+        let mut bytes = small_base_bytes();
+        // First entry's `version` field: offset (8) + length (8) + kind (4) = 20
+        // bytes into the first table entry.
+        bytes[oxgraph_snapshot::HEADER_SIZE + 20] ^= 0xFF;
+        let result = Base::open_owned_bytes(bytes).map(|_base| ());
+        let Err(StorageError::InvalidStore { message }) = result else {
+            panic!("corrupt section table must fail attach, got {result:?}");
+        };
+        assert!(
+            message.contains("table checksum mismatch"),
+            "table corruption must fail the table checksum, got: {message}",
         );
     }
 

@@ -49,7 +49,7 @@ use the raw value.
 | | | | `SNAPSHOT_KIND_PG_INBOUND_OFFSETS_BASE` (pins `u32` → `0x0205`) | `0x0204` |
 | | | | `SNAPSHOT_KIND_PG_INBOUND_TARGETS_BASE` (pins `u32` → `0x0209`) | `0x0208` |
 | | | | `SNAPSHOT_KIND_PG_METADATA` (widthless) | `0x020C` |
-| `DATABASE_BAND` | `0x0300..0x0400` | `oxgraph-db` | `SECTION_DB_HEADER` … `SECTION_BASE_TRAILER` (23 widthless kinds, emission order; see `crates/oxgraph-db/src/wire.rs`) | `0x0300..=0x0316` |
+| `DATABASE_BAND` | `0x0300..0x0400` | `oxgraph-db` | `SECTION_DB_HEADER` … `SECTION_STRING_TABLE` (22 widthless kinds, emission order; see `crates/oxgraph-db/src/wire.rs`) | `0x0300..=0x0315` |
 | custom | `0x0400..` | applications | `CUSTOM_BASE` | `0x0400` |
 
 ## Per-exporter emission order (ascending-kind proof)

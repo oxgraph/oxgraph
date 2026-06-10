@@ -4,8 +4,10 @@
 //! isolate the two terms:
 //!
 //! * `db_open_over_base` opens stores whose data is fully FOLDED into the base (empty log tail) at
-//!   growing base sizes — the open cost rises with the base (the `O(base)` term: mmap/CRC verify +
-//!   `BaseRecords`/`BaseIndex` build).
+//!   growing base sizes — the open cost rises with the base (the `O(base)` term: mmap + the bind
+//!   pass that checksums each bound section once as it is borrowed + `BaseRecords`/`BaseIndex`
+//!   build). Integrity verification is fused into the bind pass — there is no separate whole-base
+//!   CRC scan — so the constant factor is one checksum fold per bound payload byte.
 //! * `db_open_over_log_tail` opens a small base with a growing UNFOLDED delta-log tail of committed
 //!   single-element frames — the open cost rises with the log tail (the `O(log-tail)` term: WAL
 //!   replay folding the frames into the overlay).

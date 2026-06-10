@@ -1,26 +1,25 @@
-//! OXGDB v1 base freeze: encode a merged state view into typed zero-copy
-//! `DATABASE_BAND` sections, and the borrowing decoders the base attach reuses.
+//! OXGDB base freeze: encode a merged state view into typed zero-copy
+//! `DATABASE_BAND` sections, and the borrowing bind funnels the base attach
+//! reuses.
 //!
 //! Each component — header, catalog, topology, properties — persists as its own
 //! typed section described in [`crate::wire`]. [`freeze_view`] writes a complete
 //! base file from any [`StateView`] (an empty overlay for `create`, a merged
-//! base+overlay fold for `checkpoint`), finishing with the
-//! [`wire::SECTION_BASE_TRAILER`] CRC. The decoders below ([`typed_records`],
-//! [`raw_blob`], [`decode_catalog`]) borrow the fixed records straight from the
-//! mapped bytes and are shared with [`crate::backing`].
+//! base+overlay fold for `checkpoint`). Integrity is the OXGT v2 container's:
+//! the writer stamps a mandatory CRC-32C on every section entry plus the
+//! header's `table_crc32c`; there is no separate whole-base checksum.
 //!
-//! The trailer CRC covers the base's PAYLOAD REGION — every byte from the end
-//! of the container's section table to the start of the trailer's own payload
-//! (see [`base_payload_region`]). The container header and section table are
-//! deliberately excluded: the OXGT v2 format checksums them itself (the
-//! header's `table_crc32c`, verified at open), and the trailer's own table
-//! entry is re-patched *after* the trailer payload is stamped, so including
-//! the table in the trailer CRC would be circular.
+//! The bind funnels below ([`typed_records`], [`raw_blob`]) borrow the fixed
+//! records straight from the mapped bytes and are shared with
+//! [`crate::backing`]. Each funnel verifies its section's payload CRC before
+//! borrowing, so a section is verified exactly once — at the bind the open
+//! path performs — and never again on the read path (the attached view holds
+//! the borrowed slices).
 //!
 //! # Performance
 //!
-//! [`freeze_view`] is `O(catalog + topology + properties)` plus one
-//! `O(base bytes)` trailer CRC scan.
+//! [`freeze_view`] is `O(catalog + topology + properties)`; the per-section
+//! checksums are folded in-stream as each section is written.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -131,14 +130,24 @@ fn read_str(table: &[u8], offset: u32, len: u32) -> Result<String, DbError> {
 /// Borrows a typed record slice from a section, or an empty slice when the
 /// section is absent (the store omits empty sections).
 ///
+/// This is a bind funnel: it verifies the section's payload CRC-32C (the OXGT
+/// v2 per-section checksum) before borrowing. It is called only on the
+/// open/attach paths (`crate::backing::attach_view` and [`decode_catalog`]
+/// inside it), once per section kind, and never per query — the attached
+/// `BaseView` holds the returned slices, so post-open reads bypass this
+/// function entirely. Together with the funnels in [`crate::backing`] that
+/// gives exactly-once verification of every bound section per open.
+///
 /// # Errors
 ///
-/// Returns [`DbError::InvalidStore`] when the section bytes cannot be borrowed
-/// as a `T` slice.
+/// Returns [`StorageError::InvalidStore`] when the payload checksum does not
+/// match the section entry (the message names the failing kind) or when the
+/// section bytes cannot be borrowed as a `T` slice.
 ///
 /// # Performance
 ///
-/// This function is `O(1)`.
+/// This function is `O(payload bytes)`: one checksum fold, then an `O(1)`
+/// borrow.
 pub(crate) fn typed_records<'view, T>(
     snapshot: &Snapshot<'view>,
     kind: u32,
@@ -148,6 +157,9 @@ where
 {
     snapshot.section(kind).map_or(Ok(&[]), |section| {
         section
+            .verify(crc::checksum_append)
+            .map_err(|error| StorageError::invalid_store(error.to_string()))?;
+        section
             .try_as_slice::<T>()
             .map_err(|error| StorageError::invalid_store(error.to_string()))
     })
@@ -155,13 +167,29 @@ where
 
 /// Borrows a raw byte blob from a section, or an empty slice when absent.
 ///
+/// Like [`typed_records`], this is a bind funnel: the section's payload
+/// CRC-32C is verified before the bytes are borrowed, and it is called only
+/// on the open/attach paths, once per section kind per open.
+///
+/// # Errors
+///
+/// Returns [`StorageError::InvalidStore`] when the payload checksum does not
+/// match the section entry (the message names the failing kind).
+///
 /// # Performance
 ///
-/// This function is `O(1)`.
-pub(crate) fn raw_blob<'view>(snapshot: &Snapshot<'view>, kind: u32) -> &'view [u8] {
-    snapshot
-        .section(kind)
-        .map_or(&[][..], |section| section.bytes())
+/// This function is `O(payload bytes)`: one checksum fold, then an `O(1)`
+/// borrow.
+pub(crate) fn raw_blob<'view>(
+    snapshot: &Snapshot<'view>,
+    kind: u32,
+) -> Result<&'view [u8], StorageError> {
+    snapshot.section(kind).map_or(Ok(&[][..]), |section| {
+        section
+            .verify(crc::checksum_append)
+            .map_err(|error| StorageError::invalid_store(error.to_string()))?;
+        Ok(section.bytes())
+    })
 }
 
 /// Adds a typed record section, skipping it when empty so the open path can
@@ -208,8 +236,9 @@ fn add_blob(builder: &mut SnapshotWriter, kind: u32, blob: &[u8]) -> Result<(), 
 }
 
 /// Encodes a merged state `view` (plus durable `stamps`) into deterministic
-/// OXGDB base bytes, finishing with a [`wire::SECTION_BASE_TRAILER`] whose
-/// CRC-32C covers the base's payload region (see [`append_base_trailer`]).
+/// OXGDB base bytes. Integrity comes from the OXGT v2 container alone: the
+/// writer stamps a CRC-32C on every section entry and the header's
+/// `table_crc32c`; the open path re-verifies each section once at bind.
 ///
 /// `create` freezes an empty overlay over an empty base; `checkpoint` freezes a
 /// merged base+overlay fold. Either way the input is one [`StateView`], so a
@@ -220,13 +249,12 @@ fn add_blob(builder: &mut SnapshotWriter, kind: u32, blob: &[u8]) -> Result<(), 
 /// # Errors
 ///
 /// Returns [`DbError::InvalidStore`] when a length exceeds the `u32` wire
-/// bounds, section planning fails, or the trailer cannot be located after
-/// encoding.
+/// bounds or section planning fails.
 ///
 /// # Performance
 ///
-/// This function is `O(catalog + topology + properties)`; the trailer pass adds
-/// one extra `O(base bytes)` CRC scan.
+/// This function is `O(catalog + topology + properties)`; the per-section
+/// checksums are folded in-stream as each section is written.
 pub(crate) fn freeze_view(view: &impl StateView, stamps: FreezeStamps) -> Result<Vec<u8>, DbError> {
     let mut builder = SnapshotWriter::new(wire::MAX_BASE_SECTION_KINDS, crc::checksum_append)
         .map_err(|error| DbError::invalid_store(error.to_string()))?;
@@ -237,104 +265,8 @@ pub(crate) fn freeze_view(view: &impl StateView, stamps: FreezeStamps) -> Result
     encode_properties(&mut builder, view)?;
     encode_index(&mut builder, view)?;
     add_blob(&mut builder, wire::SECTION_STRING_TABLE, &strings.bytes)?;
-    // The trailer is added LAST so its payload is the final region in the byte
-    // stream; its CRC then covers the entire prefix before it. The CRC field is
-    // a placeholder zero here and is patched after `finish` lays the bytes out.
-    add_typed(
-        &mut builder,
-        wire::SECTION_BASE_TRAILER,
-        &[wire::BaseTrailer {
-            crc32c: U32::new(0),
-            reserved: U32::new(0),
-        }],
-    )?;
-    let mut bytes = builder
+    builder
         .finish()
-        .map_err(|error| DbError::invalid_store(error.to_string()))?;
-    append_base_trailer(&mut bytes)?;
-    Ok(bytes)
-}
-
-/// Returns the byte range of the base's payload region the trailer CRC
-/// covers: from the end of the container's parsed section table (including
-/// any never-referenced table slack the writer reserved) to the start of the
-/// trailer section's payload.
-///
-/// The container header and section table are excluded on purpose: the OXGT
-/// v2 header `table_crc32c` covers the table, and both the trailer's own
-/// entry checksum and the table checksum are re-patched *after* the trailer
-/// payload is stamped (see [`append_base_trailer`]), so they cannot be part
-/// of the trailer CRC's input without circularity. The payload offset is
-/// located by the address delta between the trailer section's borrowed
-/// payload and the buffer base (no pointer reinterpretation,
-/// `unsafe_code = forbid` preserved).
-///
-/// # Errors
-///
-/// Returns [`StorageError::InvalidStore`] when the bytes cannot be opened,
-/// the trailer section is missing, or its payload is shorter than a
-/// [`wire::BaseTrailer`].
-///
-/// # Performance
-///
-/// This function is `O(s)` for `s` sections (one structural open).
-pub(crate) fn base_payload_region(bytes: &[u8]) -> Result<core::ops::Range<usize>, StorageError> {
-    let snapshot =
-        Snapshot::open(bytes).map_err(|error| StorageError::invalid_store(error.to_string()))?;
-    let trailer = snapshot
-        .section(wire::SECTION_BASE_TRAILER)
-        .ok_or_else(|| StorageError::invalid_store("base is missing its content trailer"))?;
-    if trailer.bytes().len() < size_of::<wire::BaseTrailer>() {
-        return Err(StorageError::invalid_store(
-            "base trailer payload is truncated",
-        ));
-    }
-    let table_end = oxgraph_snapshot::HEADER_SIZE
-        + snapshot.section_count() * oxgraph_snapshot::SECTION_ENTRY_SIZE;
-    let payload_offset = trailer.bytes().as_ptr().addr() - bytes.as_ptr().addr();
-    if payload_offset < table_end {
-        return Err(StorageError::invalid_store(
-            "base trailer payload precedes the section table end",
-        ));
-    }
-    Ok(table_end..payload_offset)
-}
-
-/// Patches the [`wire::SECTION_BASE_TRAILER`] record in already-encoded base
-/// `bytes` with the CRC-32C over the base's payload region
-/// ([`base_payload_region`]), then restores the v2 container invariants the
-/// patch broke.
-///
-/// Writing the CRC into the trailer payload invalidates the trailer entry's
-/// own `crc32c` (stamped over a zero placeholder at encode time), so the last
-/// step calls [`oxgraph_snapshot::patch_section_crc`] to recompute that one
-/// entry's checksum and the header's `table_crc32c`. Ordering matters: the
-/// covered payload region is final before the CRC is computed, and only
-/// table/header bytes (outside the covered region) change afterwards.
-///
-/// # Errors
-///
-/// Returns [`DbError::InvalidStore`] when the encoded bytes cannot be
-/// reopened, the trailer section is missing, or its payload is shorter than a
-/// [`wire::BaseTrailer`].
-///
-/// # Performance
-///
-/// This function is `O(base bytes)` for the single CRC scan over the payload
-/// region plus one `O(s)` re-open for the entry patch.
-fn append_base_trailer(bytes: &mut [u8]) -> Result<(), DbError> {
-    let covered = base_payload_region(bytes)?;
-    let payload_offset = covered.end;
-    let crc = crc::checksum(
-        bytes
-            .get(covered)
-            .ok_or_else(|| DbError::invalid_store("base trailer offset out of bounds"))?,
-    );
-    let crc_field = bytes
-        .get_mut(payload_offset..payload_offset + size_of::<U32<LE>>())
-        .ok_or_else(|| DbError::invalid_store("base trailer crc field out of bounds"))?;
-    crc_field.copy_from_slice(U32::<LE>::new(crc).as_bytes());
-    oxgraph_snapshot::patch_section_crc(bytes, wire::SECTION_BASE_TRAILER, crc::checksum_append)
         .map_err(|error| DbError::invalid_store(error.to_string()))
 }
 
@@ -1108,18 +1040,19 @@ fn decode_index_def(record: &wire::DefWire, defs: &[U64<LE>]) -> Result<IndexDef
 
 #[cfg(test)]
 mod tests {
-    use zerocopy::FromBytes;
-
     use super::*;
     use crate::overlay::test_support::base_view_from_ops;
 
-    /// Frozen base bytes carry a [`wire::SECTION_BASE_TRAILER`] whose recorded
-    /// CRC equals a fresh CRC-32C recomputed over the payload region — the
-    /// exact check [`crate::backing::Base::open`] performs — and the v2
-    /// container invariants (table checksum, per-section checksums including
-    /// the re-patched trailer entry) all hold after the trailer patch.
+    /// Frozen base bytes satisfy every v2 container integrity invariant the
+    /// open path relies on: the header's table checksum holds
+    /// ([`Snapshot::open_checked`]) and every section's payload checksum holds
+    /// ([`Snapshot::verify_all`]). Every emitted kind is one of
+    /// [`wire::ALL_SECTION_KINDS`] and the writer's table reservation
+    /// ([`wire::MAX_BASE_SECTION_KINDS`]) is respected, so the bind funnels
+    /// verify exactly the sections the freeze stamped — no whole-base trailer
+    /// exists or is needed.
     #[test]
-    fn freeze_emits_base_trailer_with_validating_crc() {
+    fn freeze_emits_checksummed_sections() {
         let (base, overlay) = base_view_from_ops();
         let view = crate::overlay::MergedState::new(&base, &overlay);
         let bytes = freeze_view(
@@ -1136,26 +1069,21 @@ mod tests {
             .expect("reopen frozen base with table checksum");
         snapshot
             .verify_all(crc::checksum_append)
-            .expect("every section payload checksum holds after the trailer patch");
-        let trailer_section = snapshot
-            .section(wire::SECTION_BASE_TRAILER)
-            .expect("frozen base has a trailer section");
-
-        let trailer = wire::BaseTrailer::ref_from_bytes(trailer_section.bytes())
-            .expect("trailer payload is a BaseTrailer");
-        assert_eq!(
-            trailer.reserved.get(),
-            0,
-            "trailer reserved word must be zero"
+            .expect("every section payload checksum holds");
+        assert!(
+            snapshot.section_count() <= wire::MAX_BASE_SECTION_KINDS,
+            "frozen base exceeds the writer's table reservation",
         );
-
-        let covered = base_payload_region(&bytes).expect("payload region resolves");
-        let recomputed = crc::checksum(&bytes[covered]);
-        assert_eq!(
-            trailer.crc32c.get(),
-            recomputed,
-            "stored trailer CRC must cover the payload region before its payload",
-        );
-        assert_ne!(recomputed, 0, "non-empty payload region has a non-zero CRC");
+        for section in snapshot.sections() {
+            assert!(
+                wire::ALL_SECTION_KINDS.contains(&section.kind()),
+                "frozen base emitted an unregistered section kind {:#06X}",
+                section.kind(),
+            );
+            assert!(
+                !section.bytes().is_empty(),
+                "empty sections are omitted, not emitted",
+            );
+        }
     }
 }

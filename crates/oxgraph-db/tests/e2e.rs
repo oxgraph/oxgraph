@@ -868,9 +868,10 @@ fn oxql_graph_walk_rejects_invalid_queries() -> Result<(), TestError> {
     Ok(())
 }
 
-/// Three-way durability contract (a): any mutation to the base bytes after
-/// create fails the next open with `InvalidStore` — the `SECTION_BASE_TRAILER`
-/// CRC catches it before any borrow.
+/// Three-way durability contract (a): flipping ANY payload byte of ANY base
+/// section fails the next open with `InvalidStore` — every bound section's
+/// CRC-32C is verified once at bind, before any borrow — and flipping a
+/// section-TABLE byte fails the checked open via the header's `table_crc32c`.
 #[test]
 fn corrupt_base_bytes_fail_open() -> Result<(), TestError> {
     let path = temp_path("corrupt-base");
@@ -883,11 +884,51 @@ fn corrupt_base_bytes_fail_open() -> Result<(), TestError> {
 
     // The live base is named by the superblock; after one checkpoint it is base-1.
     let base_path = path.join("base-1.oxgdb");
-    let mut bytes = std::fs::read(&base_path)?;
-    // Flip a byte well inside the covered prefix (the container header).
-    bytes[16] ^= 0xFF;
-    std::fs::write(&base_path, &bytes)?;
+    let pristine = std::fs::read(&base_path)?;
 
+    // Enumerate every section's payload range via the container; the snapshot
+    // borrow must end before the file is rewritten.
+    let sections: Vec<(u32, usize, usize)> = {
+        let snapshot =
+            oxgraph_snapshot::Snapshot::open(&pristine).expect("reopen frozen base container");
+        snapshot
+            .sections()
+            .map(|section| {
+                (
+                    section.kind(),
+                    section.bytes().as_ptr().addr() - pristine.as_ptr().addr(),
+                    section.bytes().len(),
+                )
+            })
+            .collect()
+    };
+    assert!(!sections.is_empty(), "frozen base has sections");
+
+    for (kind, offset, len) in sections {
+        // Flip the first and last byte of the section's payload.
+        for position in [offset, offset + len - 1] {
+            let mut bytes = pristine.clone();
+            bytes[position] ^= 0xFF;
+            std::fs::write(&base_path, &bytes)?;
+            assert!(
+                matches!(
+                    Db::open(&path),
+                    Err(DbError::Storage(
+                        oxgraph_db::StorageError::InvalidStore { .. }
+                    ))
+                ),
+                "corrupt payload byte at {position} in section {kind:#06X} must fail open",
+            );
+        }
+    }
+
+    // Flip a byte inside the section TABLE: the first entry's `version` word
+    // (offset 8 + length 8 + kind 4 = 20 bytes into the entry), which the
+    // structural open does not interpret, so the table checksum is the check
+    // that rejects it.
+    let mut bytes = pristine;
+    bytes[oxgraph_snapshot::HEADER_SIZE + 20] ^= 0xFF;
+    std::fs::write(&base_path, &bytes)?;
     assert!(
         matches!(
             Db::open(&path),
@@ -895,8 +936,9 @@ fn corrupt_base_bytes_fail_open() -> Result<(), TestError> {
                 oxgraph_db::StorageError::InvalidStore { .. }
             ))
         ),
-        "corrupt base must fail open with InvalidStore",
+        "corrupt section-table byte must fail open via the table checksum",
     );
+
     clean(&path)?;
     Ok(())
 }

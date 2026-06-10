@@ -34,9 +34,9 @@ macro_rules! widths {
 /// `oxgraph-db`'s kinds are crate-private; they are assigned contiguously from
 /// the band base in emission order and pinned to `DATABASE_BAND` by a
 /// compile-time check in `crates/oxgraph-db/src/wire.rs` (`SECTION_DB_HEADER
-/// 0x0300` through `SECTION_BASE_TRAILER 0x0316`). Mirror that count here when
+/// 0x0300` through `SECTION_STRING_TABLE 0x0315`). Mirror that count here when
 /// the database band changes.
-const DATABASE_KIND_COUNT: u32 = 23;
+const DATABASE_KIND_COUNT: u32 = 22;
 
 /// Returns every persisted section kind in the registry.
 fn all_registry_kinds() -> Vec<u32> {
@@ -89,6 +89,6 @@ fn registry_kinds_are_pairwise_distinct() {
             window[0],
         );
     }
-    // 6 CSR + 24 BCSR + 18 property + 4 Postgres + 23 database kinds.
-    assert_eq!(kinds.len(), 75, "registry table lost or gained an entry");
+    // 6 CSR + 24 BCSR + 18 property + 4 Postgres + 22 database kinds.
+    assert_eq!(kinds.len(), 74, "registry table lost or gained an entry");
 }

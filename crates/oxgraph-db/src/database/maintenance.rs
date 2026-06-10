@@ -8,8 +8,9 @@ use super::{
     open::{base_file, create_empty_log, delta_file, file_len, write_superblock},
 };
 use crate::{
-    DbError,
-    backing::Base,
+    DbError, StorageError,
+    backing::{self, Base},
+    crc,
     freeze::{self, FreezeStamps},
     lock::WriterLock,
     storage, wal,
@@ -109,21 +110,33 @@ impl Db {
         self.checkpoint_policy = policy;
     }
 
-    /// Validates the current handle by re-reading the superblock and verifying
-    /// the live base's content CRC.
+    /// Validates the current handle with the strongest offline check:
+    /// re-reads the superblock, verifies the live base's container integrity
+    /// in full ([`oxgraph_snapshot::Snapshot::open_checked`] for the table
+    /// checksum, then [`oxgraph_snapshot::Snapshot::verify_all`] over EVERY
+    /// section — a mismatch names the failing section kind), and finally
+    /// attaches the base to run the structural bind checks (format version,
+    /// property sort order, posting bounds).
     ///
     /// # Errors
     ///
-    /// Returns [`DbError`] when the superblock or base fails validation.
+    /// Returns [`DbError`] when the superblock or base fails validation; a
+    /// checksum failure names the failing section.
     ///
     /// # Performance
     ///
-    /// This method is `O(base bytes)`.
+    /// This method is `O(base bytes)`: one `verify_all` sweep plus one
+    /// verify-at-bind attach (two checksum passes over the base).
     pub fn validate(&self) -> Result<(), DbError> {
         wal::read_superblock(&self.root)?;
-        Base::open(&self.root.join(base_file(self.base_generation)), false)
-            .map(|_base| ())
-            .map_err(DbError::from)
+        let backing =
+            backing::open_backing(&self.root.join(base_file(self.base_generation)), false)?;
+        let snapshot = oxgraph_snapshot::Snapshot::open_checked(&backing, crc::checksum_append)
+            .map_err(|error| StorageError::invalid_store(error.to_string()))?;
+        snapshot
+            .verify_all(crc::checksum_append)
+            .map_err(|error| StorageError::invalid_store(error.to_string()))?;
+        Base::attach(backing).map(|_base| ()).map_err(DbError::from)
     }
 
     /// Validates an OXGDB database at `path`.
