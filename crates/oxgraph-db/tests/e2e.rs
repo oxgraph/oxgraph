@@ -1554,3 +1554,47 @@ struct FixtureIds {
     /// Hypergraph projection index ID.
     hyper_projection_index: oxgraph_db::IndexId,
 }
+
+/// The borrowed read surface returns the same values as the owned one, with
+/// `Cow::Borrowed` for folded values and shared text payloads either way.
+#[test]
+fn borrowed_reads_match_owned() -> Result<(), DbError> {
+    let path = temp_path("borrowed-reads");
+    let mut database = Db::create(&path)?;
+    let ((element, name_key), _outcome) = database.write(|writer| {
+        let name_key = writer.register_property_key(
+            "name",
+            oxgraph_db::PropertyFamily::Element,
+            PropertyType::Text,
+        )?;
+        let element = writer.create_element()?;
+        writer.set(
+            PropertySubject::Element(element),
+            oxgraph_db::Key::<oxgraph_db::Text>::from_id(name_key),
+            "Alice",
+        )?;
+        Ok((element, name_key))
+    })?;
+
+    // Overlay-resident (unfolded) value: owned and borrowed agree.
+    let reader = database.reader();
+    let subject = PropertySubject::Element(element);
+    assert_eq!(
+        reader.property(subject, name_key),
+        reader
+            .value(subject, name_key)
+            .map(std::borrow::Cow::into_owned)
+    );
+    assert_eq!(reader.text(subject, name_key).as_deref(), Some("Alice"));
+
+    // Folded value: the borrowed arm borrows from the base.
+    database.compact()?;
+    let reader = database.reader();
+    assert!(matches!(
+        reader.value(subject, name_key),
+        Some(std::borrow::Cow::Borrowed(_))
+    ));
+    assert_eq!(reader.text(subject, name_key).as_deref(), Some("Alice"));
+    let _ = std::fs::remove_dir_all(&path);
+    Ok(())
+}
