@@ -34,7 +34,10 @@
 //! shapes and borrows the slices); every overlay delta mutator is `O(log overlay
 //! change)`; every merged lookup is `O(log n + matches + overlay change)`.
 
-use std::collections::{BTreeMap, BTreeSet, btree_map};
+use std::{
+    collections::{BTreeMap, BTreeSet, btree_map},
+    sync::Arc,
+};
 
 use zerocopy::byteorder::{LE, U64};
 
@@ -42,10 +45,23 @@ use crate::{
     DbError, ElementId, IncidenceId, LabelId, PropertyKeyId, PropertySubject, RelationId,
     RelationTypeId,
     overlay::StateView,
-    state::{ElementRecord, IncidenceRecord, RelationRecord},
+    state::{ElementRecord, IncidenceRecord, LabelSet, RelationRecord},
     value::{PropertyType, PropertyValue},
     wire,
 };
+
+/// A shared, copy-on-write posting set inside an [`OverlayIndex`] delta map.
+///
+/// Cloning an [`OverlayIndex`] (the writer seeds from its parent's frozen
+/// index) clones each map entry as an `Arc` increment instead of deep-copying
+/// the member set; the first mutation of a shared posting copies it once via
+/// [`Arc::make_mut`].
+///
+/// # Performance
+///
+/// Cloning is `O(1)`; mutating through [`Arc::make_mut`] adds a one-time
+/// `O(posting)` copy when the set is still shared.
+type SharedSet<M> = Arc<BTreeSet<M>>;
 
 /// Derived equality posting key: a `(property key, value)` pair whose posting is
 /// the set of subjects carrying exactly that value under that key.
@@ -56,8 +72,8 @@ use crate::{
 ///
 /// # Performance
 ///
-/// Cloning is `O(value length)` for text and `O(1)` otherwise; comparing is the
-/// same.
+/// Cloning is `O(1)` (text values are shared `Arc<str>`); comparing is
+/// `O(value length)` for text and `O(1)` otherwise.
 type EqualityKey = (PropertyKeyId, PropertyValue);
 
 /// A borrowed-or-owned id posting: either a reference to one generation's owned
@@ -273,8 +289,8 @@ impl OwnedBaseIndex {
     ) -> Self {
         let mut label_members: BTreeMap<LabelId, BTreeSet<ElementId>> = BTreeMap::new();
         for record in elements.values() {
-            for label in &record.labels {
-                label_members.entry(*label).or_default().insert(record.id);
+            for label in record.labels.iter() {
+                label_members.entry(label).or_default().insert(record.id);
             }
         }
         let mut relation_type_members: BTreeMap<RelationTypeId, BTreeSet<RelationId>> =
@@ -331,8 +347,8 @@ impl OwnedBaseIndex {
     pub(crate) fn from_state(view: &impl StateView) -> Self {
         let mut label_members: BTreeMap<LabelId, BTreeSet<ElementId>> = BTreeMap::new();
         for record in view.elements() {
-            for label in &record.labels {
-                label_members.entry(*label).or_default().insert(record.id);
+            for label in record.labels.iter() {
+                label_members.entry(label).or_default().insert(record.id);
             }
         }
         let mut relation_type_members: BTreeMap<RelationTypeId, BTreeSet<RelationId>> =
@@ -433,7 +449,7 @@ fn equality_entry_key(entry: &wire::EqualityDirEntry, text: &[u8]) -> Result<Equ
                 .ok_or_else(|| DbError::invalid_store("equality index text out of bounds"))?;
             let string = core::str::from_utf8(bytes)
                 .map_err(|_error| DbError::invalid_store("equality index text is not UTF-8"))?;
-            PropertyValue::Text(string.to_owned())
+            PropertyValue::Text(Arc::from(string))
         }
     };
     Ok((key, value))
@@ -950,32 +966,39 @@ pub(crate) fn indexes_agree(left: BaseIndex<'_>, right: BaseIndex<'_>) -> bool {
 /// Because a subject can be in at most one state per posting key, `added` and
 /// `removed` for the same posting key are disjoint after every mutator.
 ///
+/// The posting sets are [`SharedSet`]s (Arc-backed, copy-on-write): cloning a
+/// whole `OverlayIndex` — the writer seeds from its parent's frozen index on
+/// every `begin_write` — clones each map entry as an `Arc` increment, and only
+/// the postings a writer actually touches are copied (via [`Arc::make_mut`]).
+///
 /// # Performance
 ///
-/// Construction is `O(1)`; each mutator is `O(log overlay change + value
-/// length)`.
+/// Construction is `O(1)`. Cloning is `O(postings)` map entries with `O(1)`
+/// per posting (no member set is deep-copied). Each mutator is `O(log overlay
+/// change + value length)`, plus a one-time `O(posting)` copy-on-write when
+/// the touched posting is still shared with a parent overlay.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct OverlayIndex {
     /// Label postings the overlay adds, by label.
-    label_added: BTreeMap<LabelId, BTreeSet<ElementId>>,
+    label_added: BTreeMap<LabelId, SharedSet<ElementId>>,
     /// Label postings the overlay removes (tombstoned element), by label.
-    label_removed: BTreeMap<LabelId, BTreeSet<ElementId>>,
+    label_removed: BTreeMap<LabelId, SharedSet<ElementId>>,
     /// Relation-type postings the overlay adds, by relation type.
-    relation_type_added: BTreeMap<RelationTypeId, BTreeSet<RelationId>>,
+    relation_type_added: BTreeMap<RelationTypeId, SharedSet<RelationId>>,
     /// Relation-type postings the overlay removes, by relation type.
-    relation_type_removed: BTreeMap<RelationTypeId, BTreeSet<RelationId>>,
+    relation_type_removed: BTreeMap<RelationTypeId, SharedSet<RelationId>>,
     /// Equality postings the overlay adds, by `(key, value)`.
-    equality_added: BTreeMap<EqualityKey, BTreeSet<PropertySubject>>,
+    equality_added: BTreeMap<EqualityKey, SharedSet<PropertySubject>>,
     /// Equality postings the overlay removes, by `(key, value)`.
-    equality_removed: BTreeMap<EqualityKey, BTreeSet<PropertySubject>>,
+    equality_removed: BTreeMap<EqualityKey, SharedSet<PropertySubject>>,
     /// Element→incidence adjacency the overlay adds, by element.
-    element_incidence_added: BTreeMap<ElementId, BTreeSet<IncidenceId>>,
+    element_incidence_added: BTreeMap<ElementId, SharedSet<IncidenceId>>,
     /// Element→incidence adjacency the overlay removes, by element.
-    element_incidence_removed: BTreeMap<ElementId, BTreeSet<IncidenceId>>,
+    element_incidence_removed: BTreeMap<ElementId, SharedSet<IncidenceId>>,
     /// Relation→incidence adjacency the overlay adds, by relation.
-    relation_incidence_added: BTreeMap<RelationId, BTreeSet<IncidenceId>>,
+    relation_incidence_added: BTreeMap<RelationId, SharedSet<IncidenceId>>,
     /// Relation→incidence adjacency the overlay removes, by relation.
-    relation_incidence_removed: BTreeMap<RelationId, BTreeSet<IncidenceId>>,
+    relation_incidence_removed: BTreeMap<RelationId, SharedSet<IncidenceId>>,
 }
 
 impl OverlayIndex {
@@ -1007,10 +1030,7 @@ impl OverlayIndex {
     /// This method is `O(log overlay change + value length)`.
     fn add_equality(&mut self, subject: PropertySubject, key: PropertyKeyId, value: PropertyValue) {
         remove_posting(&mut self.equality_removed, (key, value.clone()), &subject);
-        self.equality_added
-            .entry((key, value))
-            .or_default()
-            .insert(subject);
+        Arc::make_mut(self.equality_added.entry((key, value)).or_default()).insert(subject);
     }
 
     /// Records that `subject` no longer carries `(key, value)`: removes the
@@ -1026,10 +1046,7 @@ impl OverlayIndex {
         value: PropertyValue,
     ) {
         remove_posting(&mut self.equality_added, (key, value.clone()), &subject);
-        self.equality_removed
-            .entry((key, value))
-            .or_default()
-            .insert(subject);
+        Arc::make_mut(self.equality_removed.entry((key, value)).or_default()).insert(subject);
     }
 
     /// Records the membership transition of one property set: the subject leaves
@@ -1081,7 +1098,7 @@ impl OverlayIndex {
     /// This method is `O(log overlay change)`.
     pub(crate) fn on_add_element_label(&mut self, element: ElementId, label: LabelId) {
         remove_posting(&mut self.label_removed, label, &element);
-        self.label_added.entry(label).or_default().insert(element);
+        Arc::make_mut(self.label_added.entry(label).or_default()).insert(element);
     }
 
     /// Records that `incidence` (in `relation`, on `element`) now exists: it joins
@@ -1097,15 +1114,9 @@ impl OverlayIndex {
         element: ElementId,
     ) {
         remove_posting(&mut self.element_incidence_removed, element, &incidence);
-        self.element_incidence_added
-            .entry(element)
-            .or_default()
-            .insert(incidence);
+        Arc::make_mut(self.element_incidence_added.entry(element).or_default()).insert(incidence);
         remove_posting(&mut self.relation_incidence_removed, relation, &incidence);
-        self.relation_incidence_added
-            .entry(relation)
-            .or_default()
-            .insert(incidence);
+        Arc::make_mut(self.relation_incidence_added.entry(relation).or_default()).insert(incidence);
     }
 
     /// Records that `relation`'s type changed from `previous` to `new_type`:
@@ -1126,10 +1137,7 @@ impl OverlayIndex {
             self.remove_relation_type(relation, previous);
         }
         remove_posting(&mut self.relation_type_removed, new_type, &relation);
-        self.relation_type_added
-            .entry(new_type)
-            .or_default()
-            .insert(relation);
+        Arc::make_mut(self.relation_type_added.entry(new_type).or_default()).insert(relation);
     }
 
     /// Records that `relation` left `relation_type`'s posting.
@@ -1139,9 +1147,7 @@ impl OverlayIndex {
     /// This method is `O(log overlay change)`.
     fn remove_relation_type(&mut self, relation: RelationId, relation_type: RelationTypeId) {
         remove_posting(&mut self.relation_type_added, relation_type, &relation);
-        self.relation_type_removed
-            .entry(relation_type)
-            .or_default()
+        Arc::make_mut(self.relation_type_removed.entry(relation_type).or_default())
             .insert(relation);
     }
 
@@ -1155,15 +1161,12 @@ impl OverlayIndex {
     pub(crate) fn on_tombstone_element(
         &mut self,
         element: ElementId,
-        labels: &BTreeSet<LabelId>,
+        labels: &LabelSet,
         properties: &BTreeMap<PropertyKeyId, &PropertyValue>,
     ) {
-        for label in labels {
-            remove_posting(&mut self.label_added, *label, &element);
-            self.label_removed
-                .entry(*label)
-                .or_default()
-                .insert(element);
+        for label in labels.iter() {
+            remove_posting(&mut self.label_added, label, &element);
+            Arc::make_mut(self.label_removed.entry(label).or_default()).insert(element);
         }
         self.withdraw_subject_properties(PropertySubject::Element(element), properties);
     }
@@ -1201,14 +1204,9 @@ impl OverlayIndex {
         properties: &BTreeMap<PropertyKeyId, &PropertyValue>,
     ) {
         remove_posting(&mut self.element_incidence_added, element, &incidence);
-        self.element_incidence_removed
-            .entry(element)
-            .or_default()
-            .insert(incidence);
+        Arc::make_mut(self.element_incidence_removed.entry(element).or_default()).insert(incidence);
         remove_posting(&mut self.relation_incidence_added, relation, &incidence);
-        self.relation_incidence_removed
-            .entry(relation)
-            .or_default()
+        Arc::make_mut(self.relation_incidence_removed.entry(relation).or_default())
             .insert(incidence);
         self.withdraw_subject_properties(PropertySubject::Incidence(incidence), properties);
     }
@@ -1242,8 +1240,8 @@ impl OverlayIndex {
     ) -> Vec<ElementId> {
         merge_posting(
             base.label_posting(label),
-            self.label_added.get(&label),
-            self.label_removed.get(&label),
+            self.label_added.get(&label).map(Arc::as_ref),
+            self.label_removed.get(&label).map(Arc::as_ref),
         )
     }
 
@@ -1260,8 +1258,12 @@ impl OverlayIndex {
     ) -> Vec<RelationId> {
         merge_posting(
             base.relation_type_posting(relation_type),
-            self.relation_type_added.get(&relation_type),
-            self.relation_type_removed.get(&relation_type),
+            self.relation_type_added
+                .get(&relation_type)
+                .map(Arc::as_ref),
+            self.relation_type_removed
+                .get(&relation_type)
+                .map(Arc::as_ref),
         )
     }
 
@@ -1278,8 +1280,10 @@ impl OverlayIndex {
     ) -> Vec<IncidenceId> {
         merge_posting(
             base.element_incidence_posting(element),
-            self.element_incidence_added.get(&element),
-            self.element_incidence_removed.get(&element),
+            self.element_incidence_added.get(&element).map(Arc::as_ref),
+            self.element_incidence_removed
+                .get(&element)
+                .map(Arc::as_ref),
         )
     }
 
@@ -1296,8 +1300,12 @@ impl OverlayIndex {
     ) -> Vec<IncidenceId> {
         merge_posting(
             base.relation_incidence_posting(relation),
-            self.relation_incidence_added.get(&relation),
-            self.relation_incidence_removed.get(&relation),
+            self.relation_incidence_added
+                .get(&relation)
+                .map(Arc::as_ref),
+            self.relation_incidence_removed
+                .get(&relation)
+                .map(Arc::as_ref),
         )
     }
 
@@ -1349,8 +1357,8 @@ impl OverlayIndex {
         let base_subjects = base.equality_subjects(key, value).unwrap_or_default();
         merge_posting_seq(
             base_subjects,
-            self.equality_added.get(&pair),
-            self.equality_removed.get(&pair),
+            self.equality_added.get(&pair).map(Arc::as_ref),
+            self.equality_removed.get(&pair).map(Arc::as_ref),
         )
     }
 
@@ -1444,12 +1452,21 @@ impl OverlayIndex {
 /// entirely when it becomes empty so the maps never grow unbounded with empty
 /// sets.
 ///
+/// A posting that does not contain `member` is left untouched WITHOUT
+/// unsharing it, so a no-op removal against a posting still shared with a
+/// parent overlay never pays the copy-on-write.
+///
 /// # Performance
 ///
-/// This function is `O(log overlay change + key compare)`.
-fn remove_posting<K: Ord, M: Ord>(map: &mut BTreeMap<K, BTreeSet<M>>, key: K, member: &M) {
+/// This function is `O(log overlay change + key compare)`, plus a one-time
+/// `O(posting)` copy-on-write when the posting is shared and the member is
+/// actually removed.
+fn remove_posting<K: Ord, M: Ord + Clone>(map: &mut BTreeMap<K, SharedSet<M>>, key: K, member: &M) {
     if let btree_map::Entry::Occupied(mut entry) = map.entry(key) {
-        entry.get_mut().remove(member);
+        if !entry.get().contains(member) {
+            return;
+        }
+        Arc::make_mut(entry.get_mut()).remove(member);
         if entry.get().is_empty() {
             entry.remove();
         }

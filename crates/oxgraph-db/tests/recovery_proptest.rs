@@ -8,7 +8,7 @@ use std::{
 
 use oxgraph_db::{
     CommitOutcome, Db, DbError, Direction, GraphProjectionDefinition,
-    HypergraphProjectionDefinition, IndexDefinition, Int, Key, Match, ProjectionDefinition,
+    HypergraphProjectionDefinition, IndexDefinition, IndexProbe, Int, Key, ProjectionDefinition,
     PropertyFamily, PropertySubject, PropertyType, PropertyValue, RelationId, RoleId,
     TraversedNode, Walk,
 };
@@ -156,7 +156,7 @@ proptest! {
         let read = database.reader();
         let observed = prop_db(read.lookup(
             index,
-            Match::Equal(&PropertyValue::Integer(values[0])),
+            IndexProbe::Equal(&PropertyValue::Integer(values[0])),
         ))?;
         prop_assert_eq!(observed, expected);
         prop_io(clean(&path))?;
@@ -217,7 +217,7 @@ proptest! {
         let read = database.reader();
         let observed = prop_db(read.lookup(
             index,
-            Match::Composite(&lookup_values),
+            IndexProbe::Composite(&lookup_values),
         ))?;
         prop_assert_eq!(observed, expected);
         prop_io(clean(&path))?;
@@ -251,15 +251,15 @@ proptest! {
 
         let read = database.reader();
         let equal_type_error = matches!(
-            read.lookup_property_equal(key, &PropertyValue::Text("wrong".to_owned())),
+            read.lookup_property_equal(key, &PropertyValue::from("wrong")),
             Err(DbError::Query(oxgraph_db::QueryError::PropertyTypeMismatch { .. })),
         );
         prop_assert!(equal_type_error);
         let range_type_error = matches!(
             read.lookup_property_range(
                 key,
-                &PropertyValue::Text("0".to_owned()),
-                &PropertyValue::Text("9".to_owned()),
+                &PropertyValue::from("0"),
+                &PropertyValue::from("9"),
             ),
             Err(DbError::Query(oxgraph_db::QueryError::PropertyTypeMismatch { .. })),
         );
@@ -267,7 +267,7 @@ proptest! {
         let index_type_error = matches!(
             read.lookup(
                 index,
-                Match::Equal(&PropertyValue::Text("wrong".to_owned())),
+                IndexProbe::Equal(&PropertyValue::from("wrong")),
             ),
             Err(DbError::Query(oxgraph_db::QueryError::PropertyTypeMismatch { .. })),
         );
@@ -306,11 +306,11 @@ proptest! {
 
         let graph_observed = prop_db(read.lookup(
             expected.graph_projection_index,
-            Match::All,
+            IndexProbe::All,
         ))?;
         let hyper_observed = prop_db(read.lookup(
             expected.hyper_projection_index,
-            Match::All,
+            IndexProbe::All,
         ))?;
         prop_assert_eq!(
             graph_observed,

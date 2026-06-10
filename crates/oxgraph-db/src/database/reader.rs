@@ -8,7 +8,7 @@ use oxgraph_algo::{
 };
 use oxgraph_graph::{CanonicalElementIdentity, ElementIndex, LocalElementIdentity};
 
-use super::Match;
+use super::IndexProbe;
 use crate::{
     Catalog, CheckpointGeneration, CommitSeq, DbError, Element, ElementId, IncidenceId,
     IncidenceRecord, IndexId, PreparedQuery, ProjectionDefinition, ProjectionId, Properties,
@@ -198,7 +198,7 @@ impl Reader {
     pub fn element(&self, id: ElementId) -> Option<Element> {
         let view = self.snapshot.view();
         let record = view.element_ref(id)?;
-        let labels = record.labels.iter().copied().collect();
+        let labels = record.labels.iter().collect();
         let properties =
             Properties::from_pairs(view.subject_properties(PropertySubject::Element(id)));
         Some(Element::new(id, labels, properties))
@@ -214,7 +214,7 @@ impl Reader {
     pub fn relation(&self, id: RelationId) -> Option<Relation> {
         let view = self.snapshot.view();
         let record = view.relation_ref(id)?;
-        let labels = record.labels.iter().copied().collect();
+        let labels = record.labels.iter().collect();
         let properties =
             Properties::from_pairs(view.subject_properties(PropertySubject::Relation(id)));
         Some(Relation::new(id, record.relation_type, labels, properties))
@@ -344,7 +344,7 @@ impl Reader {
     ) -> Result<Option<Element>, DbError> {
         let value = value.into_value()?;
         let matched = self
-            .lookup(index.id(), Match::Equal(&value))?
+            .lookup(index.id(), IndexProbe::Equal(&value))?
             .into_iter()
             .find_map(|subject| match subject {
                 PropertySubject::Element(id) => Some(id),
@@ -365,7 +365,7 @@ impl Reader {
     ///
     /// This method is `O(indexed family size)`.
     pub fn count(&self, index: IndexId) -> Result<usize, DbError> {
-        self.lookup(index, Match::All)
+        self.lookup(index, IndexProbe::All)
             .map(|subjects| subjects.len())
     }
 
@@ -420,7 +420,7 @@ impl Reader {
     pub fn lookup(
         &self,
         index: IndexId,
-        lookup: Match<'_>,
+        lookup: IndexProbe<'_>,
     ) -> Result<Vec<PropertySubject>, DbError> {
         let view = self.snapshot.view();
         let entry = view
@@ -428,7 +428,7 @@ impl Reader {
             .index(index)
             .ok_or_else(|| DbError::unknown(index))?;
         match (&entry.definition, lookup) {
-            (IndexDefinition::Label { label }, Match::All) => Ok(view
+            (IndexDefinition::Label { label }, IndexProbe::All) => Ok(view
                 .elements_with_label(*label)
                 .into_iter()
                 .map(PropertySubject::Element)
@@ -436,7 +436,7 @@ impl Reader {
             (IndexDefinition::Label { .. }, _lookup) => {
                 Err(DbError::unsupported("label index expects all lookup"))
             }
-            (IndexDefinition::RelationType { relation_type }, Match::All) => Ok(view
+            (IndexDefinition::RelationType { relation_type }, IndexProbe::All) => Ok(view
                 .relations_with_type(*relation_type)
                 .into_iter()
                 .map(PropertySubject::Relation)
@@ -444,25 +444,25 @@ impl Reader {
             (IndexDefinition::RelationType { .. }, _lookup) => Err(DbError::unsupported(
                 "relation type index expects all lookup",
             )),
-            (IndexDefinition::PropertyEquality { key }, Match::Equal(value)) => {
+            (IndexDefinition::PropertyEquality { key }, IndexProbe::Equal(value)) => {
                 view.typed_property_equal(*key, value)
             }
             (IndexDefinition::PropertyEquality { .. }, _lookup) => Err(DbError::unsupported(
                 "property equality index expects equality lookup",
             )),
-            (IndexDefinition::PropertyRange { key }, Match::Range { min, max }) => {
+            (IndexDefinition::PropertyRange { key }, IndexProbe::Range { min, max }) => {
                 view.typed_property_range(*key, min, max)
             }
             (IndexDefinition::PropertyRange { .. }, _lookup) => Err(DbError::unsupported(
                 "property range index expects range lookup",
             )),
-            (IndexDefinition::CompositeEquality { keys }, Match::Composite(values)) => {
+            (IndexDefinition::CompositeEquality { keys }, IndexProbe::Composite(values)) => {
                 view.typed_property_composite_equal(keys, values)
             }
             (IndexDefinition::CompositeEquality { .. }, _lookup) => Err(DbError::unsupported(
                 "composite equality index expects composite equality lookup",
             )),
-            (IndexDefinition::Projection { projection }, Match::All) => {
+            (IndexDefinition::Projection { projection }, IndexProbe::All) => {
                 self.projection_index_subjects(*projection)
             }
             (IndexDefinition::Projection { .. }, _lookup) => {

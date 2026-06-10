@@ -5,10 +5,13 @@
 //! base, logging each mutation for the WAL; [`WriteOverlay::freeze`] turns
 //! the accumulated delta into a published [`Overlay`].
 
-use std::collections::{BTreeMap, BTreeSet, btree_map};
+use std::{
+    collections::{BTreeMap, btree_map},
+    sync::Arc,
+};
 
 use super::{
-    Delta,
+    Delta, SubjectDelta,
     frozen::{BaseRecords, Overlay},
     log::{MutationLog, blob_str, decode_def_words},
 };
@@ -17,7 +20,7 @@ use crate::{
     PropertyKeyId, RelationId, RelationTypeId, RoleId, StorageError, TxnError,
     catalog::{IndexDefinition, ProjectionDefinition, PropertyFamily, PropertyKeyDefinition},
     index::OverlayIndex,
-    state::{ElementRecord, IncidenceRecord, NextIds, PropertySubject, RelationRecord},
+    state::{ElementRecord, IncidenceRecord, LabelSet, NextIds, PropertySubject, RelationRecord},
     value::{PropertyType, PropertyValue},
     wire::{self, MutationOp},
 };
@@ -46,8 +49,10 @@ pub(crate) struct WriteOverlay {
     /// Incidence delta: id -> add/override record, or tombstone.
     pub(super) incidences: Delta<IncidenceRecord>,
     /// Property delta: subject -> key -> set value, or remove (tombstone).
-    pub(super) properties:
-        BTreeMap<PropertySubject, BTreeMap<PropertyKeyId, Option<PropertyValue>>>,
+    /// Each per-subject inner map is `Arc`-shared copy-on-write with the parent
+    /// overlay this writer was seeded from; a mutation copies only the touched
+    /// subject's map (via [`Arc::make_mut`]).
+    pub(super) properties: BTreeMap<PropertySubject, SubjectDelta>,
     /// Catalog additions accumulated by this writer (register-only in v1).
     pub(super) catalog: Catalog,
     /// The nine monotonic id allocators (the watermark) after this delta.
@@ -99,7 +104,11 @@ impl WriteOverlay {
     ///
     /// # Performance
     ///
-    /// This function is `O(parent change)`; it clones the parent's delta maps.
+    /// This function is `O(parent change)` map entries with `O(1)` per entry:
+    /// the delta map structure is cloned, while label sets, text values,
+    /// per-subject property delta maps, and index postings are `Arc`-shared
+    /// copy-on-write (no payload bytes are duplicated; only the entries this
+    /// writer mutates are copied later).
     pub(crate) fn from_overlay(parent: &Overlay) -> Self {
         Self {
             elements: parent.elements.clone(),
@@ -250,7 +259,7 @@ impl WriteOverlay {
                     id,
                     Some(ElementRecord {
                         id,
-                        labels: BTreeSet::new(),
+                        labels: LabelSet::default(),
                     }),
                 );
             }
@@ -261,7 +270,7 @@ impl WriteOverlay {
                     Some(RelationRecord {
                         id,
                         relation_type: None,
-                        labels: BTreeSet::new(),
+                        labels: LabelSet::default(),
                     }),
                 );
             }
@@ -420,7 +429,7 @@ impl WriteOverlay {
         let value = match value_type {
             PropertyType::Boolean => PropertyValue::Boolean(word(2) != 0),
             PropertyType::Integer => PropertyValue::Integer(word(2).cast_signed()),
-            PropertyType::Text => PropertyValue::Text(blob_str(blob, word(3), word(4), lsn)?),
+            PropertyType::Text => PropertyValue::from(blob_str(blob, word(3), word(4), lsn)?),
         };
         self.set_property_inner(base, subject, PropertyKeyId::new(word(1)), value);
         Ok(())
@@ -535,10 +544,7 @@ impl WriteOverlay {
     ///
     /// This function is `O(log change + log n)`.
     fn visible_property_in<'state>(
-        properties: &'state BTreeMap<
-            PropertySubject,
-            BTreeMap<PropertyKeyId, Option<PropertyValue>>,
-        >,
+        properties: &'state BTreeMap<PropertySubject, SubjectDelta>,
         base: &'state BaseRecords,
         subject: PropertySubject,
         key: PropertyKeyId,
@@ -582,14 +588,15 @@ impl WriteOverlay {
     ///
     /// # Performance
     ///
-    /// This method is `O(log change + log n + labels)`.
-    fn visible_element_labels(&self, base: &BaseRecords, element: ElementId) -> BTreeSet<LabelId> {
+    /// This method is `O(log change + log n)`: the returned [`LabelSet`] is a
+    /// shared `O(1)` clone, never a deep copy.
+    fn visible_element_labels(&self, base: &BaseRecords, element: ElementId) -> LabelSet {
         match self.elements.get(&element) {
             Some(Some(record)) => record.labels.clone(),
-            Some(None) => BTreeSet::new(),
+            Some(None) => LabelSet::default(),
             None => base
                 .element(element)
-                .map_or_else(BTreeSet::new, |record| record.labels.clone()),
+                .map_or_else(LabelSet::default, |record| record.labels.clone()),
         }
     }
 
@@ -637,10 +644,7 @@ impl WriteOverlay {
     ///
     /// This function is `O(subject's base + overlay properties)`.
     fn visible_subject_properties_in<'state>(
-        properties: &'state BTreeMap<
-            PropertySubject,
-            BTreeMap<PropertyKeyId, Option<PropertyValue>>,
-        >,
+        properties: &'state BTreeMap<PropertySubject, SubjectDelta>,
         base: &'state BaseRecords,
         subject: PropertySubject,
     ) -> BTreeMap<PropertyKeyId, &'state PropertyValue> {
@@ -653,7 +657,7 @@ impl WriteOverlay {
         let Some(keys) = properties.get(&subject) else {
             return visible;
         };
-        for (key, entry) in keys {
+        for (key, entry) in keys.iter() {
             // A set overrides the base value; a removal masks it.
             if let Some(value) = entry {
                 visible.insert(*key, value);
@@ -682,7 +686,7 @@ impl WriteOverlay {
             id,
             Some(ElementRecord {
                 id,
-                labels: BTreeSet::new(),
+                labels: LabelSet::default(),
             }),
         );
         self.log.push(wire::OP_CREATE_ELEMENT, 0, &[id.get()]);
@@ -708,7 +712,7 @@ impl WriteOverlay {
             Some(RelationRecord {
                 id,
                 relation_type: None,
-                labels: BTreeSet::new(),
+                labels: LabelSet::default(),
             }),
         );
         self.log.push(wire::OP_CREATE_RELATION, 0, &[id.get()]);
@@ -850,7 +854,7 @@ impl WriteOverlay {
     fn tombstone_subject_properties(&mut self, base: &BaseRecords, subject: PropertySubject) {
         self.properties.remove(&subject);
         if let Some(keys) = base.properties.get(&subject) {
-            let entry = self.properties.entry(subject).or_default();
+            let entry = Arc::make_mut(self.properties.entry(subject).or_default());
             for key in keys.keys() {
                 entry.insert(*key, None);
             }
@@ -1055,7 +1059,9 @@ impl WriteOverlay {
     ///
     /// # Performance
     ///
-    /// This method is `O(log change + log n)`.
+    /// This method is `O(log change + log n)`, plus a one-time `O(subject's
+    /// delta entries)` copy when the subject's map is still shared with the
+    /// parent overlay (`Arc`-COW).
     fn set_property_inner(
         &mut self,
         base: &BaseRecords,
@@ -1065,10 +1071,7 @@ impl WriteOverlay {
     ) {
         let previous = Self::visible_property_in(&self.properties, base, subject, key);
         self.index.on_set_property(subject, key, previous, &value);
-        self.properties
-            .entry(subject)
-            .or_default()
-            .insert(key, Some(value));
+        Arc::make_mut(self.properties.entry(subject).or_default()).insert(key, Some(value));
     }
 
     /// Records a property removal: subject's key maps to `None` (a tombstone
@@ -1098,7 +1101,9 @@ impl WriteOverlay {
     ///
     /// # Performance
     ///
-    /// This method is `O(log change + log n)`.
+    /// This method is `O(log change + log n)`, plus a one-time `O(subject's
+    /// delta entries)` copy when the subject's map is still shared with the
+    /// parent overlay (`Arc`-COW).
     fn remove_property_inner(
         &mut self,
         base: &BaseRecords,
@@ -1107,10 +1112,7 @@ impl WriteOverlay {
     ) {
         let previous = Self::visible_property_in(&self.properties, base, subject, key);
         self.index.on_remove_property(subject, key, previous);
-        self.properties
-            .entry(subject)
-            .or_default()
-            .insert(key, None);
+        Arc::make_mut(self.properties.entry(subject).or_default()).insert(key, None);
     }
 
     /// Registers a role, drawing its id from the watermark.

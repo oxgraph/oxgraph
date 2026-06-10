@@ -35,14 +35,14 @@ pub use writer::Writer;
 /// Lookup input for a cataloged index.
 ///
 /// This type makes index lookup shape explicit: membership indexes accept
-/// [`Match::All`], single-property indexes accept scalar equality or
+/// [`IndexProbe::All`], single-property indexes accept scalar equality or
 /// range inputs, and composite equality indexes accept an ordered value tuple.
 ///
 /// # Performance
 ///
 /// Copying this value is `O(1)`.
 #[derive(Clone, Copy, Debug)]
-pub enum Match<'value> {
+pub enum IndexProbe<'value> {
     /// Lookup every subject represented by a membership-style index.
     All,
     /// Lookup one scalar equality value.
@@ -154,6 +154,21 @@ impl Db {
         }
     }
 
+    /// Returns the pin identifying the current visible snapshot — the commit
+    /// sequence and checkpoint generation a [`Self::reader`] started now would
+    /// observe — without starting a read transaction.
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(1)`: it copies the current snapshot's identity fields.
+    #[must_use]
+    pub fn pin(&self) -> ReadPin {
+        ReadPin {
+            visible_commit_seq: self.current.lsn(),
+            generation: self.current.generation(),
+        }
+    }
+
     /// Starts the single writer transaction, acquiring the cross-process writer
     /// lock for the transaction's lifetime.
     ///
@@ -165,9 +180,12 @@ impl Db {
     ///
     /// # Performance
     ///
-    /// This method is `O(parent change)`: the writer seeds from the parent's
-    /// published overlay by cloning its delta maps, so it scales with the
-    /// committed-but-unfolded change (not the base size).
+    /// This method is `O(parent change)` map entries with `O(1)` per entry:
+    /// the writer seeds from the parent's published overlay by cloning its
+    /// delta map structure, while label sets, text values, per-subject
+    /// property delta maps, and index postings are `Arc`-shared copy-on-write
+    /// — it scales with the committed-but-unfolded change count (not the base
+    /// size, and not the payload bytes).
     pub(crate) fn begin_write(&mut self) -> Result<Writer<'_>, DbError> {
         let lock = WriterLock::acquire(&self.root)?;
         let transaction_id = self
@@ -219,9 +237,11 @@ impl Db {
     /// # Performance
     ///
     /// Begin is `O(parent change)` — the writer seeds by cloning the parent
-    /// overlay's delta maps, so an unfolded overlay of `N` committed entries
-    /// costs `O(N)` to begin (folded away by a checkpoint). Commit is
-    /// `O(change)`. A triggered auto-fold adds `O(visible bytes)`.
+    /// overlay's delta map structure (label sets, text values, per-subject
+    /// property delta maps, and index postings are `Arc`-shared, so each of
+    /// the `N` committed-but-unfolded entries costs `O(1)`; folded away by a
+    /// checkpoint). Commit is `O(change)`. A triggered auto-fold adds
+    /// `O(visible bytes)`.
     pub fn write<R>(
         &mut self,
         f: impl FnOnce(&mut Writer<'_>) -> Result<R, DbError>,

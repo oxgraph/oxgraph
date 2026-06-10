@@ -1,6 +1,6 @@
 //! Typed property and query values.
 
-use std::fmt;
+use std::{fmt, sync::Arc};
 
 use serde::{Deserialize, Serialize};
 
@@ -23,17 +23,24 @@ pub enum PropertyType {
 
 /// One typed property value.
 ///
+/// Text is held as a shared `Arc<str>`, so a value cloned across overlay
+/// generations (the writer seeds from the parent's delta maps) shares one
+/// allocation instead of copying the bytes. Ordering, equality, hashing, and
+/// the serde representation are unchanged from the owned-`String` form: they
+/// all delegate to the underlying `str`.
+///
 /// # Performance
 ///
-/// Copying is `O(value length)` for text and `O(1)` otherwise.
+/// Cloning is `O(1)` (text clones an `Arc`); comparing and hashing are
+/// `O(value length)` for text and `O(1)` otherwise.
 #[derive(Clone, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 pub enum PropertyValue {
     /// Boolean value.
     Boolean(bool),
     /// Signed integer value.
     Integer(i64),
-    /// UTF-8 text value.
-    Text(String),
+    /// UTF-8 text value, shared by reference count.
+    Text(Arc<str>),
 }
 
 impl PropertyValue {
@@ -59,7 +66,7 @@ impl PropertyValue {
     #[must_use]
     pub fn as_text(&self) -> Option<&str> {
         match self {
-            Self::Text(value) => Some(value),
+            Self::Text(value) => Some(value.as_ref()),
             Self::Boolean(_) | Self::Integer(_) => None,
         }
     }
@@ -128,23 +135,36 @@ impl From<i64> for PropertyValue {
 }
 
 impl From<&str> for PropertyValue {
-    /// Copies a string slice into an owned text value.
+    /// Copies a string slice into a shared text value.
     ///
     /// # Performance
     ///
     /// This function is `O(value length)`.
     fn from(value: &str) -> Self {
-        Self::Text(value.to_owned())
+        Self::Text(Arc::from(value))
     }
 }
 
 impl From<String> for PropertyValue {
-    /// Takes ownership of a string as a text value.
+    /// Copies a string into a shared text value (the `Arc<str>` allocation
+    /// carries an inline reference count, so the string's buffer cannot be
+    /// reused).
+    ///
+    /// # Performance
+    ///
+    /// This function is `O(value length)`.
+    fn from(value: String) -> Self {
+        Self::Text(Arc::from(value))
+    }
+}
+
+impl From<Arc<str>> for PropertyValue {
+    /// Wraps an already-shared string as a text value.
     ///
     /// # Performance
     ///
     /// This function is `O(1)`.
-    fn from(value: String) -> Self {
+    fn from(value: Arc<str>) -> Self {
         Self::Text(value)
     }
 }
@@ -220,7 +240,7 @@ pub(crate) fn parse_value_token(token: &str) -> Result<PropertyValue, String> {
     if let Ok(value) = trimmed.parse::<i64>() {
         return Ok(PropertyValue::Integer(value));
     }
-    parse_quoted(trimmed).map(PropertyValue::Text)
+    parse_quoted(trimmed).map(PropertyValue::from)
 }
 
 /// Parses one single- or double-quoted token.

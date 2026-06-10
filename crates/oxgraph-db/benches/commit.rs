@@ -104,6 +104,13 @@ fn bench_commit_single_element(c: &mut Criterion) {
     group.finish();
 }
 
+/// Begins a write and immediately rolls it back by returning an error (the
+/// measured unit of work for the rollback fast path).
+fn rollback_empty_write(database: &mut Db) {
+    let _ =
+        database.write(|_writer| Err::<(), DbError>(DbError::Query(oxgraph_db::QueryError::Empty)));
+}
+
 /// Benchmarks creating and rolling back an empty writer over growing base sizes
 /// (the `begin_write`/rollback fast path must not depend on base size).
 fn bench_begin_write_rollback(c: &mut Criterion) {
@@ -111,11 +118,7 @@ fn bench_begin_write_rollback(c: &mut Criterion) {
     for size in BASE_SIZES {
         let mut database = database_or_panic("rollback", size);
         group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, _size| {
-            b.iter(|| {
-                let _ = database.write(|_writer| {
-                    Err::<(), DbError>(DbError::Query(oxgraph_db::QueryError::Empty))
-                });
-            });
+            b.iter(|| rollback_empty_write(&mut database));
         });
     }
     group.finish();
@@ -150,9 +153,11 @@ fn create_unfolded_database(path: &Path, element_count: usize) -> Result<Db, DbE
 /// growing size.
 ///
 /// perf: this defends the honest `begin_write` contract — seeding the writer
-/// clones the parent overlay's delta maps, so a write over an unfolded
-/// overlay of `N` entries costs `O(N)` today. The curve names the term the
-/// structural-sharing work must flatten; `db_commit_single_element_over_base`
+/// clones the parent overlay's delta map STRUCTURE while label sets, text
+/// values, per-subject property delta maps, and index posting sets are
+/// `Arc`-shared copy-on-write, so a write over an unfolded overlay of `N`
+/// entries is `O(N)` map entries at `O(1)` each. The residual `O(N)` term is
+/// the outer map-node clone itself; `db_commit_single_element_over_base`
 /// (folded bases) stays the `O(change)` commit contract.
 fn bench_write_over_unfolded_overlay(c: &mut Criterion) {
     let mut group = c.benchmark_group("db_write_over_unfolded_overlay");

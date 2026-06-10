@@ -4,7 +4,7 @@
 
 use std::{
     borrow::Cow,
-    collections::{BTreeMap, BTreeSet, HashMap},
+    collections::{BTreeMap, HashMap},
     sync::Arc,
 };
 
@@ -19,7 +19,7 @@ use crate::{
     backing::Base,
     freeze::{FreezeStamps, freeze_view},
     id::{CheckpointGeneration, CommitSeq},
-    state::{ElementRecord, IncidenceRecord, NextIds, PropertySubject, RelationRecord},
+    state::{ElementRecord, IncidenceRecord, LabelSet, NextIds, PropertySubject, RelationRecord},
     value::PropertyValue,
 };
 
@@ -111,7 +111,7 @@ fn cow_property_fast_path() {
         &records,
         PropertySubject::Element(ElementId::new(1)),
         name,
-        PropertyValue::Text("Alicia".to_owned()),
+        PropertyValue::from("Alicia"),
     );
     // Remove element 1's rank.
     write.remove_property(&records, PropertySubject::Element(ElementId::new(1)), rank);
@@ -123,17 +123,14 @@ fn cow_property_fast_path() {
         .property(PropertySubject::Element(ElementId::new(2)), name)
         .expect("bob name");
     assert!(matches!(bob, Cow::Borrowed(_)), "base property must borrow");
-    assert_eq!(bob.into_owned(), PropertyValue::Text("Bob".to_owned()));
+    assert_eq!(bob.into_owned(), PropertyValue::from("Bob"));
 
     // Overlay-set property: owned.
     let alicia = view
         .property(PropertySubject::Element(ElementId::new(1)), name)
         .expect("alicia name");
     assert!(matches!(alicia, Cow::Owned(_)), "overlay property is owned");
-    assert_eq!(
-        alicia.into_owned(),
-        PropertyValue::Text("Alicia".to_owned())
-    );
+    assert_eq!(alicia.into_owned(), PropertyValue::from("Alicia"));
 
     // Overlay-removed property: absent.
     assert!(
@@ -190,7 +187,7 @@ fn overlay_records_orphan_property_unvalidated() {
     let records = BaseRecords::from_view(base.get()).expect("base records");
     let name = base.get().catalog().property_key_id("name").expect("name");
     let subject = PropertySubject::Element(ElementId::new(1));
-    let orphan = PropertyValue::Text("ghost".to_owned());
+    let orphan = PropertyValue::from("ghost");
 
     // Overlay: tombstone element 1, THEN set a property on it. The tombstone
     // clears element 1's property delta and masks its base properties; the
@@ -352,7 +349,7 @@ fn apply_to_write(
                 records,
                 PropertySubject::Element(ElementId::new(1 + (raw % 3))),
                 name,
-                PropertyValue::Text(text.clone()),
+                PropertyValue::from(text.clone()),
             );
         }
         Op::RemoveRank(raw) => {
@@ -387,7 +384,7 @@ fn apply_to_oracle(
                 id,
                 ElementRecord {
                     id,
-                    labels: BTreeSet::new(),
+                    labels: LabelSet::default(),
                 },
             );
         }
@@ -399,7 +396,7 @@ fn apply_to_oracle(
                 RelationRecord {
                     id,
                     relation_type: None,
-                    labels: BTreeSet::new(),
+                    labels: LabelSet::default(),
                 },
             );
         }
@@ -419,7 +416,7 @@ fn apply_to_oracle(
             // properties, and a later set re-adds only the property. Mirror that.
             oracle.properties.insert(
                 (PropertySubject::Element(id), name),
-                PropertyValue::Text(text.clone()),
+                PropertyValue::from(text.clone()),
             );
         }
         Op::RemoveRank(raw) => {
@@ -785,7 +782,7 @@ proptest! {
             );
         }
         // A name (text) equality probe exercises the text-keyed posting too.
-        let bob = PropertyValue::Text("Bob".to_owned());
+        let bob = PropertyValue::from("Bob");
         prop_assert_eq!(
             view.property_equal(name, &bob),
             view.property_equal_scan(name, &bob),
@@ -808,7 +805,7 @@ proptest! {
             let keys = [rank, name];
             let values = [
                 PropertyValue::Integer(rank_value),
-                PropertyValue::Text(person_name.to_owned()),
+                PropertyValue::from(person_name),
             ];
             let mut indexed = view
                 .typed_property_composite_equal(&keys, &values)
@@ -975,7 +972,7 @@ proptest! {
             }
         }
         for text in ["Alice", "Bob", "Carol", "Zzz-absent"] {
-            let probe = PropertyValue::Text(text.to_owned());
+            let probe = PropertyValue::from(text);
             prop_assert_eq!(
                 borrowed_view.property_equal(name, &probe),
                 owned_view.property_equal(name, &probe),

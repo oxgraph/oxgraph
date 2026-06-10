@@ -11,7 +11,7 @@ use std::{
 };
 
 use super::{
-    Delta, Keyed,
+    Delta, Keyed, SubjectDelta,
     frozen::{BaseRecords, Overlay},
     write::WriteOverlay,
 };
@@ -551,10 +551,8 @@ pub(crate) trait OverlayLayer {
     fn relations(&self) -> &Delta<RelationRecord>;
     /// Returns the incidence delta map.
     fn incidences(&self) -> &Delta<IncidenceRecord>;
-    /// Returns the property delta map.
-    fn properties(
-        &self,
-    ) -> &BTreeMap<PropertySubject, BTreeMap<PropertyKeyId, Option<PropertyValue>>>;
+    /// Returns the property delta map (each per-subject inner map `Arc`-shared).
+    fn properties(&self) -> &BTreeMap<PropertySubject, SubjectDelta>;
     /// Returns the merged catalog (parent registrations plus this layer's).
     fn catalog(&self) -> &Catalog;
     /// Returns the nine monotonic id allocators (the watermark).
@@ -577,9 +575,7 @@ impl OverlayLayer for Overlay {
         &self.incidences
     }
 
-    fn properties(
-        &self,
-    ) -> &BTreeMap<PropertySubject, BTreeMap<PropertyKeyId, Option<PropertyValue>>> {
+    fn properties(&self) -> &BTreeMap<PropertySubject, SubjectDelta> {
         &self.properties
     }
 
@@ -609,9 +605,7 @@ impl OverlayLayer for WriteOverlay {
         &self.incidences
     }
 
-    fn properties(
-        &self,
-    ) -> &BTreeMap<PropertySubject, BTreeMap<PropertyKeyId, Option<PropertyValue>>> {
+    fn properties(&self) -> &BTreeMap<PropertySubject, SubjectDelta> {
         &self.properties
     }
 
@@ -742,7 +736,7 @@ impl<'a, L: OverlayLayer> LayeredState<'a, L> {
             .cloned()
             .unwrap_or_default();
         let overlay_keys = self.overlay.properties().get(&subject);
-        for (key, value) in overlay_keys.into_iter().flatten() {
+        for (key, value) in overlay_keys.into_iter().flat_map(|keys| keys.iter()) {
             if let Some(value) = value {
                 merged.insert(*key, value.clone());
             } else {
@@ -1351,7 +1345,7 @@ fn base_property_triples(
 ///
 /// This function is `O(overlay property change)`.
 fn overlay_property_triples(
-    properties: &BTreeMap<PropertySubject, BTreeMap<PropertyKeyId, Option<PropertyValue>>>,
+    properties: &BTreeMap<PropertySubject, SubjectDelta>,
 ) -> Vec<(PropertySubject, PropertyKeyId, &Option<PropertyValue>)> {
     properties
         .iter()

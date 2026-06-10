@@ -203,13 +203,13 @@ pub trait Assignable<T: ValueType> {
 
 impl Assignable<Text> for &str {
     fn into_value(self) -> Result<PropertyValue, DbError> {
-        Ok(PropertyValue::Text(self.to_owned()))
+        Ok(PropertyValue::from(self))
     }
 }
 
 impl Assignable<Text> for String {
     fn into_value(self) -> Result<PropertyValue, DbError> {
-        Ok(PropertyValue::Text(self))
+        Ok(PropertyValue::from(self))
     }
 }
 
@@ -303,7 +303,7 @@ mod tests {
         assert!(Assignable::<Int>::into_value(u64::MAX).is_err());
         assert_eq!(
             Assignable::<Text>::into_value("hi").ok(),
-            Some(PropertyValue::Text("hi".to_owned()))
+            Some(PropertyValue::from("hi"))
         );
     }
 

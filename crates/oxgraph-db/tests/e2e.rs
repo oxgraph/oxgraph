@@ -9,7 +9,7 @@ use std::{
 use oxgraph_algo::breadth_first_search;
 use oxgraph_db::{
     CommitOutcome, Db, DbError, Direction, GraphProjectionDefinition,
-    HypergraphProjectionDefinition, IndexDefinition, Int, Key, Match, PageRankConfig,
+    HypergraphProjectionDefinition, IndexDefinition, IndexProbe, Int, Key, PageRankConfig,
     ProjectionDefinition, PropertyFamily, PropertySubject, PropertyType, PropertyValue, QueryValue,
     Text, TraversedNode, Walk,
 };
@@ -87,7 +87,7 @@ fn greenfield_database_supports_topology_properties_queries_and_recovery() -> Re
     assert_eq!(read.incidence_count(), 5);
     assert_eq!(
         read.property(PropertySubject::Element(fixture.alice), fixture.name_key),
-        Some(PropertyValue::Text("Alice".to_owned()))
+        Some(PropertyValue::from("Alice"))
     );
 
     let graph = read.graph_projection(fixture.graph_projection)?;
@@ -194,28 +194,25 @@ fn index_lookup_uses_typed_composite_and_projection_semantics() -> Result<(), Te
     let fixture = load_fixture(&mut database)?;
     let read = database.reader();
 
-    let tuple = [
-        PropertyValue::Text("Alice".to_owned()),
-        PropertyValue::Integer(42),
-    ];
+    let tuple = [PropertyValue::from("Alice"), PropertyValue::Integer(42)];
     assert_eq!(
-        read.lookup(fixture.person_identity_index, Match::Composite(&tuple),)?,
+        read.lookup(fixture.person_identity_index, IndexProbe::Composite(&tuple),)?,
         vec![PropertySubject::Element(fixture.alice)]
     );
-    let wrong_arity = [PropertyValue::Text("Alice".to_owned())];
+    let wrong_arity = [PropertyValue::from("Alice")];
     assert!(matches!(
         read.lookup(
             fixture.person_identity_index,
-            Match::Composite(&wrong_arity),
+            IndexProbe::Composite(&wrong_arity),
         ),
         Err(DbError::Query(oxgraph_db::QueryError::Unsupported { .. }))
     ));
-    let wrong_type = [
-        PropertyValue::Text("Alice".to_owned()),
-        PropertyValue::Text("42".to_owned()),
-    ];
+    let wrong_type = [PropertyValue::from("Alice"), PropertyValue::from("42")];
     assert!(matches!(
-        read.lookup(fixture.person_identity_index, Match::Composite(&wrong_type),),
+        read.lookup(
+            fixture.person_identity_index,
+            IndexProbe::Composite(&wrong_type),
+        ),
         Err(DbError::Query(
             oxgraph_db::QueryError::PropertyTypeMismatch {
                 expected: PropertyType::Integer,
@@ -225,7 +222,7 @@ fn index_lookup_uses_typed_composite_and_projection_semantics() -> Result<(), Te
     ));
 
     assert_eq!(
-        read.lookup(fixture.graph_projection_index, Match::All)?,
+        read.lookup(fixture.graph_projection_index, IndexProbe::All)?,
         vec![
             PropertySubject::Element(fixture.alice),
             PropertySubject::Element(fixture.bob),
@@ -233,7 +230,7 @@ fn index_lookup_uses_typed_composite_and_projection_semantics() -> Result<(), Te
         ]
     );
     assert_eq!(
-        read.lookup(fixture.hyper_projection_index, Match::All)?,
+        read.lookup(fixture.hyper_projection_index, IndexProbe::All)?,
         vec![
             PropertySubject::Element(fixture.alice),
             PropertySubject::Element(fixture.bob),
@@ -247,7 +244,7 @@ fn index_lookup_uses_typed_composite_and_projection_semantics() -> Result<(), Te
     assert!(matches!(
         read.lookup(
             fixture.graph_projection_index,
-            Match::Equal(&PropertyValue::Integer(1)),
+            IndexProbe::Equal(&PropertyValue::Integer(1)),
         ),
         Err(DbError::Query(oxgraph_db::QueryError::Unsupported { .. }))
     ));
@@ -266,7 +263,7 @@ fn property_lookup_values_are_schema_checked() -> Result<(), TestError> {
     let read = database.reader();
 
     assert!(matches!(
-        read.lookup_property_equal(fixture.age_key, &PropertyValue::Text("42".to_owned())),
+        read.lookup_property_equal(fixture.age_key, &PropertyValue::from("42")),
         Err(DbError::Query(
             oxgraph_db::QueryError::PropertyTypeMismatch {
                 expected: PropertyType::Integer,
@@ -278,7 +275,7 @@ fn property_lookup_values_are_schema_checked() -> Result<(), TestError> {
         read.lookup_property_range(
             fixture.age_key,
             &PropertyValue::Integer(0),
-            &PropertyValue::Text("99".to_owned()),
+            &PropertyValue::from("99"),
         ),
         Err(DbError::Query(
             oxgraph_db::QueryError::PropertyTypeMismatch {
@@ -290,9 +287,9 @@ fn property_lookup_values_are_schema_checked() -> Result<(), TestError> {
     assert!(matches!(
         read.lookup(
             fixture.age_index,
-            Match::Range {
-                min: &PropertyValue::Text("0".to_owned()),
-                max: &PropertyValue::Text("99".to_owned()),
+            IndexProbe::Range {
+                min: &PropertyValue::from("0"),
+                max: &PropertyValue::from("99"),
             },
         ),
         Err(DbError::Query(
