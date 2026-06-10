@@ -517,7 +517,7 @@ impl Base {
     }
 }
 
-/// Opens the snapshot over `bytes` (checked: the v2 `table_crc32c` is
+/// Opens the snapshot over `bytes` (checked: the `table_crc32c` is
 /// verified) and extracts the borrowed [`BaseView`], verifying each bound
 /// section's payload CRC exactly once via the bind funnels.
 ///

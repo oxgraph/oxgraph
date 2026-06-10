@@ -113,26 +113,26 @@ fn rejects_wrong_major() {
     );
 }
 
-/// v1 bytes are rejected by the same major check with a clear error naming
-/// both versions — there is deliberately no legacy-read path.
+/// Foreign majors are rejected by the same check with a clear error naming
+/// both versions — there is deliberately no cross-major read path.
 #[test]
-fn rejects_v1_major() {
+fn rejects_foreign_major() {
     let mut bytes = baseline_snapshot();
-    set_u32(&mut bytes, 8, 1);
+    set_u32(&mut bytes, 8, 7);
     assert_open_error(
         &bytes,
         &SnapshotError::FormatMajorMismatch {
-            actual: 1,
+            actual: 7,
             supported: FORMAT_MAJOR,
         },
     );
     let error = SnapshotError::FormatMajorMismatch {
-        actual: 1,
+        actual: 7,
         supported: FORMAT_MAJOR,
     };
     assert_eq!(
         error.to_string(),
-        "unsupported snapshot format major: snapshot is 1, this reader supports 2"
+        "unsupported snapshot format major: snapshot is 7, this reader supports 1"
     );
 }
 

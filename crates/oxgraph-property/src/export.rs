@@ -4,7 +4,7 @@
 //! Every layout exporter (CSR, BCSR) validates its property layers against the
 //! topology counts and then appends the SAME section tail — property
 //! descriptors, property data, identity modes, one explicit identity map — in
-//! the canonical (ascending-kind) order the v2 container mandates. The
+//! the canonical (ascending-kind) order the container mandates. The
 //! layout-specific parts (which counts are required, which identity modes
 //! apply, which map kind carries the explicit map) stay in each layout crate;
 //! the mechanics live here once.
@@ -83,7 +83,7 @@ where
 /// map under `identity_map_kind`.
 ///
 /// The order follows the ascending kind values inside the property band
-/// (descriptors < data < identity modes < identity maps), which the v2
+/// (descriptors < data < identity modes < identity maps), which the
 /// container mandates table-wide.
 ///
 /// # Errors

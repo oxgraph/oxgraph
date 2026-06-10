@@ -7,7 +7,7 @@
 //! snapshots with known section counts and payload sizes and asserts the
 //! encoded byte length matches the formula
 //! `HEADER_SIZE + section_count * SECTION_ENTRY_SIZE + sum(payload_len)`
-//! (modulo per-section padding for declared alignment), and that the v2
+//! (modulo per-section padding for declared alignment), and that the
 //! checksum words land at their pinned byte offsets.
 //!
 //! The zerocopy derives on the internal raw structs guarantee the per-field
@@ -56,7 +56,7 @@ fn format_magic_is_oxgtopo_nul() {
     assert_eq!(FORMAT_MAGIC, *b"OXGTOPO\0");
 }
 
-/// `HEADER_SIZE` and `SECTION_ENTRY_SIZE` are 32 bytes each in v2 (the
+/// `HEADER_SIZE` and `SECTION_ENTRY_SIZE` are 32 bytes each (the
 /// checksum words were carved out of reserved bytes, not appended); reduction
 /// below that would require a major-version bump and a coordinated reader
 /// update.
@@ -66,12 +66,12 @@ fn header_and_section_entry_sizes_are_pinned() {
     assert_eq!(SECTION_ENTRY_SIZE, 32);
 }
 
-/// `FORMAT_MAJOR` and `FORMAT_MINOR` are the v2 baseline (mandatory
+/// `FORMAT_MAJOR` and `FORMAT_MINOR` are the format baseline (mandatory
 /// checksums, strictly-ascending kinds); raising either without updating
 /// consumers would silently break readers in the wild.
 #[test]
 fn format_versions_are_pinned() {
-    assert_eq!(FORMAT_MAJOR, 2);
+    assert_eq!(FORMAT_MAJOR, 1);
     assert_eq!(FORMAT_MINOR, 0);
 }
 

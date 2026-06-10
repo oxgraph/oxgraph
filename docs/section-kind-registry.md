@@ -21,7 +21,7 @@ Width-parameterized sections derive their kind as `BASE | WIDTH_CODE`, where
 | —     | `0b11` (reserved) |
 
 Within one band, bases ascend by at least 4 in the exporter's emission order,
-so the derived kinds stay strictly ascending (the OXGT v2 table invariant) for
+so the derived kinds stay strictly ascending (the container's table invariant) for
 any width mix. Widthless kinds (Postgres catalog/metadata, all OXGDB kinds)
 use the raw value.
 

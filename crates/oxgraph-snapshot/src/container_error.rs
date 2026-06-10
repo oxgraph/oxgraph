@@ -113,7 +113,7 @@ pub enum SnapshotError {
     },
     /// A section entry's kind was not strictly greater than its predecessor's.
     ///
-    /// v2 mandates a strictly-ascending kind order, which also makes the
+    /// The container mandates a strictly-ascending kind order, which also makes the
     /// table duplicate-free by construction.
     NonAscendingKind {
         /// Kind of the offending entry.
@@ -427,7 +427,7 @@ pub enum PlanError {
     /// A pending section's kind was not strictly greater than its
     /// predecessor's.
     ///
-    /// v2 mandates strictly-ascending kind order in the section table, which
+    /// The container mandates strictly-ascending kind order in the section table, which
     /// also makes it duplicate-free by construction.
     NonAscendingKind {
         /// Kind of the offending section.

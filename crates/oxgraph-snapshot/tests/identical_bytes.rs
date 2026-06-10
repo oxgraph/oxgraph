@@ -59,7 +59,7 @@ proptest! {
     fn writer_and_plan_emit_identical_bytes(
         sections in proptest::collection::vec(gen_section(), 0..8),
     ) {
-        // Deduplicate kinds and sort ascending: both encoders mandate the v2
+        // Deduplicate kinds and sort ascending: both encoders mandate the format's
         // strictly-ascending kind order, and we want the success path here.
         let mut seen = BTreeSet::new();
         let mut unique: Vec<GenSection> = sections

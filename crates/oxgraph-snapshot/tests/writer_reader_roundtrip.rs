@@ -23,7 +23,7 @@ proptest! {
     })]
 
     /// A writer followed by a reader must yield identical section payloads.
-    /// Sections are written in ascending kind order (the v2 mandate).
+    /// Sections are written in ascending kind order (the format's ascending-kind mandate).
     #[test]
     fn writer_reader_roundtrip(
         mut sections in proptest::collection::vec(arb_section(), 0..16)

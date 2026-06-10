@@ -5,7 +5,7 @@
 //! Each component — header, catalog, topology, properties — persists as its own
 //! typed section described in [`crate::wire`]. [`freeze_view`] writes a complete
 //! base file from any [`StateView`] (an empty overlay for `create`, a merged
-//! base+overlay fold for `checkpoint`). Integrity is the OXGT v2 container's:
+//! base+overlay fold for `checkpoint`). Integrity is the OXGT container's:
 //! the writer stamps a mandatory CRC-32C on every section entry plus the
 //! header's `table_crc32c`; there is no separate whole-base checksum.
 //!
@@ -236,14 +236,14 @@ fn add_blob(builder: &mut SnapshotWriter, kind: u32, blob: &[u8]) -> Result<(), 
 }
 
 /// Encodes a merged state `view` (plus durable `stamps`) into deterministic
-/// OXGDB base bytes. Integrity comes from the OXGT v2 container alone: the
+/// OXGDB base bytes. Integrity comes from the OXGT container alone: the
 /// writer stamps a CRC-32C on every section entry and the header's
 /// `table_crc32c`; the open path re-verifies each section once at bind.
 ///
 /// `create` freezes an empty overlay over an empty base; `checkpoint` freezes a
 /// merged base+overlay fold. Either way the input is one [`StateView`], so a
 /// single encoder serves both. Sections are emitted in the strictly-ascending
-/// kind order [`wire::ALL_SECTION_KINDS`] pins at compile time — the OXGT v2
+/// kind order [`wire::ALL_SECTION_KINDS`] pins at compile time — the OXGT container
 /// container rejects anything else.
 ///
 /// # Errors

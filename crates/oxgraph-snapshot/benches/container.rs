@@ -1,8 +1,8 @@
 //! Criterion benches for the topology-agnostic snapshot container.
 //!
 //! Defends three perf contracts (the corresponding doc claims live next to each item):
-//! - `Snapshot::open` is `O(s)` in the section count (one structural table walk; the v2
-//!   ascending-kind mandate removed the v1 duplicate-kind `O(s^2)` term — see
+//! - `Snapshot::open` is `O(s)` in the section count (one structural table walk; the ascending-kind
+//!   mandate removed the v1 duplicate-kind `O(s^2)` term — see
 //!   [`Snapshot::open_with`](oxgraph_snapshot::Snapshot::open_with) doc). The bench parameterises
 //!   across `s ∈ {1, 16, 256, 1024 = MAX_SECTION_COUNT}` and uses `Throughput::Elements(s)` so a
 //!   contract regression shows up as a sub-linear elements/sec curve rather than a hidden
