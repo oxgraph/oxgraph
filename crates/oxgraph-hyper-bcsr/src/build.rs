@@ -35,8 +35,7 @@ use oxgraph_layout_util::{
 #[cfg(feature = "build-property-arrow")]
 use oxgraph_property::{
     EncodedPropertySnapshot, HyperPropertyLayers, IdFamily, IdentityModeRecord, PropertyError,
-    PropertyLayer, PropertySnapshotMetaWord, SNAPSHOT_PROPERTY_VERSION,
-    encode_hyper_property_snapshot, rekey_layer_to_local,
+    PropertyLayer, PropertySnapshotMetaWord, encode_hyper_property_snapshot, rekey_layer_to_local,
 };
 use oxgraph_snapshot::{PlanError, SnapshotBuilder};
 
@@ -2217,16 +2216,13 @@ where
             });
         }
     };
-    for layer in layers {
-        if layer.len() < required {
-            return Err(HyperBuildError::PropertyLayerTooShort {
-                id_family,
-                required,
-                actual: layer.len(),
-            });
+    oxgraph_property::export::validate_layer_lengths(layers, id_family, required).map_err(|error| {
+        HyperBuildError::PropertyLayerTooShort {
+            id_family: error.id_family,
+            required: error.required,
+            actual: error.actual,
         }
-    }
-    Ok(())
+    })
 }
 
 #[cfg(feature = "build-property-arrow")]
@@ -2256,27 +2252,12 @@ where
     ];
     let mut builder = SnapshotBuilder::new();
     add_topology_sections::<VertexIndex, RelationIndex, IncidenceIndex>(&mut builder, topology)?;
-    builder.add_section_little_endian(
-        IncidenceIndex::IDENTITY_MODES_KIND,
-        SNAPSHOT_PROPERTY_VERSION,
+    oxgraph_property::export::append_identity_and_property_sections(
+        &mut builder,
         &identity_modes,
-    )?;
-    builder.add_section_widths(
         IncidenceIndex::INCIDENCE_IDENTITY_MAP_KIND,
-        SNAPSHOT_PROPERTY_VERSION,
         &incidence_map,
-    )?;
-    builder.add_section(
-        IncidenceIndex::PROPERTY_DESCRIPTORS_KIND,
-        SNAPSHOT_PROPERTY_VERSION,
-        0,
-        property.descriptors,
-    )?;
-    builder.add_section(
-        IncidenceIndex::PROPERTY_DATA_KIND,
-        SNAPSHOT_PROPERTY_VERSION,
-        0,
-        property.data,
+        property,
     )?;
     builder.finish().map_err(HyperBuildError::from)
 }

@@ -32,6 +32,7 @@
 // kani-skip: property layers depend on Arrow heap arrays and snapshot byte streams outside Kani's
 // bounded no-std proof scope.
 
+pub mod export;
 pub mod model;
 pub mod rekey;
 pub mod snapshot;

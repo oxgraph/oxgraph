@@ -23,8 +23,7 @@ use oxgraph_layout_util::{
 #[cfg(feature = "build-property-arrow")]
 use oxgraph_property::{
     EncodedPropertySnapshot, GraphPropertyLayers, IdFamily, IdentityModeRecord,
-    PropertySnapshotMetaWord, SNAPSHOT_PROPERTY_VERSION, encode_graph_property_snapshot,
-    rekey_layer_to_local,
+    PropertySnapshotMetaWord, encode_graph_property_snapshot, rekey_layer_to_local,
 };
 #[cfg(feature = "build-property-arrow")]
 use oxgraph_property::{PropertyError, PropertyLayer};
@@ -1244,16 +1243,13 @@ where
         IdFamily::Incidence => 0,
         _ => 0,
     };
-    for layer in layers {
-        if layer.len() < required {
-            return Err(GraphBuildError::PropertyLayerTooShort {
-                id_family,
-                required,
-                actual: layer.len(),
-            });
+    oxgraph_property::export::validate_layer_lengths(layers, id_family, required).map_err(|error| {
+        GraphBuildError::PropertyLayerTooShort {
+            id_family: error.id_family,
+            required: error.required,
+            actual: error.actual,
         }
-    }
-    Ok(())
+    })
 }
 
 /// Exports topology.
@@ -1306,27 +1302,12 @@ where
         NodeIndex::SECTION_VERSION,
         &topology.targets,
     )?;
-    builder.add_section_little_endian(
-        EdgeIndex::IDENTITY_MODES_KIND,
-        SNAPSHOT_PROPERTY_VERSION,
+    oxgraph_property::export::append_identity_and_property_sections(
+        &mut builder,
         &identity_modes,
-    )?;
-    builder.add_section_widths(
         EdgeIndex::RELATION_IDENTITY_MAP_KIND,
-        SNAPSHOT_PROPERTY_VERSION,
         &topology.edge_ids,
-    )?;
-    builder.add_section(
-        EdgeIndex::PROPERTY_DESCRIPTORS_KIND,
-        SNAPSHOT_PROPERTY_VERSION,
-        0,
-        property.descriptors,
-    )?;
-    builder.add_section(
-        EdgeIndex::PROPERTY_DATA_KIND,
-        SNAPSHOT_PROPERTY_VERSION,
-        0,
-        property.data,
+        property,
     )?;
     builder.finish().map_err(GraphBuildError::from)
 }
