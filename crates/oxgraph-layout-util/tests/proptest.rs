@@ -232,3 +232,38 @@ proptest! {
         prop_assert!(result.is_ok());
     }
 }
+
+proptest! {
+    /// `next_dense_index` yields every dense `u16` ID in order, then errors
+    /// with the count that failed to fit once the width is exhausted.
+    #[test]
+    fn next_dense_index_yields_dense_u16_ids(start in 0_usize..(u16::MAX as usize)) {
+        let mut counter = start;
+        let id: u16 = oxgraph_layout_util::next_dense_index(&mut counter, |value| value)
+            .expect("in-width count allocates");
+        prop_assert_eq!(usize::from(id), start);
+        prop_assert_eq!(counter, start + 1);
+    }
+
+    /// Counts past the index width are rejected with the failing count.
+    #[test]
+    fn next_dense_index_rejects_out_of_width_counts(
+        excess in (u16::MAX as usize + 1)..(u32::MAX as usize),
+    ) {
+        let mut counter = excess;
+        let result: Result<u16, usize> =
+            oxgraph_layout_util::next_dense_index(&mut counter, |value| value);
+        prop_assert_eq!(result, Err(excess));
+        prop_assert_eq!(counter, excess);
+    }
+}
+
+/// A counter at `usize::MAX` cannot advance: the allocation fails with
+/// `usize::MAX` even though the value fits the index width.
+#[test]
+fn next_dense_index_rejects_counter_overflow() {
+    let mut counter = usize::MAX;
+    let result: Result<u64, usize> =
+        oxgraph_layout_util::next_dense_index(&mut counter, |value| value);
+    assert_eq!(result, Err(usize::MAX));
+}
