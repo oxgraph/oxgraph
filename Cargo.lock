@@ -1263,7 +1263,7 @@ dependencies = [
 
 [[package]]
 name = "oxgraph"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "oxgraph-algo",
  "oxgraph-csc",
@@ -1281,7 +1281,7 @@ dependencies = [
 
 [[package]]
 name = "oxgraph-algo"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "arrow-array",
  "arrow-schema",
@@ -1300,7 +1300,7 @@ dependencies = [
 
 [[package]]
 name = "oxgraph-csc"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "oxgraph-csr",
  "oxgraph-graph",
@@ -1312,7 +1312,7 @@ dependencies = [
 
 [[package]]
 name = "oxgraph-csr"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "arrow-array",
  "arrow-schema",
@@ -1328,7 +1328,7 @@ dependencies = [
 
 [[package]]
 name = "oxgraph-db"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "crc32c",
  "criterion",
@@ -1350,7 +1350,7 @@ dependencies = [
 
 [[package]]
 name = "oxgraph-graph"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "oxgraph-topology",
  "proptest",
@@ -1358,7 +1358,7 @@ dependencies = [
 
 [[package]]
 name = "oxgraph-hyper"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "oxgraph-topology",
  "proptest",
@@ -1366,7 +1366,7 @@ dependencies = [
 
 [[package]]
 name = "oxgraph-hyper-bcsr"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "arrow-array",
  "arrow-schema",
@@ -1382,7 +1382,7 @@ dependencies = [
 
 [[package]]
 name = "oxgraph-layout-util"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "crc32c",
  "proptest",
@@ -1391,7 +1391,7 @@ dependencies = [
 
 [[package]]
 name = "oxgraph-mmap"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "memmap2",
 ]
@@ -1408,7 +1408,7 @@ dependencies = [
 
 [[package]]
 name = "oxgraph-postgres"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "criterion",
  "oxgraph-algo",
@@ -1425,7 +1425,7 @@ dependencies = [
 
 [[package]]
 name = "oxgraph-property"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "arrow-array",
  "arrow-ipc",
@@ -1441,7 +1441,7 @@ dependencies = [
 
 [[package]]
 name = "oxgraph-snapshot"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "criterion",
  "oxgraph-layout-util",
@@ -1451,7 +1451,7 @@ dependencies = [
 
 [[package]]
 name = "oxgraph-topology"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "proptest",
 ]

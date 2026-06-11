@@ -5,7 +5,7 @@ license.workspace = true
 description = "Shared layout primitives for oxgraph: builder helpers + offset-integrity validation."
 categories.workspace = true
 keywords.workspace = true
-readme.workspace = true
+readme = "README.md"
 
 authors.workspace = true
 edition.workspace = true

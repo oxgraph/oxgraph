@@ -5,16 +5,16 @@ license.workspace = true
 description = "Substrate-agnostic graph algorithms over oxgraph-topology traits."
 categories.workspace = true
 keywords.workspace = true
-readme.workspace = true
+readme = "README.md"
 
 authors.workspace = true
 edition.workspace = true
 repository.workspace = true
 
 [dependencies]
-oxgraph-graph = { version = "0.4.0", path = "../oxgraph-graph" }
-oxgraph-hyper = { version = "0.4.0", path = "../oxgraph-hyper" }
-oxgraph-topology = { version = "0.4.0", path = "../oxgraph-topology" }
+oxgraph-graph = { version = "0.4.1", path = "../oxgraph-graph" }
+oxgraph-hyper = { version = "0.4.1", path = "../oxgraph-hyper" }
+oxgraph-topology = { version = "0.4.1", path = "../oxgraph-topology" }
 
 [features]
 default = []
@@ -26,11 +26,11 @@ arrow-array = { workspace = true }
 arrow-schema = { workspace = true }
 criterion = { workspace = true }
 oxgraph-csr = { path = "../oxgraph-csr", features = ["build-property-arrow"] }
-oxgraph-hyper = { version = "0.4.0", path = "../oxgraph-hyper" }
+oxgraph-hyper = { version = "0.4.1", path = "../oxgraph-hyper" }
 oxgraph-hyper-bcsr = { path = "../oxgraph-hyper-bcsr", features = ["build-property-arrow"] }
-oxgraph-layout-util = { version = "0.4.0", path = "../oxgraph-layout-util", default-features = false }
-oxgraph-property = { version = "0.4.0", path = "../oxgraph-property" }
-oxgraph-snapshot = { version = "0.4.0", path = "../oxgraph-snapshot", features = ["alloc"] }
+oxgraph-layout-util = { version = "0.4.1", path = "../oxgraph-layout-util", default-features = false }
+oxgraph-property = { version = "0.4.1", path = "../oxgraph-property" }
+oxgraph-snapshot = { version = "0.4.1", path = "../oxgraph-snapshot", features = ["alloc"] }
 proptest = { workspace = true }
 zerocopy = { workspace = true }
 
