@@ -12,7 +12,7 @@ edition.workspace = true
 repository.workspace = true
 
 [dependencies]
-oxgraph-topology = { version = "0.4.1", path = "../oxgraph-topology" }
+oxgraph-topology = { version = "0.4.2", path = "../oxgraph-topology" }
 
 [dev-dependencies]
 proptest = { workspace = true }

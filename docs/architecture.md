@@ -1,10 +1,10 @@
 # OxGraph architecture
 
-OxGraph is a storage-agnostic topology substrate: **Topology here. Meaning
-elsewhere. Storage anywhere.** Foundation crates stay domain-neutral, no-std
-where possible, and independent of Arrow, properties, PyO3, Python labels, and
-algorithm semantics. Higher layers adapt selected data into explicit capability
-views.
+OxGraph is a general-purpose graph engine built on a storage-agnostic topology
+substrate: topology is modeled here, meaning and storage live in the layers
+around it. Foundation crates stay domain-neutral, no-std where possible, and
+independent of Arrow, properties, PyO3, Python labels, and algorithm semantics.
+Higher layers adapt selected data into explicit capability views.
 
 ## Active layer graph
 
