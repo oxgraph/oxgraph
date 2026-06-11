@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the workspace adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 All workspace crates version together.
 
+## [0.4.2] - 2026-06-11
+
+Documentation-only patch release; no code changes.
+
+### Changed
+
+- Repositioned the project framing: the root and umbrella READMEs and the
+  architecture doc now lead with "the general-purpose, zero-copy graph and
+  hypergraph engine for Rust" instead of the "Topology here. Meaning
+  elsewhere. Storage anywhere." tagline, and the `oxgraph` crate description
+  follows suit. Matches the oxgraph.io and docs.oxgraph.io repositioning.
+
 ## [0.4.1] - 2026-06-10
 
 Documentation-only patch release; no code changes.

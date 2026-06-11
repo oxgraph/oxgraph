@@ -1,8 +1,8 @@
 # oxgraph
 
-Storage-agnostic, zero-copy-friendly graph and hypergraph topology substrate for Rust.
+The general-purpose, zero-copy graph and hypergraph engine for Rust.
 
-**Topology here. Meaning elsewhere. Storage anywhere.**
+**Runs over any storage: in memory, over mmap, embedded, or in Postgres.**
 
 [![crates.io](https://img.shields.io/crates/v/oxgraph.svg)](https://crates.io/crates/oxgraph)
 [![docs.rs](https://docs.rs/oxgraph/badge.svg)](https://docs.rs/oxgraph)
