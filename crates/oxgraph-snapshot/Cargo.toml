@@ -5,7 +5,7 @@ license.workspace = true
 description = "Topology-agnostic byte-level snapshot container."
 categories.workspace = true
 keywords.workspace = true
-readme.workspace = true
+readme = "README.md"
 
 authors.workspace = true
 edition.workspace = true
@@ -17,7 +17,7 @@ alloc = ["oxgraph-layout-util/alloc"]
 std = ["alloc"]
 
 [dependencies]
-oxgraph-layout-util = { version = "0.4.0", path = "../oxgraph-layout-util", default-features = false }
+oxgraph-layout-util = { version = "0.4.1", path = "../oxgraph-layout-util", default-features = false }
 zerocopy = { workspace = true }
 
 [dev-dependencies]

@@ -5,7 +5,7 @@ license.workspace = true
 description = "Postgres-backed OxGraph engine: catalog, build, artifact I/O, query, sync."
 categories.workspace = true
 keywords.workspace = true
-readme.workspace = true
+readme = "README.md"
 
 authors.workspace = true
 edition.workspace = true
@@ -18,22 +18,22 @@ serde = ["dep:serde"]
 bench-fixture = ["std"]
 
 [dependencies]
-oxgraph-algo = { version = "0.4.0", path = "../oxgraph-algo", default-features = false, features = [
+oxgraph-algo = { version = "0.4.1", path = "../oxgraph-algo", default-features = false, features = [
   "alloc",
 ] }
-oxgraph-csc = { version = "0.4.0", path = "../oxgraph-csc" }
-oxgraph-csr = { version = "0.4.0", path = "../oxgraph-csr", features = ["build"] }
-oxgraph-graph = { version = "0.4.0", path = "../oxgraph-graph" }
-oxgraph-layout-util = { version = "0.4.0", path = "../oxgraph-layout-util", default-features = false }
-oxgraph-snapshot = { version = "0.4.0", path = "../oxgraph-snapshot", features = ["alloc"] }
+oxgraph-csc = { version = "0.4.1", path = "../oxgraph-csc" }
+oxgraph-csr = { version = "0.4.1", path = "../oxgraph-csr", features = ["build"] }
+oxgraph-graph = { version = "0.4.1", path = "../oxgraph-graph" }
+oxgraph-layout-util = { version = "0.4.1", path = "../oxgraph-layout-util", default-features = false }
+oxgraph-snapshot = { version = "0.4.1", path = "../oxgraph-snapshot", features = ["alloc"] }
 serde = { version = "1.0.228", optional = true, features = ["derive"] }
 yoke = { workspace = true }
 zerocopy = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
-oxgraph-csc = { version = "0.4.0", path = "../oxgraph-csc" }
-oxgraph-csr = { version = "0.4.0", path = "../oxgraph-csr", features = ["build"] }
+oxgraph-csc = { version = "0.4.1", path = "../oxgraph-csc" }
+oxgraph-csr = { version = "0.4.1", path = "../oxgraph-csr", features = ["build"] }
 proptest = { workspace = true }
 
 [[bench]]

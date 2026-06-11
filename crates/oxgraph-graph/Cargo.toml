@@ -5,14 +5,14 @@ license.workspace = true
 description = "Storage-agnostic core traits for binary graph views."
 categories.workspace = true
 keywords.workspace = true
-readme.workspace = true
+readme = "README.md"
 
 authors.workspace = true
 edition.workspace = true
 repository.workspace = true
 
 [dependencies]
-oxgraph-topology = { version = "0.4.0", path = "../oxgraph-topology" }
+oxgraph-topology = { version = "0.4.1", path = "../oxgraph-topology" }
 
 [dev-dependencies]
 proptest = { workspace = true }

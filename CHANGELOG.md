@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the workspace adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 All workspace crates version together.
 
+## [0.4.1] - 2026-06-10
+
+Documentation-only patch release; no code changes.
+
+### Added
+
+- Every crate now ships its own README: what it is, where it sits in the
+  layering, an example lifted from compile-checked code where one exists,
+  features, and pointers to docs.rs and the family README. Published crates
+  now set `readme = "README.md"` instead of inheriting the workspace root
+  README, so crates.io shows crate-specific pages rather than the same root
+  README on all of them.
+
 ## [0.4.0] - 2026-06-09
 
 Consolidation release for the 21-PR refactor series: one write path, typed

@@ -5,7 +5,7 @@ license.workspace = true
 description = "Borrowed CSR graph views implementing oxgraph-graph traits."
 categories.workspace = true
 keywords.workspace = true
-readme.workspace = true
+readme = "README.md"
 
 authors.workspace = true
 edition.workspace = true
@@ -17,19 +17,19 @@ build = ["oxgraph-snapshot/alloc"]
 build-property-arrow = ["build", "dep:oxgraph-property"]
 
 [dependencies]
-oxgraph-graph = { version = "0.4.0", path = "../oxgraph-graph" }
-oxgraph-layout-util = { version = "0.4.0", path = "../oxgraph-layout-util" }
-oxgraph-property = { version = "0.4.0", path = "../oxgraph-property", optional = true }
-oxgraph-snapshot = { version = "0.4.0", path = "../oxgraph-snapshot" }
+oxgraph-graph = { version = "0.4.1", path = "../oxgraph-graph" }
+oxgraph-layout-util = { version = "0.4.1", path = "../oxgraph-layout-util" }
+oxgraph-property = { version = "0.4.1", path = "../oxgraph-property", optional = true }
+oxgraph-snapshot = { version = "0.4.1", path = "../oxgraph-snapshot" }
 zerocopy = { workspace = true }
 
 [dev-dependencies]
 arrow-array = { workspace = true }
 arrow-schema = { workspace = true }
 criterion = { workspace = true }
-oxgraph-algo = { version = "0.4.0", path = "../oxgraph-algo", features = ["alloc"] }
-oxgraph-property = { version = "0.4.0", path = "../oxgraph-property" }
-oxgraph-snapshot = { version = "0.4.0", path = "../oxgraph-snapshot", features = ["alloc"] }
+oxgraph-algo = { version = "0.4.1", path = "../oxgraph-algo", features = ["alloc"] }
+oxgraph-property = { version = "0.4.1", path = "../oxgraph-property" }
+oxgraph-snapshot = { version = "0.4.1", path = "../oxgraph-snapshot", features = ["alloc"] }
 proptest = { workspace = true }
 
 [[bench]]

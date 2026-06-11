@@ -1,11 +1,11 @@
 [package]
 name = "oxgraph-mmap"
-version = "0.4.0"
+version = "0.4.1"
 license.workspace = true
 description = "Read-only memory-map shim: the single audited unsafe island for OxGraph's zero-copy base files."
 categories.workspace = true
 keywords.workspace = true
-readme.workspace = true
+readme = "README.md"
 
 authors.workspace = true
 edition.workspace = true
