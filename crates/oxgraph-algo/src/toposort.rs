@@ -42,6 +42,10 @@ impl core::error::Error for ToposortError {}
 /// Among elements with no remaining predecessor the order follows input order,
 /// so the result is deterministic.
 ///
+/// This function binds [`DenseElementIndex`], not containment: any element whose
+/// index falls outside `graph.element_bound()` is silently ignored rather than
+/// rejected, so pass identifiers that belong to `graph`.
+///
 /// # Errors
 ///
 /// Returns [`ToposortError::Cycle`] when the induced subgraph cannot be fully

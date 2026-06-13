@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the workspace adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 All workspace crates version together.
 
+## [0.4.3] - 2026-06-12
+
+### Added
+
+- The `oxgraph` umbrella crate now re-exports the alloc-tier graph algorithms
+  that `oxgraph-algo` already shipped but the umbrella never surfaced:
+  `topological_sort` / `ToposortError`, `strongly_connected_components`,
+  `connected_components`, `longest_path_dag` / `LongestPathError`, and
+  `shortest_path_lengths` — plus the bounded-BFS API (`BfsBounds`, `BfsVisitor`,
+  `breadth_first_search_bounded`, `breadth_first_search_bounded_both`,
+  `reverse_breadth_first_search_bounded`) and `PageRankHypergraph`. A consumer
+  depending on `oxgraph` with `algo-alloc` can now reach Kahn's topological sort
+  directly instead of reimplementing it. The `oxgraph::algo` module doc gains an
+  example covering the acyclic ordering and the `strongly_connected_components`
+  cycle-reporting recipe.
+
 ## [0.4.2] - 2026-06-11
 
 Documentation-only patch release; no code changes.
