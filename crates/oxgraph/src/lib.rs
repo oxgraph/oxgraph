@@ -156,27 +156,85 @@ pub mod snapshot {
 /// # Performance
 ///
 /// `perf: unspecified`; this module re-exports another crate.
+///
+/// # Examples
+///
+/// Build a graph with `graph_build::GraphBuilder`, then order it with
+/// `topological_sort`. A frozen graph implements the topology capability traits
+/// directly, so it feeds straight into the algorithm — there is no need to
+/// assemble CSR offset/target arrays by hand. When the graph has a cycle,
+/// `topological_sort` reports only that one exists; recover its members by
+/// running `strongly_connected_components` over the same elements.
+///
+/// ```
+/// use oxgraph::{
+///     algo::{ToposortError, strongly_connected_components, topological_sort},
+///     graph_build::GraphBuilder,
+/// };
+///
+/// // A diamond DAG: 0 -> 1 -> 3 and 0 -> 2 -> 3.
+/// let mut builder = GraphBuilder::<u32, u32>::new();
+/// let nodes: Vec<_> = (0..4)
+///     .map(|_| builder.add_node())
+///     .collect::<Result<_, _>>()?;
+/// builder.add_edge(nodes[0], nodes[1])?;
+/// builder.add_edge(nodes[0], nodes[2])?;
+/// builder.add_edge(nodes[1], nodes[3])?;
+/// builder.add_edge(nodes[2], nodes[3])?;
+/// let dag = builder.freeze()?;
+///
+/// let order = topological_sort(&dag, &nodes)?;
+/// assert_eq!(order.first(), Some(&nodes[0])); // dependency first
+/// assert_eq!(order.last(), Some(&nodes[3])); // dependent last
+///
+/// // 0 -> 1 -> 2 -> 1: nodes 1 and 2 form a cycle.
+/// let mut builder = GraphBuilder::<u32, u32>::new();
+/// let cycle: Vec<_> = (0..3)
+///     .map(|_| builder.add_node())
+///     .collect::<Result<_, _>>()?;
+/// builder.add_edge(cycle[0], cycle[1])?;
+/// builder.add_edge(cycle[1], cycle[2])?;
+/// builder.add_edge(cycle[2], cycle[1])?;
+/// let graph = builder.freeze()?;
+///
+/// assert_eq!(topological_sort(&graph, &cycle), Err(ToposortError::Cycle));
+///
+/// // Keep components larger than one (a self-loop is a singleton with a
+/// // self-edge) to recover the precise cycle members.
+/// let cycles: Vec<_> = strongly_connected_components(&graph, &cycle)
+///     .into_iter()
+///     .filter(|component| component.len() > 1)
+///     .collect();
+/// assert_eq!(cycles.len(), 1);
+/// assert_eq!(cycles[0].len(), 2); // nodes 1 and 2
+///
+/// # Ok::<(), Box<dyn core::error::Error>>(())
+/// ```
 #[cfg(feature = "algo")]
 pub mod algo {
     pub use oxgraph_algo::{
-        BfsEpochScratch, BfsError, BreadthFirstSearchEpochScratch, BreadthFirstSearchScratch,
-        HyperWeighted, HypergraphOutgoingDistribution, HypergraphPageRankScratch,
-        IntoPageRankScalar, OutgoingDistribution, PageRankConfig, PageRankError, PageRankReport,
-        PageRankScalar, PageRankScratch, ReverseBreadthFirstSearchEpochScratch,
-        ReverseBreadthFirstSearchScratch, Uniform, Weighted,
+        BfsBounds, BfsEpochScratch, BfsError, BfsVisitor, BreadthFirstSearchEpochScratch,
+        BreadthFirstSearchScratch, HyperWeighted, HypergraphOutgoingDistribution,
+        HypergraphPageRankScratch, IntoPageRankScalar, OutgoingDistribution, PageRankConfig,
+        PageRankError, PageRankHypergraph, PageRankReport, PageRankScalar, PageRankScratch,
+        ReverseBreadthFirstSearchEpochScratch, ReverseBreadthFirstSearchScratch, Uniform, Weighted,
+        breadth_first_search_bounded, breadth_first_search_bounded_both,
         breadth_first_search_with_epoch_scratch, breadth_first_search_with_scratch,
         pagerank_graph_with_scratch, pagerank_hypergraph_with_scratch,
-        reverse_breadth_first_search_with_epoch_scratch, reverse_breadth_first_search_with_scratch,
+        reverse_breadth_first_search_bounded, reverse_breadth_first_search_with_epoch_scratch,
+        reverse_breadth_first_search_with_scratch,
     };
     #[cfg(feature = "algo-alloc")]
     pub use oxgraph_algo::{
         BfsWorkspace, BreadthFirstSearch, BreadthFirstSearchWorkspace, GenericBreadthFirstSearch,
-        GenericReverseBreadthFirstSearch, HypergraphPageRankWorkspace, PageRankWorkspace,
-        ReverseBreadthFirstSearch, ReverseBreadthFirstSearchWorkspace, breadth_first_search,
-        breadth_first_search_generic, breadth_first_search_with_workspace, pagerank_graph,
-        pagerank_graph_with_workspace, pagerank_hypergraph, pagerank_hypergraph_with_workspace,
-        reverse_breadth_first_search, reverse_breadth_first_search_generic,
-        reverse_breadth_first_search_with_workspace,
+        GenericReverseBreadthFirstSearch, HypergraphPageRankWorkspace, LongestPathError,
+        PageRankWorkspace, ReverseBreadthFirstSearch, ReverseBreadthFirstSearchWorkspace,
+        ToposortError, breadth_first_search, breadth_first_search_generic,
+        breadth_first_search_with_workspace, connected_components, longest_path_dag,
+        pagerank_graph, pagerank_graph_with_workspace, pagerank_hypergraph,
+        pagerank_hypergraph_with_workspace, reverse_breadth_first_search,
+        reverse_breadth_first_search_generic, reverse_breadth_first_search_with_workspace,
+        shortest_path_lengths, strongly_connected_components, topological_sort,
     };
     #[cfg(feature = "algo-std")]
     pub use oxgraph_algo::{
