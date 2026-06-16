@@ -29,7 +29,7 @@ pg_test = ["pgrx-tests/pg_test", "oxgraph-postgres/bench-fixture"]
 pg_bench = ["dep:pgrx-bench", "oxgraph-postgres/bench-fixture"]
 
 [dependencies]
-oxgraph-postgres = { version = "0.4.3", path = "../oxgraph-postgres" }
+oxgraph-postgres = { version = "0.4.4", path = "../oxgraph-postgres" }
 pgrx = "=0.18.0"
 pgrx-bench = { version = "=0.18.1", optional = true }
 pgrx-tests = { version = "=0.18.0", default-features = false, optional = true }

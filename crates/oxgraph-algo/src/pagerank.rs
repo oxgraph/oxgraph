@@ -675,6 +675,18 @@ impl<S> PageRankConfig<S> {
     }
 }
 
+impl<S: PageRankScalar> Default for PageRankConfig<S> {
+    /// The conventional defaults — damping `0.85`, L1 tolerance `1e-6`, and `100`
+    /// power iterations — so consumers stop hardcoding the same triple.
+    fn default() -> Self {
+        Self {
+            damping: S::from_f64(0.85),
+            tolerance: S::from_f64(1e-6),
+            max_iterations: 100,
+        }
+    }
+}
+
 /// Successful `PageRank` convergence report.
 ///
 /// # Performance

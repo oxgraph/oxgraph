@@ -371,6 +371,80 @@ fn schema_apply_is_idempotent_and_bind_resolves_typed_handles() {
     let _ = std::fs::remove_dir_all(&path);
 }
 
+#[test]
+fn hypergraph_projection_schema_round_trips_and_ranks() {
+    let path = temp_store("hyper-schema");
+    let mut database = Db::create(&path).expect("create");
+    let schema = Schema::new()
+        .role("source")
+        .role("target")
+        .relation_type("Meeting")
+        .key::<crate::Text>("meeting_key", PropertyFamily::Relation)
+        .equality_index("meeting_eq", "meeting_key")
+        .hypergraph_projection("meetings", &["Meeting"], &["source"], &["target"]);
+
+    // The builder declares the hypergraph projection; applying it registers the
+    // catalog and an n-ary relation {alice -> bob, carol} upserts in one verb.
+    let (projection, alice) = database
+        .write(|writer| {
+            let bound = writer.apply_schema(&schema)?;
+            let meeting_eq = bound.equality_index::<crate::Text>("meeting_eq")?;
+            let meeting_type = bound.relation_type("Meeting")?;
+            let source = bound.role("source")?;
+            let target = bound.role("target")?;
+            let alice = writer.create_element()?;
+            let bob = writer.create_element()?;
+            let carol = writer.create_element()?;
+            writer.upsert_relation(
+                meeting_eq,
+                "m1",
+                meeting_type,
+                &[(alice, source), (bob, target), (carol, target)],
+            )?;
+            Ok((bound.projection("meetings")?, alice))
+        })
+        .expect("apply + write")
+        .0;
+
+    // Re-applying the same schema registers nothing new (idempotent).
+    let (_bound, outcome) = database
+        .write(|writer| writer.apply_schema(&schema))
+        .expect("re-apply");
+    assert_eq!(outcome, CommitOutcome::Empty);
+
+    // The builder-declared hypergraph projection materializes and ranks: three
+    // participants and the single hyperedge.
+    let ranked = database
+        .read(|read| {
+            read.personalized_hypergraph_pagerank(
+                projection,
+                &[alice],
+                crate::PageRankConfig::new(0.85_f64, 1e-6_f64, 100),
+            )
+        })
+        .expect("hyper pagerank");
+    assert_eq!(ranked.elements.len(), 3);
+    assert_eq!(ranked.relations.len(), 1);
+
+    let _ = std::fs::remove_dir_all(&path);
+}
+
+#[test]
+fn schema_fingerprint_is_order_independent_and_change_sensitive() {
+    let base = Schema::new()
+        .role("source")
+        .role("target")
+        .label("function");
+    // Declaration order does not change the fingerprint.
+    let reordered = Schema::new()
+        .label("function")
+        .role("target")
+        .role("source");
+    assert_eq!(base.fingerprint(), reordered.fingerprint());
+    // Adding a declared item changes it.
+    assert_ne!(base.fingerprint(), base.label("module").fingerprint());
+}
+
 /// The exact logical state the crash-matrix asserts recovery preserves: the
 /// visible element ids, the rank-keyed property values, and the `Person`
 /// label membership.

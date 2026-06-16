@@ -43,6 +43,8 @@ use zerocopy::{
 
 pub mod build;
 pub mod integrity;
+#[cfg(feature = "alloc")]
+pub mod keys;
 
 // ---------------------------------------------------------------------------
 // CRC-32C (Castagnoli)

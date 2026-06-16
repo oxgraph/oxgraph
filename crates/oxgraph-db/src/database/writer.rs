@@ -5,9 +5,9 @@ use std::{collections::BTreeSet, sync::Arc};
 use super::{Db, open::open_log_for_append};
 use crate::{
     Bound, CommitSeq, DbError, ElementId, GraphProjectionDefinition, GraphProjectionSpec,
-    IncidenceId, IndexId, LabelId, ProjectionDefinition, ProjectionId, PropertyKeyId,
-    PropertySubject, PropertyType, PropertyValue, RelationId, RelationTypeId, RoleId, Schema,
-    TransactionId,
+    HypergraphProjectionDefinition, HypergraphProjectionSpec, IncidenceId, IndexId, LabelId,
+    ProjectionDefinition, ProjectionId, PropertyKeyId, PropertySubject, PropertyType,
+    PropertyValue, RelationId, RelationTypeId, RoleId, Schema, TransactionId,
     catalog::{IndexDefinition, PropertyFamily},
     lock::WriterLock,
     overlay::{Snapshot, StateView, WriteOverlay},
@@ -206,6 +206,13 @@ impl Writer<'_> {
             };
             bound.projections.insert(spec.name.clone(), id);
         }
+        for spec in &schema.hypergraph_projections {
+            let id = match self.merged().catalog().projection_id(&spec.name) {
+                Some(id) => id,
+                None => self.define_hypergraph_projection(spec, &bound)?,
+            };
+            bound.projections.insert(spec.name.clone(), id);
+        }
         Ok(bound)
     }
 
@@ -274,6 +281,44 @@ impl Writer<'_> {
             source_role,
             target_role,
         }))
+    }
+
+    /// Defines a hypergraph projection from a spec, resolving its relation-type
+    /// and role names through `bound`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError::UnknownName`] when a referenced role/type is unbound, or
+    /// a definition error.
+    ///
+    /// # Performance
+    ///
+    /// This method is `O((relation-type count + role count) × log catalog)`.
+    fn define_hypergraph_projection(
+        &mut self,
+        spec: &HypergraphProjectionSpec,
+        bound: &Bound,
+    ) -> Result<ProjectionId, DbError> {
+        let mut relation_types = BTreeSet::new();
+        for name in &spec.relation_types {
+            relation_types.insert(bound.relation_type(name)?);
+        }
+        let mut source_roles = BTreeSet::new();
+        for name in &spec.source_roles {
+            source_roles.insert(bound.role(name)?);
+        }
+        let mut target_roles = BTreeSet::new();
+        for name in &spec.target_roles {
+            target_roles.insert(bound.role(name)?);
+        }
+        self.define_projection(ProjectionDefinition::Hypergraph(
+            HypergraphProjectionDefinition {
+                name: spec.name.clone(),
+                relation_types,
+                source_roles,
+                target_roles,
+            },
+        ))
     }
 
     /// Creates a canonical element.

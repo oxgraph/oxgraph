@@ -17,19 +17,19 @@ build = ["oxgraph-snapshot/alloc"]
 build-property-arrow = ["build", "dep:oxgraph-property"]
 
 [dependencies]
-oxgraph-graph = { version = "0.4.3", path = "../oxgraph-graph" }
-oxgraph-layout-util = { version = "0.4.3", path = "../oxgraph-layout-util" }
-oxgraph-property = { version = "0.4.3", path = "../oxgraph-property", optional = true }
-oxgraph-snapshot = { version = "0.4.3", path = "../oxgraph-snapshot" }
+oxgraph-graph = { version = "0.4.4", path = "../oxgraph-graph" }
+oxgraph-layout-util = { version = "0.4.4", path = "../oxgraph-layout-util" }
+oxgraph-property = { version = "0.4.4", path = "../oxgraph-property", optional = true }
+oxgraph-snapshot = { version = "0.4.4", path = "../oxgraph-snapshot" }
 zerocopy = { workspace = true }
 
 [dev-dependencies]
 arrow-array = { workspace = true }
 arrow-schema = { workspace = true }
 criterion = { workspace = true }
-oxgraph-algo = { version = "0.4.3", path = "../oxgraph-algo", features = ["alloc"] }
-oxgraph-property = { version = "0.4.3", path = "../oxgraph-property" }
-oxgraph-snapshot = { version = "0.4.3", path = "../oxgraph-snapshot", features = ["alloc"] }
+oxgraph-algo = { version = "0.4.4", path = "../oxgraph-algo", features = ["alloc"] }
+oxgraph-property = { version = "0.4.4", path = "../oxgraph-property" }
+oxgraph-snapshot = { version = "0.4.4", path = "../oxgraph-snapshot", features = ["alloc"] }
 proptest = { workspace = true }
 
 [[bench]]
