@@ -3,10 +3,13 @@
 use std::{borrow::Cow, collections::BTreeSet, sync::Arc};
 
 use oxgraph_algo::{
-    PageRankConfig, PageRankError, PageRankWorkspace, Uniform, longest_path_dag,
-    pagerank_graph_with_workspace,
+    HypergraphPageRankWorkspace, PageRankConfig, PageRankError, PageRankWorkspace, Uniform,
+    longest_path_dag, pagerank_graph_with_workspace, pagerank_hypergraph_with_workspace,
 };
-use oxgraph_graph::{CanonicalElementIdentity, DenseElementIndex, LocalElementIdentity};
+use oxgraph_graph::{
+    CanonicalElementIdentity, CanonicalRelationIdentity, DenseElementIndex, DenseRelationIndex,
+    LocalElementIdentity,
+};
 
 use super::IndexProbe;
 use crate::{
@@ -16,7 +19,9 @@ use crate::{
     RelationTypeId,
     catalog::IndexDefinition,
     overlay::{Snapshot, StateView},
-    projection::{self, GraphProjection, HypergraphProjection, ProjectionElementId},
+    projection::{
+        self, GraphProjection, HypergraphProjection, ProjectionElementId, ProjectionRelationId,
+    },
     traversal::{self, Direction, Subgraph, Walk},
     typed::{Assignable, EqualityIndex, ValueType},
 };
@@ -32,6 +37,24 @@ pub struct ReadPin {
     pub visible_commit_seq: CommitSeq,
     /// Pinned checkpoint generation.
     pub generation: CheckpointGeneration,
+}
+
+/// Personalized hypergraph `PageRank` output.
+///
+/// Unlike binary [`Reader::personalized_pagerank`], a hypergraph ranks both
+/// participants and the hyperedges themselves: `elements` are the projection's
+/// participant vertices and `relations` are its hyperedges, each paired with its
+/// rank and ordered highest first.
+///
+/// # Performance
+///
+/// Cloning is `O(elements + relations)`.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct HypergraphPageRank {
+    /// Participant elements paired with rank, highest first.
+    pub elements: Vec<(ElementId, f64)>,
+    /// Hyperedges (relations) paired with rank, highest first.
+    pub relations: Vec<(RelationId, f64)>,
 }
 
 /// Read transaction over a pinned snapshot.
@@ -243,6 +266,20 @@ impl Reader {
     #[must_use]
     pub fn element_incidences(&self, id: ElementId) -> Vec<IncidenceRecord> {
         self.snapshot.view().element_incidences(id)
+    }
+
+    /// Returns every visible incidence carried by a relation, in ascending
+    /// incidence-id order — the n-ary analogue of [`Self::endpoints`].
+    ///
+    /// Each record pairs a participant element with the structural role it plays,
+    /// so a consumer can read back a hyperedge's full roled participant set.
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(degree)` over the relation's incidences.
+    #[must_use]
+    pub fn relation_incidences(&self, relation: RelationId) -> Vec<IncidenceRecord> {
+        self.snapshot.view().relation_incidences(relation)
     }
 
     /// Returns a binary relation's two endpoint elements, ordered by ascending
@@ -659,6 +696,106 @@ impl Reader {
             .collect();
         ranked.sort_by(|left, right| right.1.total_cmp(&left.1));
         Ok(ranked)
+    }
+
+    /// Ranks a cataloged hypergraph projection by personalized `PageRank`,
+    /// returning both participant elements and hyperedges paired with their
+    /// ranks, each ordered highest first.
+    ///
+    /// The hypergraph analogue of [`Self::personalized_pagerank`]. `seeds` are
+    /// the restart (teleport) set over participant elements; their weights are
+    /// normalized internally. With no resolvable seed this is the uniform-teleport
+    /// rank. Because the hypergraph walk alternates element → hyperedge →
+    /// element, ranking both surfaces central participants *and* central
+    /// hyperedges (e.g. impl groups or modules as whole units).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError`] when the projection is unknown, is not a hypergraph,
+    /// cannot be materialized, or `PageRank` rejects the configuration (invalid
+    /// [`PageRankConfig`] or non-convergence). Seeds absent from the projection
+    /// are ignored.
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(relation count * incidence count + iterations *
+    /// (elements + relations + incidences) + (elements + relations) * log(...))`
+    /// — the trailing terms are the two final rank sorts.
+    pub fn personalized_hypergraph_pagerank(
+        &self,
+        projection: ProjectionId,
+        seeds: &[ElementId],
+        config: PageRankConfig<f64>,
+    ) -> Result<HypergraphPageRank, DbError> {
+        let hypergraph = self.hypergraph_projection(projection)?;
+        let element_bound = hypergraph.element_bound();
+        let relation_bound = hypergraph.relation_bound();
+        let bound_error =
+            || DbError::traversal("projection exceeds the personalized pagerank index bound");
+        let element_count = u32::try_from(element_bound).map_err(|_| bound_error())?;
+        let relation_count = u32::try_from(relation_bound).map_err(|_| bound_error())?;
+
+        // The teleport vector spans participants then hyperedges; seeds are
+        // participant elements, so only the element prefix is personalized.
+        let mut personalization = vec![0.0_f64; element_bound.saturating_add(relation_bound)];
+        let mut seeded = false;
+        for &seed in seeds {
+            if let Some(local) = hypergraph.local_element_id(seed) {
+                personalization[hypergraph.element_index(local)] = 1.0;
+                seeded = true;
+            }
+        }
+
+        let mut element_ranks = vec![0.0_f64; element_bound];
+        let mut relation_ranks = vec![0.0_f64; relation_bound];
+        let mut workspace = HypergraphPageRankWorkspace::for_hypergraph(&hypergraph);
+        pagerank_hypergraph_with_workspace(
+            &hypergraph,
+            &Uniform,
+            (0..element_count).map(ProjectionElementId::new),
+            (0..relation_count).map(ProjectionRelationId::new),
+            config,
+            seeded.then_some(personalization.as_slice()),
+            &mut element_ranks,
+            &mut relation_ranks,
+            &mut workspace,
+        )
+        .map_err(|error| {
+            DbError::traversal(match error {
+                PageRankError::InvalidDamping { .. }
+                | PageRankError::InvalidTolerance { .. }
+                | PageRankError::InvalidMaxIterations => "invalid pagerank configuration",
+                PageRankError::NonConverged { .. } => "personalized pagerank did not converge",
+                _ => "personalized pagerank failed",
+            })
+        })?;
+
+        let mut elements: Vec<(ElementId, f64)> = (0..element_count)
+            .map(|index| {
+                let local = ProjectionElementId::new(index);
+                (
+                    hypergraph.canonical_element_id(local),
+                    element_ranks[hypergraph.element_index(local)],
+                )
+            })
+            .collect();
+        elements.sort_by(|left, right| right.1.total_cmp(&left.1));
+
+        let mut relations: Vec<(RelationId, f64)> = (0..relation_count)
+            .map(|index| {
+                let local = ProjectionRelationId::new(index);
+                (
+                    hypergraph.canonical_relation_id(local),
+                    relation_ranks[hypergraph.relation_index(local)],
+                )
+            })
+            .collect();
+        relations.sort_by(|left, right| right.1.total_cmp(&left.1));
+
+        Ok(HypergraphPageRank {
+            elements,
+            relations,
+        })
     }
 
     /// Returns the longest chain of canonical elements along the projection's

@@ -432,6 +432,65 @@ fn personalized_pagerank_ranks_and_responds_to_seeds() -> Result<(), TestError> 
 }
 
 #[test]
+fn personalized_hypergraph_pagerank_ranks_elements_and_hyperedges() -> Result<(), TestError> {
+    let (path, database, fixture) = create_traversal_database("hyper-pagerank")?;
+    let read = database.reader();
+
+    // The `calls_hyper` projection materializes the single Meeting hyperedge
+    // {alice -> bob, carol}: three participant elements and one hyperedge.
+    let seeded = read.personalized_hypergraph_pagerank(
+        fixture.hyper_projection,
+        &[fixture.alice],
+        PageRankConfig::new(0.85_f64, 1e-6_f64, 100),
+    )?;
+
+    assert_eq!(seeded.elements.len(), 3, "alice, bob, carol participate");
+    assert_eq!(seeded.relations.len(), 1, "one Meeting hyperedge");
+    // Both rank lists are ordered highest first and carry finite, non-negative mass.
+    for window in seeded.elements.windows(2) {
+        assert!(window[0].1 >= window[1].1);
+    }
+    let ranks = seeded
+        .elements
+        .iter()
+        .map(|(_, rank)| *rank)
+        .chain(seeded.relations.iter().map(|(_, rank)| *rank));
+    for rank in ranks {
+        assert!(rank.is_finite() && rank >= 0.0);
+    }
+    assert!(seeded.relations[0].1 > 0.0, "the hyperedge accrues rank");
+
+    // Seeding alice lifts her participant rank above the uniform-teleport rank.
+    let uniform = read.personalized_hypergraph_pagerank(
+        fixture.hyper_projection,
+        &[],
+        PageRankConfig::new(0.85_f64, 1e-6_f64, 100),
+    )?;
+    let rank_of = |ranks: &[(oxgraph_db::ElementId, f64)], element| {
+        ranks
+            .iter()
+            .find(|(candidate, _)| *candidate == element)
+            .map_or(0.0, |(_, rank)| *rank)
+    };
+    assert!(rank_of(&seeded.elements, fixture.alice) > rank_of(&uniform.elements, fixture.alice));
+
+    // A graph projection is not a hypergraph: the method rejects it concretely.
+    assert!(matches!(
+        read.personalized_hypergraph_pagerank(
+            fixture.graph_projection,
+            &[],
+            PageRankConfig::new(0.85_f64, 1e-6_f64, 100),
+        ),
+        Err(DbError::Query(
+            oxgraph_db::QueryError::InvalidProjection { .. }
+        ))
+    ));
+
+    clean(&path)?;
+    Ok(())
+}
+
+#[test]
 fn longest_path_finds_the_longest_chain() -> Result<(), TestError> {
     let path = temp_path("graph-longest-path");
     clean(&path)?;

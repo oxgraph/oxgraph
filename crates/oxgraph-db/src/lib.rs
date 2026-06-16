@@ -35,6 +35,10 @@ pub(crate) mod wire;
 // Re-exported so `db`-only consumers can configure `Reader::personalized_pagerank`
 // without depending on `oxgraph-algo` directly.
 pub use oxgraph_algo::PageRankConfig;
+// Re-exported so consumers can build collision-free identity keys for the
+// equality indexes this engine reconciles against, without depending on
+// `oxgraph-layout-util` directly.
+pub use oxgraph_layout_util::keys::encode_composite_key;
 
 pub use crate::{
     catalog::{
@@ -43,8 +47,8 @@ pub use crate::{
         PropertyKeyDefinition, RelationTypeDefinition, RoleDefinition,
     },
     database::{
-        CatalogSummary, CheckpointPolicy, CommitOutcome, Db, IndexProbe, ReadPin, Reader, Stats,
-        Writer,
+        CatalogSummary, CheckpointPolicy, CommitOutcome, Db, HypergraphPageRank, IndexProbe,
+        ReadPin, Reader, Stats, Writer,
     },
     error::{CatalogError, DbError, IdFamily, QueryError, StorageError, TxnError},
     id::{
@@ -53,7 +57,7 @@ pub use crate::{
     },
     query::{PreparedQuery, QueryResult, QueryRow, QueryValue},
     read::{Element, Properties, Relation},
-    schema::{Bound, GraphProjectionSpec, Schema},
+    schema::{Bound, GraphProjectionSpec, HypergraphProjectionSpec, Schema},
     state::{ElementRecord, IncidenceRecord, LabelSet, PropertySubject, RelationRecord},
     traversal::{Direction, Subgraph, TraversedEdge, TraversedNode, Walk},
     typed::{Assignable, Bool, EqualityIndex, Int, Key, RangeIndex, Readable, Text, ValueType},

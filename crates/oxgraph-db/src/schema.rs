@@ -13,7 +13,7 @@ use std::collections::BTreeMap;
 
 use crate::{
     DbError, IndexId, LabelId, ProjectionId, PropertyFamily, PropertyKeyId, PropertyType,
-    RelationTypeId, RoleId,
+    RelationTypeId, RoleId, encode_composite_key,
     typed::{EqualityIndex, Key, ValueType},
 };
 
@@ -32,6 +32,28 @@ pub struct GraphProjectionSpec {
     pub(crate) source_role: String,
     /// Target incidence role name.
     pub(crate) target_role: String,
+}
+
+/// A directed hypergraph-projection declaration over a set of relation types.
+///
+/// Unlike a [`GraphProjectionSpec`], participation is many-sided: a relation's
+/// incidences whose role is in `source_roles` form the source-side participants
+/// and those in `target_roles` the target-side participants, so one relation can
+/// carry an arbitrary number of participants per side.
+///
+/// # Performance
+///
+/// Cloning is `O(relation-type count + role count + name lengths)`.
+#[derive(Clone, Debug)]
+pub struct HypergraphProjectionSpec {
+    /// Projection name.
+    pub(crate) name: String,
+    /// Relation-type names whose relations the projection treats as hyperedges.
+    pub(crate) relation_types: Vec<String>,
+    /// Incidence role names whose participants are source-side.
+    pub(crate) source_roles: Vec<String>,
+    /// Incidence role names whose participants are target-side.
+    pub(crate) target_roles: Vec<String>,
 }
 
 /// A declarative catalog schema, applied once to obtain a [`Bound`] handle bag.
@@ -55,6 +77,8 @@ pub struct Schema {
     pub(crate) equality_indexes: Vec<(String, String)>,
     /// Declared graph projections.
     pub(crate) graph_projections: Vec<GraphProjectionSpec>,
+    /// Declared hypergraph projections.
+    pub(crate) hypergraph_projections: Vec<HypergraphProjectionSpec>,
 }
 
 impl Schema {
@@ -149,6 +173,113 @@ impl Schema {
         });
         self
     }
+
+    /// Declares a directed hypergraph projection over `relation_types`, treating
+    /// incidences in `source_roles` as source-side participants and those in
+    /// `target_roles` as target-side participants.
+    ///
+    /// The role-name slices must be non-empty: a hypergraph projection
+    /// materializes only relations carrying at least one source and one target
+    /// participant (enforced when
+    /// [`Reader::hypergraph_projection`](crate::Reader::hypergraph_projection) builds the
+    /// view).
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(relation-type count + role count + name lengths)`.
+    #[must_use]
+    pub fn hypergraph_projection(
+        mut self,
+        name: &str,
+        relation_types: &[&str],
+        source_roles: &[&str],
+        target_roles: &[&str],
+    ) -> Self {
+        self.hypergraph_projections.push(HypergraphProjectionSpec {
+            name: name.to_owned(),
+            relation_types: relation_types
+                .iter()
+                .map(|name| (*name).to_owned())
+                .collect(),
+            source_roles: source_roles.iter().map(|name| (*name).to_owned()).collect(),
+            target_roles: target_roles.iter().map(|name| (*name).to_owned()).collect(),
+        });
+        self
+    }
+
+    /// Returns a content fingerprint of the declared schema shape: every role,
+    /// label, relation type, typed key, equality index, and projection. Equal
+    /// shapes hash equally regardless of declaration order; any change to a
+    /// declared item changes the fingerprint.
+    ///
+    /// A consumer can fold this into its own index-staleness digest so a schema
+    /// change forces a rebuild even when no source content changed. This is a
+    /// non-cryptographic content hash, not a cross-compiler-version stability
+    /// guarantee.
+    ///
+    /// # Performance
+    ///
+    /// This method is `O(declared items × name lengths + items × log items)`.
+    #[must_use]
+    pub fn fingerprint(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+
+        let mut items = Vec::new();
+        for role in &self.roles {
+            items.push(encode_composite_key(&["role", role]));
+        }
+        for label in &self.labels {
+            items.push(encode_composite_key(&["label", label]));
+        }
+        for relation_type in &self.relation_types {
+            items.push(encode_composite_key(&["rtype", relation_type]));
+        }
+        for (name, family, value_type) in &self.keys {
+            items.push(encode_composite_key(&[
+                "key",
+                name,
+                &format!("{family:?}"),
+                &format!("{value_type:?}"),
+            ]));
+        }
+        for (name, key) in &self.equality_indexes {
+            items.push(encode_composite_key(&["eqidx", name, key]));
+        }
+        for projection in &self.graph_projections {
+            items.push(encode_composite_key(&[
+                "gproj",
+                &projection.name,
+                &projection.source_role,
+                &projection.target_role,
+                &join_sorted(&projection.relation_types),
+            ]));
+        }
+        for projection in &self.hypergraph_projections {
+            items.push(encode_composite_key(&[
+                "hproj",
+                &projection.name,
+                &join_sorted(&projection.relation_types),
+                &join_sorted(&projection.source_roles),
+                &join_sorted(&projection.target_roles),
+            ]));
+        }
+        items.sort();
+
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        items.len().hash(&mut hasher);
+        for item in &items {
+            item.hash(&mut hasher);
+        }
+        hasher.finish()
+    }
+}
+
+/// Joins a set of names into one order-independent, injective token used inside
+/// [`Schema::fingerprint`].
+fn join_sorted(names: &[String]) -> String {
+    let mut sorted: Vec<&str> = names.iter().map(String::as_str).collect();
+    sorted.sort_unstable();
+    encode_composite_key(&sorted)
 }
 
 /// Resolved name→id handles for an applied [`Schema`].

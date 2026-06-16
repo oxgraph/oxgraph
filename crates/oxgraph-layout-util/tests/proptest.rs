@@ -9,6 +9,7 @@ use oxgraph_layout_util::{
     integrity::{
         OffsetIntegrityIssue, check_offset_section, check_offsets_monotonic, check_value_range,
     },
+    keys::encode_composite_key,
 };
 use proptest::{prelude::*, test_runner::TestCaseError};
 
@@ -235,6 +236,29 @@ proptest! {
         }
         let result = check_offset_section(&offsets, count, value_len);
         prop_assert!(result.is_ok());
+    }
+
+    // ---- keys --------------------------------------------------------------
+
+    /// `encode_composite_key` is injective in the field tuple and deterministic:
+    /// equal tuples encode equally, distinct tuples never collide — whatever the
+    /// fields contain (`:`, leading digits, empties), which a naive join cannot
+    /// guarantee.
+    #[test]
+    fn encode_composite_key_is_injective_and_deterministic(
+        left in prop::collection::vec(any::<String>(), 0..6),
+        right in prop::collection::vec(any::<String>(), 0..6),
+    ) {
+        let left_refs: Vec<&str> = left.iter().map(String::as_str).collect();
+        let right_refs: Vec<&str> = right.iter().map(String::as_str).collect();
+        let left_key = encode_composite_key(&left_refs);
+
+        prop_assert_eq!(&left_key, &encode_composite_key(&left_refs));
+        if left == right {
+            prop_assert_eq!(left_key, encode_composite_key(&right_refs));
+        } else {
+            prop_assert_ne!(left_key, encode_composite_key(&right_refs));
+        }
     }
 }
 

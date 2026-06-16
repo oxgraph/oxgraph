@@ -21,6 +21,7 @@ oxgraph-csr = { version = "0.4.3", path = "../oxgraph-csr", features = ["build"]
 oxgraph-graph = { version = "0.4.3", path = "../oxgraph-graph" }
 oxgraph-hyper = { version = "0.4.3", path = "../oxgraph-hyper" }
 oxgraph-hyper-bcsr = { version = "0.4.3", path = "../oxgraph-hyper-bcsr", features = ["build"] }
+oxgraph-layout-util = { version = "0.4.3", path = "../oxgraph-layout-util" }
 oxgraph-mmap = { version = "0.4.3", path = "../oxgraph-mmap" }
 oxgraph-property = { version = "0.4.3", path = "../oxgraph-property" }
 oxgraph-snapshot = { version = "0.4.3", path = "../oxgraph-snapshot", features = ["alloc"] }

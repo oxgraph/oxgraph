@@ -29,7 +29,7 @@ mod tests;
 
 pub use maintenance::CheckpointPolicy;
 use open::{base_file, delta_file, file_len};
-pub use reader::{ReadPin, Reader};
+pub use reader::{HypergraphPageRank, ReadPin, Reader};
 pub use writer::Writer;
 
 /// Lookup input for a cataloged index.
@@ -329,6 +329,15 @@ impl Db {
                 .insert(name.clone(), (id, value_type));
         }
         for spec in &schema.graph_projections {
+            let id = catalog.projection_id(&spec.name).ok_or_else(|| {
+                DbError::Catalog(crate::error::CatalogError::UnknownName {
+                    kind: "projection",
+                    name: spec.name.clone(),
+                })
+            })?;
+            bound.projections.insert(spec.name.clone(), id);
+        }
+        for spec in &schema.hypergraph_projections {
             let id = catalog.projection_id(&spec.name).ok_or_else(|| {
                 DbError::Catalog(crate::error::CatalogError::UnknownName {
                     kind: "projection",

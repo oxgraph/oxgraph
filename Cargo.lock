@@ -1338,6 +1338,7 @@ dependencies = [
  "oxgraph-graph",
  "oxgraph-hyper",
  "oxgraph-hyper-bcsr",
+ "oxgraph-layout-util",
  "oxgraph-mmap",
  "oxgraph-property",
  "oxgraph-snapshot",
