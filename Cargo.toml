@@ -49,10 +49,10 @@ version = "0.4.4"
 # its own nightly below latest stable, and we're not publishing an MSRV contract yet.
 
 [workspace.dependencies]
-arrow-array = "58.3.0"
-arrow-ipc = "58.3.0"
-arrow-schema = "58.2.0"
-arrow-select = "58.2.0"
+arrow-array = "59.1.0"
+arrow-ipc = "59.1.0"
+arrow-schema = "59.1.0"
+arrow-select = "59.1.0"
 crc32c = "0.6.8"
 memmap2 = "0.9.8"
 yoke = { version = "0.8.3", features = ["derive"] }
@@ -65,7 +65,7 @@ criterion = { version = "0.8.2", default-features = false, features = [
   "plotters",
 ] }
 proptest = "1.11.0"
-saphyr-parser = "0.0.6"
+saphyr-parser = "0.0.11"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
 
